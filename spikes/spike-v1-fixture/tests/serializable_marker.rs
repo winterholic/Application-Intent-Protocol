@@ -67,3 +67,15 @@ fn create_follows_the_same_rule() {
     let absent = facts("  expose create { allow roomFree(this.room); fields room, owner, taken }\n");
     assert_eq!(marker(&absent, &["exposeCreate", "isolation"]), "serializable");
 }
+
+#[test]
+fn an_effect_guard_that_needs_absence_marks_its_transition_serializable() {
+    let f = facts(
+        r#"
+  transition effectAbsence { allow this.owner = actor; from taken = false; to taken = true; update Room when roomFree(this.room) where id = this.room.id { open = false } }
+  transition effectPresent { allow this.owner = actor; from taken = false; to taken = true; update Room when this.owner.level > 3 where id = this.room.id { open = false } }
+"#,
+    );
+    assert_eq!(marker(&f, &["transitions", "effectAbsence", "isolation"]), "serializable");
+    assert_eq!(marker(&f, &["transitions", "effectPresent", "isolation"]), Value::Null);
+}

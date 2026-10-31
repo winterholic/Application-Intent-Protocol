@@ -26,34 +26,59 @@ aip_verify_stage "explicit database guard tests"
 cargo test -p aip-test-support --features strict-db --locked
 aip_verify_stage "dedicated PostgreSQL fixture readiness"
 psql -X -q "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1'
-aip_verify_stage "Rust formatting"
-cargo fmt --all --check
-aip_verify_stage "workspace library and binary clippy"
-cargo clippy --workspace --lib --bins --locked -- -D warnings
-aip_verify_stage "auth migrate service all-target clippy"
-cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked -- -D warnings
+# Lints do not depend on one another. Collect their failures in one pass while
+# keeping the database guard above fatal and runtime tests below gated on success.
+first_check_status=0
+first_check_stage=''
+first_check_command=''
+verify_independent() {
+  local stage="$1"
+  shift
+  aip_verify_stage "$stage"
+  if "$@"; then
+    return 0
+  else
+    local status=$?
+    printf 'Verification failed: %s (exit %s)\n' "$stage" "$status" >&2
+    if (( first_check_status == 0 )); then
+      first_check_status=$status
+      first_check_stage=$stage
+      printf -v first_check_command '%q ' "$@"
+    fi
+  fi
+}
+verify_independent "Rust formatting" cargo fmt --all --check
+verify_independent "workspace library and binary clippy" cargo clippy --workspace --lib --bins --locked -- -D warnings
+verify_independent "auth migrate service all-target clippy" cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked -- -D warnings
 # The PoC runtime is an optional aip-cli package; its end-to-end tests only build with the feature.
-aip_verify_stage "PoC runtime all-target clippy"
-cargo clippy -p aip-cli --features poc-runtime --all-targets --locked -- -D warnings
+verify_independent "PoC runtime all-target clippy" cargo clippy -p aip-cli --features poc-runtime --all-targets --locked -- -D warnings
 # The MySQL adapter is an optional package too: its code and live tests (ignored without a container) must stay lint-clean and compile.
-aip_verify_stage "MySQL migrate service CLI all-target clippy"
-cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets --locked -- -D warnings
+verify_independent "MySQL migrate service CLI all-target clippy" cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets --locked -- -D warnings
 # The excluded engine crates were not linted before; a clippy regression in one (spike-v6 server.rs) reached main unnoticed.
 for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
-  aip_verify_stage "rust engine clippy: $engine"
-  cargo clippy --manifest-path "spikes/$engine/Cargo.toml" --all-targets --locked --target-dir target -- -D warnings
+  verify_independent "rust engine clippy: $engine" cargo clippy --manifest-path "spikes/$engine/Cargo.toml" --all-targets --locked --target-dir target -- -D warnings
 done
-cargo test --workspace --locked
-# Legacy import is isolated from runtime builds but remains part of the offline migration gate.
-cargo clippy -p aip-crypto --all-targets --all-features --locked -- -D warnings
-cargo test -p aip-crypto --all-features --locked
-cargo test -p aip-cli --features poc-runtime --locked
+# Legacy import is isolated from runtime builds but remains part of the migration gate.
+verify_independent "crypto all-feature clippy" cargo clippy -p aip-crypto --all-targets --all-features --locked -- -D warnings
+if (( first_check_status != 0 )); then
+  aip_verify_stage "$first_check_stage"
+  aip_verify_fail "$first_check_status" "$first_check_command"
+fi
+# Each engine owns its test setup. Collect independent runtime failures too;
+# retain Cargo's failed-test exit and run other test binaries with --no-fail-fast.
+# The DB guard and successful lint gate above remain mandatory prerequisites.
+verify_independent "workspace runtime tests" cargo test --workspace --locked --no-fail-fast
+verify_independent "crypto all-feature tests" cargo test -p aip-crypto --all-features --locked --no-fail-fast
+verify_independent "PoC runtime tests" cargo test -p aip-cli --features poc-runtime --locked --no-fail-fast
 # These product engines are path dependencies excluded from the root workspace.
 # v4 (worker) and v6 (transport) are included because their regressions (S-24) were otherwise caught only by CI.
 for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
-  aip_verify_stage "rust engine tests: $engine"
-  cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target
+  verify_independent "rust engine tests: $engine" cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target --no-fail-fast
 done
+if (( first_check_status != 0 )); then
+  aip_verify_stage "$first_check_stage"
+  aip_verify_fail "$first_check_status" "$first_check_command"
+fi
 # The Socket.IO-compatible transport (WBS 7.2.6) is also run with the real socket.io-client the FaceReview player locks
 # (4.8.3, pinned by package-lock.json). Lifecycle scripts stay off: only the library files are installed.
 npm ci --ignore-scripts --no-audit --no-fund --prefix spikes/spike-v6-transport/tests/socketio-client
@@ -105,7 +130,8 @@ node --test \
   product/tests/smoke-options.test.mjs \
   product/tests/dev-jwt.test.mjs \
   product/tests/google-storage-provider.test.mjs
-python3 -W error::ResourceWarning -m unittest product.tests.google_storage_provider_test product.tests.password_auth_test product.tests.python_sdk_test product.tests.dedicated_db_test product.tests.test_facereview_ui_browser_evidence product.tests.test_facereview_write_deployments product.tests.test_facereview_e2e_suites
+python3 -W error::ResourceWarning -m unittest product.tests.google_storage_provider_test product.tests.password_auth_test product.tests.python_sdk_test product.tests.dedicated_db_test product.tests.test_facereview_ui_browser_evidence product.tests.test_facereview_write_deployments product.tests.test_facereview_e2e_suites product.tests.test_rust_lint_gate
+python3 -W error::ResourceWarning -m unittest porting.flaskbb.tests.test_post_order_manifest
 python3 spikes/spike-v4-worker/tests/python_frame_limit.py -v
 
 # Test feature combinations can replace target/debug/aip; rebuild the product last.

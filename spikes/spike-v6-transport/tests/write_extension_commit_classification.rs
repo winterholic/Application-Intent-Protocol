@@ -33,7 +33,7 @@ resource Event {
 }
 "#;
 
-const EXTENSION: &str = "export async function run(input, ctx) { await ctx.data.apply('Event', 'mark', [input.id]); return {done:true}; }\n";
+const EXTENSION: &str = "import fs from 'node:fs';\nconst countFile=new URL('./counter',import.meta.url);\nexport async function run(input,ctx){fs.appendFileSync(countFile,'1\\n');await ctx.data.apply('Event','mark',[input.id]);return {done:true};}\n";
 
 // sqlgen의 schema는 프로세스당 하나라서 테스트마다 같은 schema를 다시 만들고, 서로 겹치지 않게 순서대로 돌린다.
 static SCHEMA_NAME: LazyLock<String> = LazyLock::new(|| {
@@ -90,6 +90,10 @@ impl Fixture {
         self.direct.query_one(&sql.replace("{schema}", sqlgen::schema()), &[]).await.unwrap().get(0)
     }
 
+    fn worker_count(&self) -> usize {
+        fs::read_to_string(self._dir.0.join("counter")).map(|contents| contents.lines().count()).unwrap_or_default()
+    }
+
     /// 장애가 실제로 일어난 단계를 돌려준다. 일어나지 않았다면 그 장애는 이 테스트가 겨냥한 단계에 닿지 못한 것이다.
     async fn phase(&mut self) -> String {
         tokio::time::timeout(Duration::from_secs(2), &mut self.fired)
@@ -103,7 +107,10 @@ impl Fixture {
         let mut victim = connect_owned_with_url(&self.proxy_url).await.expect("connect through the fault proxy");
         let caller = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };
         let body = json!({"key": key, "request": {"extension": "Event.run", "input": {"id": id.to_string()}}});
-        write_extension::apply(&mut victim, &self.facts, &body, &caller, IdWire::DecimalString, &self.config).await
+        // This trusted test worker writes a counter into its fixture directory. Disable worker
+        // isolation only for this test fixture so the counter can reach the DB fault stage.
+        let launch = spike_v4_worker::WorkerLaunchConfig { isolation: spike_v4_worker::Isolation::None, ..Default::default() };
+        write_extension::apply_with_launch(&mut victim, &self.facts, &body, &caller, IdWire::DecimalString, &self.config, &launch).await
     }
 
     async fn finish(self) {
@@ -120,6 +127,7 @@ async fn assert_cut_before_commit(fault: Fault) {
     let mut f = Fixture::new(fault).await;
     let first = f.write("cut-before-commit", 11).await;
     let phase = f.phase().await;
+    assert!(phase.contains("targeted statement"), "targeted statement observation: {phase}");
     assert_eq!(first["code"], "WIRE.DB_UNAVAILABLE", "{fault:?}: phase={phase}; body={first}");
     assert_eq!(f.number(CHECKED_11).await, 0, "{fault:?}: nothing was committed");
     assert_eq!(f.number(IDEM_ROWS).await, 0, "{fault:?}: no idempotency record without a commit");
@@ -162,18 +170,47 @@ async fn disconnect_during_the_extension_session_settings_is_db_unavailable() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn disconnect_after_the_advisory_lock_is_db_unavailable() {
-    assert_cut_before_commit(Fault::CutAfterStatement("pg_advisory_xact_lock")).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disconnect_during_the_extension_write_is_db_unavailable() {
     assert_cut_before_commit(Fault::CutAfterStatement("UPDATE")).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn disconnect_after_the_idempotency_insert_before_commit_is_db_unavailable() {
-    assert_cut_before_commit(Fault::CutAfterStatement("aip_idem(principal,key,request,result)")).await;
+async fn disconnect_after_the_idempotency_claim_before_worker_is_db_unavailable() {
+    let mut f = Fixture::new(Fault::CutAfterStatement("aip_idem(principal,key,request,result)")).await;
+    let first = f.write("cut-before-commit", 11).await;
+    let phase = f.phase().await;
+    assert!(phase.contains("targeted statement"), "claim INSERT observation: {phase}");
+    assert_eq!(first["code"], "WIRE.DB_UNAVAILABLE", "claim phase={phase}; body={first}");
+    assert_eq!(f.worker_count(), 0, "claim failure must happen before the worker starts");
+    assert_eq!(f.number(CHECKED_11).await, 0, "claim failure committed no domain effect");
+    assert_eq!(f.number(IDEM_ROWS).await, 0, "claim failure committed no placeholder");
+    let retry = f.write("cut-before-commit", 11).await;
+    assert_eq!(retry["ok"], true, "same-key retry after claim disconnect: {retry}");
+    assert!(retry.get("replayed").is_none(), "claim failure has no stored result: {retry}");
+    assert_eq!(f.worker_count(), 1);
+    assert_eq!(f.number(CHECKED_11).await, 1);
+    assert_eq!(f.number(IDEM_ROWS).await, 1);
+    f.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disconnect_after_worker_before_result_update_commit_rolls_back_both_rows() {
+    let mut f = Fixture::new(Fault::CutAfterStatement("aip_idem SET result")).await;
+    let first = f.write("result-update-cut", 11).await;
+    let phase = f.phase().await;
+    assert!(phase.contains("targeted statement"), "final result UPDATE observation: {phase}");
+    assert_eq!(first["code"], "WIRE.DB_UNAVAILABLE", "result UPDATE phase={phase}; body={first}");
+    assert_eq!(f.worker_count(), 1, "fault must happen after the worker ran exactly once");
+    assert_eq!(f.number(CHECKED_11).await, 0, "worker effect and provisional claim must roll back together");
+    assert_eq!(f.number(IDEM_ROWS).await, 0, "worker effect and provisional claim must roll back together");
+
+    let retry = f.write("result-update-cut", 11).await;
+    assert_eq!(retry["ok"], true, "safe same-key retry after pre-commit disconnect: {retry}");
+    assert!(retry.get("replayed").is_none(), "rolled-back result must execute as a fresh request: {retry}");
+    assert_eq!(f.worker_count(), 2, "only the fresh retry invokes the worker again");
+    assert_eq!(f.number(CHECKED_11).await, 1);
+    assert_eq!(f.number(IDEM_ROWS).await, 1);
+    f.finish().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

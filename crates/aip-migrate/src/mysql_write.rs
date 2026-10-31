@@ -1179,6 +1179,9 @@ impl Session<'_> {
         let facts = self.facts;
         spike_v3_write::keys(o, &["apply", "target", "values", "expect"], "apply 요청")?;
         let (res, tr, ex) = spike_v3_write::exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
+        if has_conditional_update_effect(facts, res, tr) {
+            return rej("WIRE.ADAPTER_UNSUPPORTED", "MySQL 어댑터는 conditional update effect when을 아직 지원하지 않음");
+        }
         spike_v3_write::refuse_internal(ex, &self.knobs, o)?;
         let input = spike_v3_write::apply_input(facts, res, tr, o, wire)?;
         let target = spike_v3_write::parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
@@ -1336,6 +1339,16 @@ impl Session<'_> {
         }
         Ok(())
     }
+}
+
+/// MySQL write does not yet evaluate update-effect `when`. Refuse only transitions that use it so a
+/// compiled fact can never silently run its effect unconditionally on this adapter.
+fn has_conditional_update_effect(facts: &Value, res: &str, tr: &str) -> bool {
+    facts["resources"][res]["transitions"][tr]["effects"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|effect| effect.get("update").is_some() && effect.get("when").is_some())
 }
 
 /// Resources a write can change (cache invalidation tags): the transition target plus create/update effect targets.
@@ -1596,5 +1609,23 @@ pub async fn handle_status(driver: &MysqlDriver, body: &Value, caller: &Caller, 
         // Only "nothing committed at lookup time"; the write may still be running. Send the same key again to settle it.
         Ok(Ok(None)) => json!({ "ok": false, "code": "WIRE.NOT_FOUND" }),
         Ok(Err(_)) | Err(_) => json!({ "ok": false, "code": "WIRE.DB_UNAVAILABLE" }),
+    }
+}
+
+#[cfg(test)]
+mod conditional_effect_tests {
+    use super::has_conditional_update_effect;
+    use serde_json::json;
+
+    #[test]
+    fn mysql_refuses_only_transitions_with_conditional_update_effects() {
+        let facts = json!({"resources":{"Order":{"transitions":{
+            "guarded":{"effects":[{"update":"Summary","when":{"lit":true}}]},
+            "plain":{"effects":[{"update":"Summary"}]},
+            "notify":{"effects":[{"notify":{"topic":"order.changed"},"when":{"lit":true}}]}
+        }}}});
+        assert!(has_conditional_update_effect(&facts, "Order", "guarded"));
+        assert!(!has_conditional_update_effect(&facts, "Order", "plain"));
+        assert!(!has_conditional_update_effect(&facts, "Order", "notify"));
     }
 }

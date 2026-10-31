@@ -262,11 +262,44 @@ resource Topic {
   expose apply highlight { target id; bulk maxRows 1 }
   transition trivialize { allow canModerateForum(actor, forum); from important = true; to important = false }
   expose apply trivialize { target id; bulk maxRows 1 }
-  transition hide { allow canHide(actor, forum); from hidden != true and deleted = false; to hidden = true, hidden_at = now, hidden_by = actor }
+  transition hide {
+    allow canHide(actor, forum)
+    from hidden != true and deleted = false
+    to hidden = true, hidden_at = now, hidden_by = actor
+    update Forum where id = this.forum {
+      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.id
+      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.user
+      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
+      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.username
+      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+    }
+  }
   expose apply hide { target id; bulk maxRows 1 }
-  transition unhide { allow canHide(actor, forum); from hidden = true and deleted = false; to hidden = false, hidden_at = null, hidden_by = null }
+  transition unhide {
+    allow canHide(actor, forum)
+    from hidden = true and deleted = false
+    to hidden = false, hidden_at = null, hidden_by = null
+    update Forum where id = this.forum {
+      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.id
+      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.user
+      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
+      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.username
+      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+    }
+  }
   expose apply unhide { target id; bulk maxRows 1 }
-  transition delete { allow actor.activated and (canDeleteTopic(actor, this) or (user = actor and not locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost))); from deleted = false; to deleted = true }
+  transition delete {
+    allow actor.activated and (canDeleteTopic(actor, this) or (user = actor and not locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost)))
+    from deleted = false
+    to deleted = true
+    update Forum where id = this.forum {
+      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.id
+      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.user
+      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
+      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.username
+      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+    }
+  }
   expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, forum, title, user, username, date_created, last_updated, locked, important, views, published, hidden, hidden_at, hidden_by, post_count
@@ -319,11 +352,53 @@ resource Post {
     to version = version + 1, date_modified = now, modified_by = actor.username
   }
   expose apply edit { target id; bulk maxRows 1 }
-  transition hide { allow canHide(actor, forum) and not isFirstPost(this); from hidden = false and deleted = false; to hidden = true, hidden_at = now, hidden_by = actor }
+  transition hide {
+    allow canHide(actor, forum) and not isFirstPost(this)
+    from hidden = false and deleted = false
+    to hidden = true, hidden_at = now, hidden_by = actor
+    update Forum where id = this.forum {
+      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.id
+      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.user
+      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
+      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.username
+      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+    }
+    update Topic where id = this.topic {
+      last_updated = latest Post candidate where candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.date_created select candidate.date_created otherwise this.topic.date_created
+    }
+  }
   expose apply hide { target id; bulk maxRows 1 }
-  transition unhide { allow canHide(actor, forum) and not isFirstPost(this); from hidden = true and deleted = false; to hidden = false, hidden_at = null, hidden_by = null }
+  transition unhide {
+    allow canHide(actor, forum) and not isFirstPost(this)
+    from hidden = true and deleted = false
+    to hidden = false, hidden_at = null, hidden_by = null
+    update Forum where id = this.forum {
+      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.id
+      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.user
+      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
+      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.username
+      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+    }
+    update Topic where id = this.topic {
+      last_updated = latest Post candidate where candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.date_created select candidate.date_created otherwise this.topic.date_created
+    }
+  }
   expose apply unhide { target id; bulk maxRows 1 }
-  transition delete { allow actor.activated and canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted); from deleted = false; to deleted = true }
+  transition delete {
+    allow actor.activated and canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted)
+    from deleted = false
+    to deleted = true
+    update Forum where id = this.forum {
+      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.id
+      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.user
+      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
+      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.username
+      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+    }
+    update Topic where id = this.topic {
+      last_updated = latest Post candidate where candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.date_created select candidate.date_created otherwise this.topic.date_created
+    }
+  }
   expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, topic, user, username, content, date_created, date_modified, modified_by, hidden, hidden_at, hidden_by, version

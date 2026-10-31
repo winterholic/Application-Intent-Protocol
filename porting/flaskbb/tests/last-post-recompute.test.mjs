@@ -6,11 +6,8 @@ import {GROUPS_SQL, USERS_SQL, startFixture} from './harness.mjs';
 // post is both its topic's and its forum's last post, the forum falls back to the newest
 // remaining visible post (or NULL when none is left) and the topic's last_updated moves
 // back to the new last post. Posts that are not the forum's last post leave the forum
-// untouched. The first half of that rule already holds here; the recompute half cannot
-// be declared (an `update` effect only takes values from the current row, see
-// PRODUCT-GAPS.md G-6), so this test pins the divergence with real rows. When core gains
-// a set-valued `update` source, flip the "stale" assertions to the upstream values below.
-test('FlaskBB forum last-post is not recomputed after hide/delete (known gap G-6)', {timeout: 90000}, async () => {
+// untouched. Pin both the restored projection and the absence of a half-null visible row.
+test('FlaskBB forum and topic last-post projections recover after post hide/delete', {timeout: 90000}, async () => {
   const id = (kind, n) => `00000000-0000-4000-8000-${kind}${String(n).padStart(11, '0')}`;
   const topicA = id('1', 1);
   const topicB = id('1', 2);
@@ -48,33 +45,43 @@ test('FlaskBB forum last-post is not recomputed after hide/delete (known gap G-6
     const before = forumRow();
     assert.equal(before, `${b2}|admin-bob|Topic B|2025-01-04`);
 
+    // The separate upstream Topic.hide/delete path excludes the hidden/deleted topic before
+    // selecting its replacement; it is not the Post._deal_with_last_post query.
+    await run('Topic.hide', topicB, 'lp-hide-topic-b');
+    const upstreamAfterTopicHide = `${a2}|member-alice|Topic A|2025-01-03`;
+    assert.equal(forumRow(), upstreamAfterTopicHide);
+    await run('Topic.unhide', topicB, 'lp-unhide-topic-b');
+    assert.equal(forumRow(), before);
+
     // Upstream rule that already holds: a post that is not the forum's last post leaves the forum alone.
     await run('Post.hide', a2, 'lp-hide-a2');
     assert.equal(forumRow(), before, 'hiding a non-last forum post leaves Forum.last_post_*');
     await run('Post.unhide', a2, 'lp-unhide-a2');
 
-    // Gap: hiding the forum's last post. Upstream falls back to the newest visible post (a2).
+    // Hiding the forum's last post falls back to the newest remaining visible post (a2).
     await run('Post.hide', b2, 'lp-hide-b2');
     const upstreamAfterHide = `${a2}|member-alice|Topic A|2025-01-03`;
-    assert.equal(forumRow(), before, 'stale: Forum.last_post_* still describes the hidden post');
-    assert.notEqual(forumRow(), upstreamAfterHide);
-    assert.equal(topicUpdated(topicB), '2025-01-04', 'stale: Topic.last_updated is not moved back to b1 (upstream 2025-01-02)');
+    assert.equal(forumRow(), upstreamAfterHide);
+    assert.equal(topicUpdated(topicB), '2025-01-02');
 
-    // The stale projection is visible to ordinary readers as a half-null record: the post reference
-    // is hidden by the post row policy while the denormalized columns still name its author and time.
+    // Ordinary readers must see the replacement post and its matching denormalized author.
     const alice = fx.client('alice-sub');
     const [forum] = (await alice.read({
       read: 'Forum', select: ['id', 'last_post', 'last_post_username', 'last_post_created'],
       filter: [{field: 'id', op: 'eq', value: '1'}], limit: 1,
     })).rows;
-    assert.equal(forum.last_post, null, 'reader cannot see the hidden last post');
-    assert.equal(forum.last_post_username, 'admin-bob', 'stale denormalized author is still exposed');
+    assert.equal(forum.last_post, a2);
+    assert.equal(forum.last_post_username, 'member-alice');
 
-    // Gap: delete (tombstone) of the forum's last post behaves the same.
+    // Delete (tombstone) of the forum's last post follows the same fallback.
     await run('Post.unhide', b2, 'lp-unhide-b2');
-    assert.equal(forumRow(), before, 'unhide restores the pointer target; the projection was never moved');
+    assert.equal(forumRow(), before, 'unhide restores the pointer and projection');
     await run('Post.delete', b2, 'lp-delete-b2');
-    assert.equal(forumRow(), before, 'stale: Forum.last_post_* still points at the deleted post');
+    assert.equal(forumRow(), upstreamAfterHide);
+    assert.equal(topicUpdated(topicB), '2025-01-02');
     assert.equal(sql(`SELECT deleted FROM ${q}.post WHERE id='${b2}'`), 't');
+
+    await run('Topic.delete', topicB, 'lp-delete-topic-b');
+    assert.equal(forumRow(), upstreamAfterTopicHide);
   } finally { await fx.stop(); }
 });

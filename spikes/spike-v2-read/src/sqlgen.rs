@@ -411,6 +411,9 @@ impl<'a> Ctx<'a> {
 
     pub fn value(&mut self, e: &Value, env: &Env) -> R<String> {
         self.charge_work(1)?;
+        if let Some(latest) = e.get("latest") {
+            return self.latest_value(latest, env);
+        }
         if e.get("path").is_some() {
             return Ok(self.path(e, env)?.sql(self.dialect));
         }
@@ -489,6 +492,35 @@ impl<'a> Ctx<'a> {
             }
             _ => Err(format!("값으로 쓸 수 없는 식 {e}")),
         }
+    }
+
+    fn latest_value(&mut self, latest: &Value, env: &Env) -> R<String> {
+        let resource = latest["resource"].as_str().ok_or("latest resource 누락")?;
+        let source_alias = latest["alias"].as_str().ok_or("latest alias 누락")?;
+        let table = self.table(resource);
+        let alias = self.alias("latest");
+        let mut inner = env.clone();
+        inner.vars.insert(source_alias.to_string(), Handle::Row { alias: alias.clone(), res: resource.to_string() });
+        // Numbered PostgreSQL parameters and MySQL markers permit the presence
+        // branch below to reuse this condition without changing its bindings.
+        let selected = self.value(&latest["select"], &inner)?;
+        let condition = self.cond(&latest["where"], &inner)?;
+        let order = self.value(&latest["orderBy"], &inner)?;
+        let d = self.dialect;
+        let id = d.qualified(&alias, "id");
+        let selection =
+            format!("(SELECT {selected} FROM {table} {alias} WHERE {condition} ORDER BY ({order} IS NULL) ASC, {order} DESC, {id} DESC LIMIT 1)");
+        let sql = if latest.get("otherwise").is_some_and(|value| !value.is_null()) {
+            let fallback = self.value(&latest["otherwise"], env)?;
+            // The selected row may exist while its projected field is NULL.
+            // Check row presence independently so all projections preserve that
+            // row's values. Params::finish expands repeated MySQL markers.
+            format!("(CASE WHEN EXISTS (SELECT 1 FROM {table} {alias} WHERE {condition}) THEN {selection} ELSE {fallback} END)")
+        } else {
+            selection
+        };
+        self.charge_sql_work(sql.len())?;
+        Ok(sql)
     }
 
     fn charge_work(&mut self, amount: usize) -> R<()> {
