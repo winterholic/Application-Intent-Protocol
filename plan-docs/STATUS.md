@@ -1,4 +1,10 @@
-# 최신 재개 지점 (2026-11-01, V2 SQL 단언·독립 runtime 수집·PostOrder 사전 검사)
+# 최신 재개 지점 (2026-11-01, V3 fixture 행 정책·PostOrder PG 회귀)
+
+후보 `029aae6373eba39720920bbfdb36a4aca02708e1`의 Verify `41214047984`, job `124574760305` 원출력에서 runtime 수집은 9개 Cargo 명령을 끝까지 실행했고 실패 stage는 V3 하나였다. V2 `latest_effect_value` 3/3, V4 caller commit/rollback 1/1, V6 write-extension atomic 1/1 및 commit classification 12/12는 통과했다. V3 conditional/latest/nullable 세 fixture는 모두 `WIRE.MISSING_TARGET`으로 실패했다. 선언에 `rows read`가 없어 기본 denyAll이 `judge_query`의 대상 WHERE에 들어가는 공통 입력 결함과 일치한다. 각 fixture에 의도한 읽기 정책을 명시했다(conditional=true, latest/nullable=owner=actor). 제품 기본 거부 정책은 유지한다. 세 PG 회귀의 교정 후 결과와 downstream은 아직 미검증이다. broad 종료 때 runner 여유 73GB·target 8.8GB를 관측했다.
+
+새 `spikes/spike-v3-write/tests/post_order_sequence.rs`는 UUID 역순과 원본 정수 순서, import high-water 90 이후 native 할당, 실패 시 전체 rollback과 sequence gap 보존, 두 연결 publish·역참조·기존 pair 보존, 비소유자·미매핑 published 행 거부를 검사하는 PG fixture다. 기존 V1에서 DSL accepted이나 Rust compile/PG 실행은 다음 후보 CI 전 미검증이다. 실제 FlaskBB app/schema/import/allocator 활성화가 아니며 G6·전체 1.0은 계속 열린다.
+
+## 직전 후보의 관측 기록 (029aae6의 결과로 후속 갱신)
 
 후보 `6a08ceddf8d2f18e3c6adcd173644c8cac5525e5`: packages `41212814844`·storage `41212814813`·brokers `41212814783`·cgroup `41212814808` success. Verify `41212814780`, job `124571168053`은 Clippy·workspace/crypto/PoC/V1을 지나 V2 `latest_effect_value`의 MySQL 별칭 백틱 기대값에서 실패했다(2 passed / 1 failed). `Dialect::qualified`는 생성 별칭을 그대로 쓰고 열만 인용한다. 실제 SQL 원출력과 대조해 단언 네 곳을 고쳤다. 생성 SQL/제품 동작은 바꾸지 않았다. broad 종료 때 runner 여유 77GB·target 5.1GB를 관측했으며 이전 용량 고갈은 이 실행에 재발하지 않았다. V3/V4/V6 runtime·PG·FaceReview는 이 실패 뒤 미실행이다.
 

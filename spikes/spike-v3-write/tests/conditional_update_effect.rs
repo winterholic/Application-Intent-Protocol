@@ -19,6 +19,7 @@ resource Member { fields { id: Id; level: Int } }
 actor Member
 resource SalesOrder {
   fields { id: Id; owner: Member; refreshed: Bool; enabled: Bool }
+  rows read when true
   transition refresh {
     allow true
     from refreshed = false

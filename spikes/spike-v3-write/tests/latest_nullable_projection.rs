@@ -10,6 +10,7 @@ resource Member { fields { id: Id } }
 actor Member
 resource SalesOrder {
   fields { id: Id; owner: Member; refreshed: Bool; username: Text; title: Text; created: Time }
+  rows read when owner = actor
   transition refresh {
     allow owner = actor
     from refreshed = false
