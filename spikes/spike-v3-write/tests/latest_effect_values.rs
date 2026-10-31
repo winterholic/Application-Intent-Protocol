@@ -81,7 +81,7 @@ resource SalesOrder {
   transition refresh {
     allow true
     from refreshed = false
-    to refreshed = true; enabled = false
+    to refreshed = true, enabled = false
     update Summary when this.enabled = true and this.owner.level > 3 where order = this.id { refreshed = true }
   }
   expose apply refresh { target id; bulk maxRows 3 }

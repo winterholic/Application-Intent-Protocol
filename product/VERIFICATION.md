@@ -1958,3 +1958,11 @@ Evidence in this Run: `cargo fmt --manifest-path spikes/spike-v6-transport/Cargo
 - GREEN: `cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --target-dir target --frozen --offline --no-fail-fast` exit 0. `cargo clippy --manifest-path spikes/spike-v1-fixture/Cargo.toml --target-dir target --frozen --offline --all-targets -- -D warnings` exit 0. 기존 conditional-effect all-form/Bool 검사와 absence isolation marker 회귀도 포함한다.
 - 미컴파일: V3 `latest_effect_values --no-run --frozen --offline`는 locked ctutils 0.4.4 부재(candidates 0.4.3/0.4.2)로 resolver에서 exit 101. Cargo cache 변경·다른 cache·DB 접속은 하지 않았다. V3/V4/V6/MySQL/실DB owner·재시도·격리·전체 앱 동등성은 CI 전 미검증이다.
 - 게시 경계: GitHub repository API read 성공 및 push permission=true만 관측했다. 후보 브랜치/PR 게시 결과와 exact-SHA CI는 후속 기록을 따른다. 로컬 테스트를 1.0 출시 증거로 확대하지 않는다.
+
+### 같은 날 원격 후보 `8e55de9` 검증 후속
+
+- 원격 candidate branch/HEAD 일치 및 draft PR #1 게시를 확인했다. App packages `41209468416`, Object storage `41209468385`, External brokers `41209468375`, Linux cgroup v2 `41209468452`는 completed/success다.
+- Verify `41209468398`, job `124561235278`: Linux isolation 14 passed, cleanup 4 passed/1 ignored, test-support 10 passed. broad 단계는 MySQL all-target Clippy의 `items_after_test_module`로 exit 101. 실제 오류 위치 `mysql_write.rs:1355`; conditional-effect unit module 뒤에 production functions가 있었다. 모듈 내용은 그대로 EOF로 이동했고 Clippy 재실행 결과는 새 후보 CI 전 미검증이다.
+- 현재 V1 binary로 V3 conditional integration source를 검사해 `DEF.PARSE_UNKNOWN_KEY enabled`를 재현했다. `to` 다중 대입의 semicolon을 comma로 교정한 동일 입력은 check exit 0(`exec=d4d708eeda801b55`)이다. 수정 범위의 런타임 raw DSL 4개 전체 accepted, V6 guarded fixture 및 FlaskBB app check도 exit 0. PG assertion은 미실행이다.
+- 추가 worker-jobs workflow_dispatch는 HTTP 403으로 거부됐다. 동일 요청 재시도 없음. run-log CLI는 protected `~/.cache/gh` archive 생성에서 Operation not permitted였고 그 cache 경로는 재시도하지 않았다. 지원 GitHub job-log read API에서 원출력을 읽었다.
+- PostOrder 선택 방향의 최소 DSL은 UUID Post와 numeric companion, nullable 연결·역참조 check·순서 누락 guard까지 accepted이며 guard가 serializable로 표시됐다. 실제 앱/DB migration·high-water·동시 publish·원본 동등성의 완료 증거는 아니다.

@@ -1351,24 +1351,6 @@ fn has_conditional_update_effect(facts: &Value, res: &str, tr: &str) -> bool {
         .any(|effect| effect.get("update").is_some() && effect.get("when").is_some())
 }
 
-#[cfg(test)]
-mod conditional_effect_tests {
-    use super::has_conditional_update_effect;
-    use serde_json::json;
-
-    #[test]
-    fn mysql_refuses_only_transitions_with_conditional_update_effects() {
-        let facts = json!({"resources":{"Order":{"transitions":{
-            "guarded":{"effects":[{"update":"Summary","when":{"lit":true}}]},
-            "plain":{"effects":[{"update":"Summary"}]},
-            "notify":{"effects":[{"notify":{"topic":"order.changed"},"when":{"lit":true}}]}
-        }}}});
-        assert!(has_conditional_update_effect(&facts, "Order", "guarded"));
-        assert!(!has_conditional_update_effect(&facts, "Order", "plain"));
-        assert!(!has_conditional_update_effect(&facts, "Order", "notify"));
-    }
-}
-
 /// Resources a write can change (cache invalidation tags): the transition target plus create/update effect targets.
 fn write_tags(facts: &Value, name: &str) -> Vec<String> {
     let Some((res, tr)) = name.split_once('.') else { return vec![] };
@@ -1627,5 +1609,23 @@ pub async fn handle_status(driver: &MysqlDriver, body: &Value, caller: &Caller, 
         // Only "nothing committed at lookup time"; the write may still be running. Send the same key again to settle it.
         Ok(Ok(None)) => json!({ "ok": false, "code": "WIRE.NOT_FOUND" }),
         Ok(Err(_)) | Err(_) => json!({ "ok": false, "code": "WIRE.DB_UNAVAILABLE" }),
+    }
+}
+
+#[cfg(test)]
+mod conditional_effect_tests {
+    use super::has_conditional_update_effect;
+    use serde_json::json;
+
+    #[test]
+    fn mysql_refuses_only_transitions_with_conditional_update_effects() {
+        let facts = json!({"resources":{"Order":{"transitions":{
+            "guarded":{"effects":[{"update":"Summary","when":{"lit":true}}]},
+            "plain":{"effects":[{"update":"Summary"}]},
+            "notify":{"effects":[{"notify":{"topic":"order.changed"},"when":{"lit":true}}]}
+        }}}});
+        assert!(has_conditional_update_effect(&facts, "Order", "guarded"));
+        assert!(!has_conditional_update_effect(&facts, "Order", "plain"));
+        assert!(!has_conditional_update_effect(&facts, "Order", "notify"));
     }
 }

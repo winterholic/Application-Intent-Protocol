@@ -1,8 +1,14 @@
-# 최신 재개 지점 (2026-10-31, V1 전체 회귀 복구·G6 후보 검증 준비)
+# 최신 재개 지점 (2026-10-31, 원격 G6 후보 CI 후속 교정)
 
-`3e7c621`의 기존 미컴파일 G6 변경을 보존하고 출시 준비를 재개했다. 현재 Codex command 환경에서 V1 전체 검사를 `--frozen --offline --no-fail-fast`로 실행해 두 결함을 재현·교정했다. 수동으로 추가된 `latest` 작성 카드 설명을 생성기로 옮겨 명세와 생성 결과를 일치시켰다(생성 명세 내용은 기존 HEAD와 동일). 허용된 괄호 63단계가 1MB stack에서 SIGABRT하던 회귀는 parser의 `latest` 전용 지역 값을 별도 helper로 분리해 교정했다. 기존 small-stack child는 같은 1MB·깊이를 유지하며 각 단계 로그를 남긴다. 수정 후 V1 전체 회귀와 all-target Clippy `-D warnings`가 exit 0이다. 이는 V1 정의/파서/격리 marker 범위이며 런타임 전체 통과가 아니다.
+출시 후보 `8e55de95b28b38f30a8ba915286d544735d58b83`를 `release/aip-1.0-resume-20261031`에 push했고 [draft PR #1](https://github.com/winterholic/Application-Intent-Protocol/pull/1)을 열었다. 로컬/원격 후보 SHA 일치·clean tree를 확인했다. 이 후보에서 App packages `41209468416`, Object storage `41209468385`, External brokers `41209468375`, Linux cgroup v2 `41209468452`는 success다. Verify `41209468398`는 `crates/aip-migrate/src/mysql_write.rs:1355`의 `clippy::items_after_test_module` 때문에 broad 단계에서 failure다. Linux worker isolation 14개와 cleanup 4개 검사는 이 job에서 통과했으나 broad 이후 runtime/FaceReview UI·DB 단계는 진행하지 못했다. 상위 단계의 성공을 실제 G6 PG 동등성 통과로 확대하지 않는다.
 
-V3 compile-only는 잠긴 `ctutils 0.4.4`가 offline index에 없어 컴파일 전 exit 101이었다. 기존 보호 cache 거부를 재시도하거나 다른 cache로 우회하지 않았다. GitHub API read는 현재 성공했고 repository push permission=true를 관측했다. 기존 G6 runtime/HTTP owner/idempotency 변경은 미컴파일 후보로 보존하며, 후보 브랜치와 draft PR의 exact-SHA CI에서 검증할 예정이다. main 통합·push 성공·실DB 실행·1.0 출시는 아직 주장하지 않는다. 전체 G6 의미 동등성/PostOrder 및 3앱 전체 포팅·crypto·SDK·upgrade/rollback 요구는 열린 상태다.
+두 후속 교정을 묶었다. MySQL conditional-effect unit module을 내용 변경 없이 파일 끝으로 이동했다. V3 conditional-update integration fixture의 `to refreshed = true; enabled = false`가 현재 컴파일러에서 `DEF.PARSE_UNKNOWN_KEY enabled`로 실패함을 별도 재현하고, 다중 대입 구분자를 comma로 고쳤다. 변경된 런타임 테스트 안의 독립 DSL 4개는 현재 V1 binary에서 모두 accepted다. guarded V6 DSL fixture와 FlaskBB 전체 `app.aip`도 각각 check exit 0이다. 이는 정의 검사이며 DB assertion의 통과가 아니다. 후속 후보의 Clippy·PG 결과는 새 CI에서 확인한다.
+
+이전 묶음의 V1 전체 `--frozen --offline --no-fail-fast`와 all-target Clippy `-D warnings`는 exit 0이며 수정하지 않은 결과를 재사용한다. `latest` 명세 생성기 누락과 허용 괄호 63단계/1MB stack overflow를 교정했고 기대값·깊이 제한은 유지했다. PostOrder 최소 정의도 공개 UUID/내부 정수 identity·생성 후 참조 연결·누락 순서 거부의 SERIALIZABLE marker까지 compile됐지만 실제 app/schema에는 적용하지 않았다.
+
+로컬 V3 compile-only는 locked `ctutils 0.4.4` offline index 부재로 컴파일 전에 중단됐다. 보호 cache 거부를 재시도하거나 다른 cache로 우회하지 않는다. 추가 Linux worker-job 수동 dispatch는 GitHub Actions API HTTP 403으로 거부됐으며, repository read/push 성공과 구분한다. `gh run view --log-failed`의 로컬 gh cache archive 생성은 현재 Codex command sandbox에서 거부돼 재시도하지 않았고, 원출력은 지원되는 GitHub job-log read API에서 확보했다.
+
+다음은 후속 후보의 exact-SHA CI를 확인하고 G6 PG guard/owner/idempotency 회귀를 닫은 뒤 main 통합·push·원격 SHA를 대조하는 것이다. 전체 G6 PostOrder/projection 의미 동등성, 3앱 전체 포팅·crypto·SDK·upgrade/rollback·1.0은 미완료다.
 
 # 최신 재개 지점 (2026-10-30, G-6 guard/read-lock source 증분 — compile·DB 미검증)
 
