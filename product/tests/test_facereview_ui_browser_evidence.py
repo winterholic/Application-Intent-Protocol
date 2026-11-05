@@ -32,6 +32,7 @@ from product.tests.facereview_ui_browser_evidence import (
     app_bookmark_read_observation,
     compare_bookmark_read_capture,
     timeline_phase,
+    wait_for_api_completion,
 )
 
 
@@ -39,6 +40,88 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_api_completion_waits_for_requests_without_responses_after_cached_idle(self):
+        started, finished = {'old', 'new'}, {'old'}
+        pending, failures = {}, []
+
+        class Page:
+            ticks = 0
+
+            def wait_for_timeout(self, milliseconds):
+                self.ticks += 1
+                if self.ticks == 1:
+                    pending['new'] = 'body'
+                else:
+                    pending.clear()
+                    finished.add('new')
+
+        page = Page()
+        wait_for_api_completion(page, started, finished, pending, failures)
+        self.assertEqual(finished, started)
+        self.assertEqual(pending, {})
+        self.assertEqual(page.ticks, 2)
+
+    def test_api_completion_never_accepts_a_failed_or_unfinished_request(self):
+        class Page:
+            def wait_for_timeout(self, milliseconds):
+                pass
+
+        for finished, pending, failures in [(set(), {}, []), ({'request'}, {'request': 'body'}, []),
+                                            ({'request'}, {}, [{'path': '/read'}])]:
+            with self.subTest(finished=finished, pending=pending, failures=failures):
+                with self.assertRaises(AssertionError):
+                    wait_for_api_completion(Page(), {'request'}, finished, pending, failures, timeout_ms=0)
+
+    def test_withdraw_capture_keeps_a_reentrant_requestfinished_event(self):
+        for name in ('withdraw', 'password'):
+            with self.subTest(recorder=name):
+                self._assert_reentrant_capture(name)
+
+    def _assert_reentrant_capture(self, name):
+        # Request.all_headers() yields to Playwright's event dispatcher. Execute
+        # the real recorder functions with requestfinished delivered at that point.
+        source = Path(__file__).with_name(f'facereview-ui-{name}-browser.py')
+        tree = ast.parse(source.read_text())
+        functions = [node for node in ast.walk(tree)
+                     if isinstance(node, ast.FunctionDef) and node.name in {'capture', 'capture_body'}]
+        self.assertEqual(len(functions), 2)
+        from urllib.parse import urlsplit
+        namespace = {'urlsplit': urlsplit, 'api_port': 58081, 'json': json,
+                     'rows': [], 'pending': {}, 'finished': set()}
+        factory = ast.parse('def make_recorders():\n    reset_token = None\n').body[0]
+        factory.body.extend(functions)
+        factory.body.extend(ast.parse('return capture, capture_body').body)
+        module = ast.fix_missing_locations(ast.Module(body=[factory], type_ignores=[]))
+        exec(compile(module, str(source), 'exec'), namespace)
+        namespace['capture'], namespace['capture_body'] = namespace['make_recorders']()
+
+        class Request:
+            url = 'http://localhost:58081/auth/logout'
+            method = 'POST'
+            headers = {}
+            post_data_json = {}
+
+            def all_headers(self):
+                namespace['capture_body'](self)
+                return {'cookie': 'refresh_token=fixture'}
+
+        request = Request()
+
+        class Response:
+            status = 200
+            url = request.url
+
+            def body(self):
+                return b'{"ok":true}'
+
+        response = Response()
+        response.request = request
+        namespace['capture'](response)
+        self.assertIn(request, namespace['finished'])
+        self.assertEqual(namespace['pending'], {})
+        self.assertTrue(namespace['rows'][0]['body_captured'])
+        self.assertTrue(namespace['rows'][0]['refresh_cookie_present'])
+
     def test_withdraw_success_selector_rejects_a_longer_failure_message(self):
         source = Path(__file__).with_name('facereview-ui-withdraw-browser.py')
         tree = ast.parse(source.read_text())

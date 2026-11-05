@@ -21,6 +21,7 @@ from playwright.sync_api import expect, sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
     body_failure_reason,
+    wait_for_api_completion,
     member_signup_evidence,
     member_tutorial_evidence,
     safe_browser_failure_type,
@@ -196,7 +197,6 @@ def main() -> int:
                     expect(page.get_by_role("button", name="로그인", exact=True)).to_be_visible()
                     ui["existing_email_branch"] = True
                     page.wait_for_load_state("networkidle")
-                    evidence = member_signup_evidence(rows, ui)
                 else:
                     stage = "login"
                     check_email()
@@ -241,7 +241,8 @@ def main() -> int:
                     page.wait_for_load_state("networkidle")
                     ui["reloaded_tutorial_done"] = True
                     shot("tutorial-main-reloaded.png")
-                    evidence = member_tutorial_evidence(rows, ui, args.phase)
+                wait_for_api_completion(page, started, finished, pending, failures)
+                evidence = member_signup_evidence(rows, ui) if args.phase == "signup" else member_tutorial_evidence(rows, ui, args.phase)
                 assert evidence["verified"], "exact completed auth/tutorial responses and original UI must be verified"
                 assert not failures and started == finished, "all API requests must finish"
                 assert all(row.get("body_captured") is True and row["status"] in {200, 201} and row.get("ok") is True for row in rows), "all API bodies must complete successfully"
