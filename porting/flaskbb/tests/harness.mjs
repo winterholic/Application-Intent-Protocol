@@ -42,7 +42,7 @@ export const USERS_SQL = schema => `INSERT INTO "${schema}".user (id,username,em
  * `actors` maps token subject -> actor id and is bound as service principals.
  * Returns helpers and `stop()`; always call stop() in a finally block.
  */
-export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors = {}, serviceExtra = {}} = {}) {
+export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors = {}, serviceExtra = {}, definitionFile = definition} = {}) {
   const temp = mkdtempSync(join(tmpdir(), prefix));
   const schema = `aip_flaskbb_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const env = {...process.env, AIP_FLASKBB_DATABASE: dbUrl};
@@ -77,7 +77,7 @@ export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors =
       auth: {issuer: 'https://flaskbb.test', audience: 'aip-flaskbb', jwks: {kind: 'file', path: jwksPath}},
       ...serviceExtra,
     }));
-    const init = JSON.parse(run(binary, ['service', 'init', definition, '--config', config]));
+    const init = JSON.parse(run(binary, ['service', 'init', definitionFile, '--config', config]));
     if (!init.ok) throw new Error(`service init: ${JSON.stringify(init)}`);
     const q = `"${schema}"`;
     if (seed) seed(sql, q, schema, run);
@@ -85,7 +85,7 @@ export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors =
       run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', subject, '--actor', String(actor)]);
     }
     run(process.execPath, ['product/tools/build-sdk.mjs', '--out', sdkRoot]);
-    run(binary, ['service', 'gen', definition, '--out', bindingPath]);
+    run(binary, ['service', 'gen', definitionFile, '--out', bindingPath]);
     const bindingSource = readFileSync(bindingPath, 'utf8');
     const section = name => JSON.parse(bindingSource.match(new RegExp(`export const ${name} = (.*) as const;`))[1]);
     const contract = {
@@ -118,7 +118,7 @@ export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors =
       server.stderr.destroy();
       return started;
     };
-    let started = await start(definition);
+    let started = await start(definitionFile);
     const {connect} = await import(pathToFileURL(join(sdkRoot, 'product/sdk/index.js')).href);
     const token = subject => {
       const now = Math.floor(Date.now() / 1000);

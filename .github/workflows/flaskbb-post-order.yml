@@ -55,4 +55,4 @@ jobs:
       - name: Build the product CLI
         run: cargo build -p aip-cli --locked
       - name: Verify active FlaskBB native ordering and the legacy allocation fence
-        run: node --test porting/flaskbb/tests/post-order-native.test.mjs
+        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs
