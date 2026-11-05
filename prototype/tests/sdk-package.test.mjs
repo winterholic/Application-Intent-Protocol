@@ -10,7 +10,7 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const prototypeDir = resolve(testDir, "..");
 const repoDir = resolve(prototypeDir, "..");
 const buildScript = join(prototypeDir, "tools", "build-sdk.mjs");
-const cli = join(prototypeDir, "target", "debug", "aip-prototype");
+const cli = process.env.AIP_PROTOTYPE_BINARY ?? join(prototypeDir, "target", "debug", "aip-prototype");
 const definition = join(prototypeDir, "example", "app.aip");
 const tsc = join(repoDir, "spikes", "spike-0-ts", "node_modules", ".bin", "tsc");
 
