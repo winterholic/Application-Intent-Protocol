@@ -39,6 +39,27 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_withdraw_success_selector_rejects_a_longer_failure_message(self):
+        source = Path(__file__).with_name('facereview-ui-withdraw-browser.py')
+        tree = ast.parse(source.read_text())
+        message = '탈퇴가 완료되었어요'
+        selectors = [node for node in ast.walk(tree)
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                     and node.func.attr == 'get_by_text' and node.args
+                     and isinstance(node.args[0], ast.Constant) and node.args[0].value == message]
+        self.assertEqual(len(selectors), 1)
+        selector = compile(ast.Expression(selectors[0]), str(source), 'eval')
+
+        class Page:
+            def __init__(self, text):
+                self.text = text
+
+            def get_by_text(self, text, *, exact=False):
+                return self.text == text if exact else text in self.text
+
+        self.assertTrue(eval(selector, {'page': Page(message)}))
+        self.assertFalse(eval(selector, {'page': Page(message + ' — 실제 처리 실패')}))
+
     def test_tutorial_reload_checks_requeried_runtime_state_without_persisted_tutorial(self):
         # Execute the actual page predicate. The pinned store persists sign-in/id,
         # but App refreshes user_tutorial only in the live Zustand store on mount.

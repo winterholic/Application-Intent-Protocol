@@ -174,11 +174,11 @@ def main() -> int:
                     page.locator(".withdraw-modal-confirm").click()
                 reply.value.finished()
                 capture_body(reply.value.request)
-                # The original toasts success, closes the modal, then logs out to /main.
+                # The original toasts success, closes the modal, then logs out to /main (or /auth/1 via ScreenContainer).
                 expect(page.get_by_text("탈퇴가 완료되었어요", exact=True)).to_be_visible(timeout=10000)
                 ui["withdraw_confirmed"] = True
                 shot("withdraw-confirmed.png")
-                expect(page).to_have_url(re.compile(r"/main$"), timeout=30000)
+                expect(page).to_have_url(re.compile(r"/(main|auth/1)$"), timeout=30000)
                 page.wait_for_function("""() => {
                   const s = JSON.parse(localStorage.getItem('auth-storage') || 'null')?.state;
                   return s?.is_sign_in === false && s?.access_token === '' && s?.user_id === '';
@@ -225,7 +225,8 @@ def main() -> int:
                   "failed": len(failures), "unfinished": len(started - finished)}, "screenshots": screenshots,
                   "credentials_recorded": False, "browser_api_mocks": False}
         (output / "withdraw-browser-result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-        print(json.dumps({"journey": "member_withdraw", "stage": stage, "status": status}))
+        print(json.dumps({"journey": "member_withdraw", "stage": stage, "status": status,
+                          "failure_type": failure_type, "failure_line": failure_line, "failure_path": failure_path}))
     return status
 
 

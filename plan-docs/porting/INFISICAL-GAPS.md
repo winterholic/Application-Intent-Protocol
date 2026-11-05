@@ -24,6 +24,8 @@
 
 현재 포팅 처리: `app.aip`는 값을 선언하지 않고 머리 주석과 `docs { summary }`로 갭을 표시한다. 값 없는 Secret은 폴더, 이름, 소유자, 리마인더 시각만 가진다. 암호화에 의존하는 값·버전·회전·개인 값 병합은 여전히 미구현이다.
 
+2026-11-06 교정: 암호화 필드를 활성 `app.aip`에 넣으면 기존 바이너리가 init에서 `BAD_FACTS`, serve에서 `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`로 거부하므로 구조·권한 live harness도 시작하지 못한다. 해당 초안은 `porting/infisical/tests/fixtures/encrypted-app.aip`의 정적 compile/gate fixture로 보존하고 활성 정의는 기존 구조·권한 모델로 복구했다. 활성 정의의 암호화 runtime advisory 부재 회귀는 교정 전 실패, 교정 후 계약 9건은 통과했다. 현 바이너리의 gate 증거이며 현재 Rust source의 새 빌드·실DB·키 회전·버전 의미를 검증한 결과가 아니다. `Secret.updateValue`의 원자적 버전 증가/이력 생성·원본 세부 권한·삭제 범위는 미구현 또는 미검증이다. 앞선 P1 5건 중 4건 해결이라는 판정은 근거가 부족해 철회한다. 설계 13의 Proposed와 G2 open을 유지한다.
+
 ### G10. 삭제 의미와 이름 유일 제약: 원본과 동등하게 해소 (2026-10-20)
 
 이전 판은 "제품 방언에 물리 delete와 부분 유일 제약이 없다"고 보고 `SecretKey`(영구 이름)와 `Secret`(세대, `deleted` 플래그)로 나누어 소프트 삭제와 `limit atMostOneLiveSecret`으로 근사했다. 2026-10-19에 `transition ... { delete; ... }`가 있음이 확인됐고(FlaskBB `User.purge` 등), 원본을 다시 읽으니 그 근사는 원본과 달랐다.
@@ -80,7 +82,7 @@
 현재 포팅(`app.aip`): `PersonalSecret{secret, user}`, `unique secret, user`. 행은 소유자만 읽는다(`rows read when user = actor and canReadProject(...)`), 소유자만 만들 수 있고(`user = actor`) 프로젝트 읽기 권한이면 충분하다. 소유자만 `PersonalSecret.delete`로 지운다. `Secret.delete`는 `delete many PersonalSecret ... where secret = this.id` 효과로 같은 트랜잭션에서 모든 사용자의 재정의를 지운다. **재현**(실DB, 임시 PostgreSQL 17, `tests/test_live_db.py`): 없는 시크릿·남의 이름 `WIRE.MISSING_TARGET`·`WIRE.FORBIDDEN`, 읽기 전용 사용자는 만들 수 있고 권한 없음·다른 조직은 `WIRE.MISSING_TARGET`, 같은 사용자 두 번째는 `WIRE.ALREADY_EXISTS`, 소유자 외에는 조직 admin도 보지 못하고 지우지 못함, 공유 시크릿 일괄 삭제가 두 시크릿의 모든 재정의를 지우고 다른 시크릿의 것은 남김, 효과 감사 행 `delete:delete`(전이 `Secret.delete`의 효과, before `user` 3, after null), 재정의 1001개는 `WIRE.EFFECT_TARGET_MISSING`으로 통째 거부·1000개는 통과(수정 전 정의에서 신규 9건 모두 실패 후 통과).
 
 원본과 다른 점:
-- **값과 우선 병합**: 개인 값, 그것이 공유 값을 덮는 목록 병합(`Priority`)은 값 열이 있어야 선언할 수 있다. 값이 없는 지금은 "재정의가 있다"는 사실만 소유자가 읽는다(G2 대기).
+- **값과 우선 병합**: 개인 값과 `updateValue`의 암호화 선언은 정적 fixture에만 보존했다. 활성 앱에는 값 열이 없으며, 개인 값이 공유 값을 덮는 목록 우선순위 병합(`Priority`)과 암호화 런타임 통합은 G2 open이다.
 - **유일성이 더 엄격**: 원본은 개인 행 중복을 막지 않는다(위 표). 포팅은 `(secret, user)`를 DB 유일로 둔다. 원본에서 같은 사용자의 중복 행이 실제로 생기는지는 실행하지 않아 확인 필요.
 - **폴더 `forceDelete`와 재정의**: 원본은 폴더 삭제의 DB 연쇄가 개인 행도 지운다. 포팅의 `Folder.forceDelete`는 시크릿을 지우는 효과가 그 시크릿의 재정의까지 지우지 못한다(두 단계 일치 `where secret.folder = this.id`는 `service check`가 `DEF.PARSE_EXPECTED`로 거부, G14와 같은 제약). 외래 키 위반으로 미확정 실패를 내는 대신 재정의가 남은 시크릿이 있는 폴더의 `forceDelete`를 `WIRE.INVALID_STATE`로 거부한다. 재정의를 먼저 지우거나 시크릿을 `Secret.delete`로 지우면 된다.
 - **재정의 1000개 상한**: 공유 시크릿 하나에 재정의가 1000개를 넘으면 삭제가 통째로 거부된다(원본은 무제한).
