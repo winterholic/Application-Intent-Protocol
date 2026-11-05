@@ -130,7 +130,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/flaskbb-ui"
           "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
-          PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host porting.flaskbb.tests.test_mail_jobs
+          PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host porting.flaskbb.tests.test_mail_jobs porting.flaskbb.tests.test_settings_upgrade
           node --test porting/flaskbb/tests/sticky-order.test.mjs
           node --test porting/flaskbb/tests/last-post-recompute.test.mjs
       - name: Verify Infisical port (secret uniqueness, physical delete, roles) on PostgreSQL
@@ -163,6 +163,7 @@ jobs:
           porting/flaskbb/tests/purge.test.mjs
           porting/flaskbb/tests/cli-users-delete.test.mjs
           porting/flaskbb/tests/cli-upgrade.test.mjs
+          porting/flaskbb/tests/settings-upgrade.test.mjs
           porting/flaskbb/tests/moderation.test.mjs
           porting/flaskbb/tests/provisioning.test.mjs
           porting/flaskbb/tests/aip-read.test.mjs

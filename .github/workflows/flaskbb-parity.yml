@@ -1,0 +1,90 @@
+name: FlaskBB remaining contracts
+
+on:
+  push:
+    branches: [main, verify/flaskbb-parity-20261106]
+    paths:
+      - '.github/workflows/flaskbb-parity.yml'
+      - 'porting/flaskbb/app.aip'
+      - 'porting/flaskbb/seed/upgrade_settings.py'
+      - 'porting/flaskbb/tests/*settings*'
+      - 'porting/flaskbb/tests/cli-upgrade.test.mjs'
+      - 'spikes/spike-v3-write/src/**'
+      - 'spikes/spike-v3-write/tests/foreign_key_refusal.rs'
+      - 'spikes/spike-v6-transport/src/wire_codes.rs'
+      - 'product/python/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flaskbb-contracts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+      AIP_BINARY: ${{ github.workspace }}/target/debug/aip
+      PYTHONDONTWRITEBYTECODE: '1'
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Install fixture tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          rustup update stable
+          rustup default stable
+          npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+          python3 -m venv "$RUNNER_TEMP/aip-python-checks"
+          "$RUNNER_TEMP/aip-python-checks/bin/pip" install --no-cache-dir mypy==2.4.0 setuptools wheel
+          echo "$RUNNER_TEMP/aip-python-checks/bin" >> "$GITHUB_PATH"
+      - name: Verify settings fixture planning
+        run: python3 -m unittest porting.flaskbb.tests.test_settings_upgrade -v
+      - name: Verify immediate and deferred foreign key refusals
+        if: ${{ !cancelled() }}
+        run: cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test foreign_key_refusal -- --nocapture
+      - name: Build current product CLI
+        id: build_cli
+        if: ${{ !cancelled() }}
+        run: cargo build -p aip-cli --locked
+      - name: Verify authenticated settings upgrade and migration preservation
+        if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
+        run: node --test --test-concurrency=1 porting/flaskbb/tests/settings-upgrade.test.mjs porting/flaskbb/tests/cli-upgrade.test.mjs
+      - name: Verify official Python SDK runtime, generation, types and installed wheel
+        if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
+        run: python3 -W error::ResourceWarning -m unittest product.tests.python_sdk_test -v
+      - name: Build shared prototype binary
+        id: build_prototype
+        if: ${{ !cancelled() }}
+        run: cargo build --manifest-path prototype/Cargo.toml --locked --target-dir target
+      - name: Verify product and prototype SDK build, pack, install and declarations
+        if: ${{ !cancelled() && steps.build_prototype.outcome == 'success' }}
+        env:
+          AIP_PROTOTYPE_BINARY: ${{ github.workspace }}/target/debug/aip-prototype
+        run: node --test product/tests/sdk-package.test.mjs prototype/tests/sdk-package.test.mjs
+      - name: Diagnose the bounded admission quota failure independently
+        if: ${{ !cancelled() }}
+        run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --lib admission::tests::simultaneous_connections_share_one_principal_route_quota -- --nocapture

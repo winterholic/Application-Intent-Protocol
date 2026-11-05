@@ -639,6 +639,16 @@ resource SettingsGroup {
   fields { id: Id; key: Text(1..255); name: Text(1..255); description: Text }
   unique key
   rows read when actor.primary_group.admin or actor.primary_group.super_mod
+  expose create {
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
+    fields key, name, description
+  }
+  transition edit {
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
+    from true
+    patch name, description
+  }
+  expose apply edit { target id; bulk maxRows 1 }
   expose read {
     select id, key, name, description
     filter key.eq
@@ -660,6 +670,16 @@ resource Setting {
   }
   unique key
   rows read when actor.primary_group.admin or actor.primary_group.super_mod
+  expose create {
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
+    fields key, value_json, group, name, description, value_type, extra_json
+  }
+  transition edit {
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
+    from true
+    patch value_json, group, name, description, value_type, extra_json
+  }
+  expose apply edit { target id; bulk maxRows 1 }
   expose read {
     select id, key, value_json, group, name, description, value_type, extra_json
     filter group.eq, key.eq

@@ -1,5 +1,12 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-06 G-15 설정 fixture 서비스 경로 — 계획·DSL 검증, 실DB 대기
+
+`seed/upgrade_settings.py`는 공식 Python SDK의 key 기반 read와 노출 create/edit를 사용한다. 기본 실행은 빠진 그룹·설정만 추가하고, `--force`에서만 기존 이름·설명·값·타입·extra·소속 그룹을 덮어쓴다. 그룹 생성 후 서버 ID를 다시 읽고 설정을 반영하며 SQL 우회는 없다. 원본처럼 전체 fixture가 하나의 트랜잭션은 아니다. 거부와 결과 미확정은 nonzero이며 미확정 응답에는 동일 키·요청을 보존한다. write 인가는 활성 admin/super_mod다. 기존 제품 감사는 edit 전이의 before/after에 적용되고 create 자체 감사는 기존 제한대로 없다.
+
+계획 회귀는 RED 6 failures → GREEN 11 tests, 기존 V1 실제 parser에서 새 create/edit 노출·key 변경 금지를 확인했다. `settings-upgrade.test.mjs`는 누락 그룹 재생성·기존 값 보존·force·재실행·감사·회원/비활성 거부·super_mod 허용을 실제 HTTP/PG에서 확인하도록 추가했고 `cli-upgrade`의 migrate/원시 설치 재실행 거부 회귀를 유지했다. Linux 집중/worker CI에 등록했다. 현재 로컬의 기존 service 바이너리는 최신 문법을 읽지 못하고, root app의 기존 무관 dirty latest 문법도 V1 검사를 실패시켜, 정상 기준 app에 새 두 resource 블록만 적용한 fixture로 DSL을 확인했다. Rust 새 빌드·실DB·전체 F01–F17 동등성은 미검증이며 G-15는 계속 open이다.
+
+
 ## 2026-11-01 G-6 PostOrder offline 이관 사전 검사
 
 `seed/post_order_manifest.py`가 검증된 원본/대상 export의 namespace·revision·high-water, ID/UUID 일대일 대응·published 전체 범위·기존 pair/역참조·재실행을 검사한다. 21개 stdlib 회귀 통과. 원순서는 입력의 정수 ID만 사용하며 generator floor를 낮추지 않는다. [입력 형식과 실행](README.md#source-order-import-preflight-g-6). 이 도구는 offline plan만 출력하며 실제 provenance/freshness·DB migration·writer fence·sequence 적용·publish 활성화는 검증하지 않는다. `activation_authorized=false`; app.aip는 아직 PostOrder를 사용하지 않는다. G-6와 전체 포팅은 계속 open이다.

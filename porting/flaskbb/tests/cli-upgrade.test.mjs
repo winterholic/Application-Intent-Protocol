@@ -12,13 +12,12 @@ import {binary, definition, dbUrl, root, startFixture} from './harness.mjs';
 // the settings and groups the database lacks and overwrites existing ones only
 // with `--force` (utils/populate.py:87-145). The migration half maps to
 // `service migrate` (planned, digest-acknowledged; pinned in cli.test.mjs). The
-// fixture half has no AIP counterpart: Setting and SettingsGroup have no
-// write transition and `seed/install.py` is install-only (PRODUCT-GAPS.md
-// G-15). This test pins both facts on a real schema so a future fixture-update
-// path has to change them deliberately.
+// fixture half uses seed/upgrade_settings.py over the official SDK, covered by
+// settings-upgrade.test.mjs. The raw install seed stays install-only. This test
+// retains the migration and non-reinstallation guarantees.
 const installer = join(root, 'porting/flaskbb/seed/install.py');
 
-test('FlaskBB upgrade: migrate keeps settings, fixture update has no service path (real PostgreSQL)', {timeout: 120000}, async () => {
+test('FlaskBB upgrade: migrate keeps settings and the raw installer refuses reinstallation (real PostgreSQL)', {timeout: 120000}, async () => {
   const fx = await startFixture({prefix: 'aip-flaskbb-upgrade-', seed: undefined});
   const {sql, q, schema, run, client, config, temp} = fx;
   try {
@@ -31,12 +30,12 @@ test('FlaskBB upgrade: migrate keeps settings, fixture update has no service pat
     const settingCount = () => Number(sql(`SELECT count(*) FROM ${q}.setting`));
     const groupCount = () => Number(sql(`SELECT count(*) FROM ${q}.settings_group`));
 
-    // The generated caller binding exposes no write on either settings resource.
+    // Both fixture resources now expose authenticated write transitions.
     const binding = readFileSync(join(temp, 'binding.ts'), 'utf8');
     const applyBlock = binding.slice(binding.indexOf('export interface ApplyContract {'), binding.indexOf('export const applyInputDescriptors'));
     const applies = [...applyBlock.matchAll(/^ {2}"([A-Za-z]+\.[A-Za-z]+)": \{/gm)].map(match => match[1]);
     assert.ok(applies.includes('User.purge') && applies.includes('Category.edit'), 'the parse found the declared applies');
-    assert.deepEqual(applies.filter(name => /^Setting(sGroup)?\./.test(name)), []);
+    assert.deepEqual(applies.filter(name => /^Setting(sGroup)?\./.test(name)).sort(), ['Setting.edit', 'SettingsGroup.edit']);
     const settingsRead = await client('admin-sub').read({read: 'Setting', select: ['key']});
     assert.equal(settingsRead.rows.length, settingCount());
 
@@ -48,7 +47,7 @@ test('FlaskBB upgrade: migrate keeps settings, fixture update has no service pat
     const groups = groupCount();
     assert.deepEqual([setting('posts_per_page'), setting('topics_per_page')], ['55', '']);
 
-    // Re-running the fixture seed is the only fixture path. It refuses as a
+    // Re-running the raw install seed refuses as a
     // whole, so the missing setting is not added and the changed one is kept.
     const again = psql(seedSql);
     assert.notEqual(again.status, 0, 'the install seed must not run twice');

@@ -1,5 +1,18 @@
 # FlaskBB 2019 AIP porting track
 
+## Settings fixture upgrade (G-15)
+
+After applying the definition through the normal service migration procedure, run the authenticated settings updater with the official Python SDK installed:
+
+```sh
+export AIP_FLASKBB_ADMIN_TOKEN='<activated admin or super-mod access token>'
+python3 porting/flaskbb/seed/upgrade_settings.py --url http://127.0.0.1:58081
+# Explicitly restore existing values from the pinned fixture:
+python3 porting/flaskbb/seed/upgrade_settings.py --url http://127.0.0.1:58081 --force
+```
+
+Only the pinned `settings` fixture is accepted. The default adds missing groups and settings and preserves operator edits; `--force` also replaces changed fields. Existing unrelated rows remain. Groups commit before settings so generated IDs can be resolved; an interrupted run can have partial progress, as upstream can. Any refusal or unconfirmed write exits nonzero. For an unconfirmed write, preserve the printed key/request and resolve it using the SDK before rerunning. The command reads its token from the named environment variable (`--token-env`), never from a command argument. Existing transition audit records cover edits; creates retain the product's current no-create-audit limitation. Offline planning and DSL checks pass; live permission, audit, migration and PostgreSQL tests remain unverified until Linux CI reports.
+
 This track keeps the original FlaskBB source snapshot under `upstream/` and does not edit it. Read [the source decision](../../plan-docs/porting/FLASKBB-SELECTION.md), then [status](STATUS.md) and the forthcoming [full inventory](INVENTORY.md).
 
 To build and run the upstream baseline, see the commands recorded in `STATUS.md` after the first actual run. All users, data, credentials, service ports, and databases are test-only and isolated. This application is not the FaceReview port and does not close its open WBS.
