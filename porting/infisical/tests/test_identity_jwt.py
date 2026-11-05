@@ -135,7 +135,9 @@ class IdentityJwtTests(unittest.TestCase):
     def test_signed_payload_must_be_a_claims_object(self):
         for payload in ([], [self._claims()], "identity", None, 7):
             token = _jws.serialize_compact({"alg": "RS256"}, json.dumps(payload).encode(), self.key)
-            with self.subTest(payload=payload), self.assertRaisesRegex(ValueError, "claims"):
+            # joserfc can reject a non-object payload during decode, before our
+            # claims-shape guard. Both paths must reject it; wording is internal.
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
                 infisical_jobs.verify_identity_token(token, now=self.now)
 
     def test_optional_dates_may_be_absent_and_large_integer_dates_stay_exact(self):

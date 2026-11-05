@@ -1,5 +1,13 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-06 G-14 오류 계약·G-15 설정 갱신 Linux GREEN
+
+집중 CI [42131013863](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42131013863)는 실제 checkout `5cb487c358c3b88f982dd5e02c16cb817e26d703`에서 success다. PostgreSQL 즉시·지연 FK × apply/bundle/compose 6거부에서 `WIRE.REFERENCE_CONFLICT`와 효과 롤백·행 보존, 참조가 없는 정상 compose 삭제를 통과했다. commit_classification 18tests와 wire registry/생성 문서 9tests도 통과했다. 실제 HTTP의 바인딩 및 revoke된 principal은 `retry: never`로 확정 거부되며 바인딩·사용자는 보존된다. 바인딩 삭제·retention 동등성 정책은 변경하지 않았으므로 G-14 전체는 open이다.
+
+같은 실행에서 설정 갱신·migration·bound principal HTTP/PG 3tests, Python SDK 30tests(생성·타입·설치 wheel), product/prototype SDK build/pack/install/declarations 9tests가 통과했다. G-15 설정 fixture 갱신의 누락분·force·재실행·권한·감사·행 보존 계약은 검증됐다. 전체 F01–F17, 활성 PostOrder 이관·writer fence·순서 적용, 전체 부하의 admission 경합은 이 집중 성공만으로 완료 판정하지 않는다.
+
+아래 날짜별 절은 당시의 source-only·RED·검증 대기 이력이다. 위 실행 증거가 같은 범위의 대기 표기를 대체하며 미실행 범위를 유지한다.
+
 ## 2026-11-06 Linux 코어·SDK·G-15 실행과 G-14 RED 후속
 
 코어 PR 실행 `42125368332`의 실제 checkout `27e42bc`(main `5e4f39f` + core `c4a0f46`)에서 broad gate와 PG 7회귀(boolean/조건부 update 3종/latest 값/nullable projection/PostOrder sequence)가 통과했다. 이 코어와 응답 수집기 6파일 교정은 main `e392060`에 게시됐다. FaceReview 원 실행의 browser 실패 3건은 탈퇴 logout body 누락과 tutorial 미완료 요청이며 DB는 성공했다. 수집기 실제 AST 재진입 RED 및 관련 Python 67 tests GREEN 뒤 main CI `42130341735`·worker `42130341733`이 실행 중이다.

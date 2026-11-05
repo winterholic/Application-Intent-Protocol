@@ -175,3 +175,8 @@
 | G7 | CASL 조건식 → predicate | 이 세션에서 역할 기반 권한(admin/member/viewer/no-access, 조직 admin 암묵 권한)은 predicate로 표현하고 실DB로 확인했다. 원본의 조건식(환경, 경로, 태그 조건)과 권한 평가 핵심의 EE 소재는 미확인이며 EE 경계 문서에서 다룬다 |
 | G8 | provider capability 등록 절차 | 90종 연동의 등록·검증·버전 운영 절차 미정. 미착수 |
 | G13 | 서버 job 확장이 큐별 의미(동기화, 리마인더 전달, 웹훅)를 실제로 수행하려면 필요한 capability(외부 HTTP, SMTP, 큐 재시도 정책)와 resource가 아직 선언되지 않았다 | 큐 33개 중 1개만 구현([INFISICAL-JOBS.md](INFISICAL-JOBS.md)) |
+
+
+### 2026-11-06 JWT 거부 시험의 내부 오류 문구 의존 교정
+
+main `e392060` worker CI `42130341733`/job `127605057280`는 115tests 중 서명된 비객체 payload 5 subcase에서 실패했다. 실제 토큰은 모두 거부됐으며 `joserfc`가 claims 접근 전에 `InvalidPayloadError`를 내는 경로와 시험의 `claims` 문자열 기대만 충돌했다. 제품 worker·서명·인가 코드는 변경하지 않고 시험을 `ValueError` 거부 계약에 맞췄다. 같은 로컬 의존성 `joserfc 1.8.0`에서 수정 전 17tests/5fail → 수정 후 17tests OK, 비객체를 수락하도록 바꾼 negative control은 5subcase 모두 실패했다. 암호화 runtime·키 회전·전체 Infisical 포팅과 새 Linux 전체 결과는 별도 미완료다.
