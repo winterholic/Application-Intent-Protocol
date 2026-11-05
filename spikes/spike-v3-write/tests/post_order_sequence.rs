@@ -24,7 +24,11 @@ resource Post {
   }
   expose apply publish { target id; bulk maxRows 1 }
 }
-resource PostOrder { fields { id: Id; post: Post } unique post }
+resource PostOrder {
+  fields { id: Id; post: Post }
+  rows read when post.owner = actor
+  unique post
+}
 "#;
 
 fn request(id: &str) -> serde_json::Value {

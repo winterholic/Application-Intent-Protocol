@@ -766,8 +766,13 @@ fn write_err(stage: &str, e: tokio_postgres::Error) -> Reject {
     }
 }
 
+struct EffectStart {
+    eligible: Vec<Vec<EntityId>>,
+    pre_rows_json: Option<String>,
+}
+
 /// 서버가 정의한 전이 효과. 값은 바뀐 대상 행에서 계산한다(W2).
-// Keep the pre-state guard mask with the transaction and transition context.
+// Keep the pre-state guard mask and row snapshot with the transaction and transition context.
 #[allow(clippy::too_many_arguments)]
 async fn effects(
     tx: &Transaction<'_>,
@@ -775,7 +780,7 @@ async fn effects(
     res: &str,
     tr: &str,
     change: &[EntityId],
-    eligible: &[Vec<EntityId>],
+    start: &EffectStart,
     caller: &Caller,
     knobs: &Knobs,
 ) -> Result<(), Reject> {
@@ -783,7 +788,7 @@ async fn effects(
         return Ok(());
     }
     for (index, e) in facts["resources"][res]["transitions"][tr]["effects"].as_array().into_iter().flatten().enumerate() {
-        let effect_change = eligible.get(index).ok_or_else(|| internal("전이 효과 조건 대상 누락"))?;
+        let effect_change = start.eligible.get(index).ok_or_else(|| internal("전이 효과 조건 대상 누락"))?;
         if effect_change.is_empty() {
             continue;
         }
@@ -798,9 +803,11 @@ async fn effects(
             for (f, v) in e["match"].as_object().unwrap() {
                 conds.push(format!("u.{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
             }
+            let use_pre_row = e.get("when").is_some();
+            let value_env = if use_pre_row { Env { this: Some(("pre_t".into(), res.to_string())), ..Default::default() } } else { env.clone() };
             let mut sets = vec![];
             for (f, v) in e["values"].as_object().unwrap() {
-                sets.push(format!("{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
+                sets.push(format!("{} = {}", column(facts, target, f).unwrap(), cx.value(v, &value_env).map_err(internal)?));
             }
             let ip = cx.params.bind(Some(id_array(effect_change)), id_array_cast(facts, res));
             let children = if let Some(max) = e.get("maxRows") {
@@ -827,11 +834,17 @@ async fn effects(
             } else {
                 None
             };
+            let from_source = if use_pre_row {
+                let pre_rows = start.pre_rows_json.as_deref().ok_or_else(|| internal("전이 효과 사전 스냅샷 누락"))?;
+                let snap = cx.params.bind(Some(pre_rows.to_string()), "jsonb");
+                format!("{} t JOIN jsonb_populate_recordset(NULL::{}, {snap}) pre_t ON pre_t.id = t.id", table(res), table(res))
+            } else {
+                format!("{} t", table(res))
+            };
             let sql = format!(
-                "UPDATE {} u SET {} FROM {} t WHERE t.id = ANY({ip}) AND {} RETURNING t.id",
+                "UPDATE {} u SET {} FROM {from_source} WHERE t.id = ANY({ip}) AND {} RETURNING t.id",
                 table(target),
                 sets.join(", "),
-                table(res),
                 conds.join(" AND ")
             );
             let params = cx.params.values.clone();
@@ -987,9 +1000,10 @@ async fn effect_targets_at_transition_start(
     change: &[EntityId],
     caller: &Caller,
     knobs: &Knobs,
-) -> Result<Vec<Vec<EntityId>>, Reject> {
+) -> Result<EffectStart, Reject> {
     let effects = facts["resources"][res]["transitions"][tr]["effects"].as_array().into_iter().flatten();
     let mut eligible = Vec::new();
+    let mut pre_rows_json = None;
     for effect in effects {
         // `when` is currently a contract only for update effects. Keep other effect kinds on their
         // existing unconditional path instead of accidentally suppressing them from an unknown guard.
@@ -1012,15 +1026,21 @@ async fn effect_targets_at_transition_start(
         let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
         let condition = cx.cond(condition, &env).map_err(internal)?;
         let ids = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
-        let sql =
-            format!("SELECT t.id, ({condition}) IS TRUE AS enabled FROM {} t WHERE t.id = ANY({ids}) ORDER BY t.id FOR UPDATE OF t", table(res));
+        let sql = format!(
+            "SELECT t.id, ({condition}) IS TRUE AS enabled, to_jsonb(t)::text FROM {} t WHERE t.id = ANY({ids}) ORDER BY t.id FOR UPDATE OF t",
+            table(res)
+        );
         let rows = typed_query(tx, &sql, &cx.params.values).await.map_err(|error| write_err("전이 효과 조건", error))?;
         if rows.len() != change.len() {
             return rej("WIRE.CONFLICT", format!("전이 효과 조건 판정 {}개와 잠긴 행 {}개가 다름", rows.len(), change.len()));
         }
+        if pre_rows_json.is_none() {
+            let elements: Vec<String> = rows.iter().map(|row| row.get::<_, String>(2)).collect();
+            pre_rows_json = Some(format!("[{}]", elements.join(",")));
+        }
         eligible.push(rows.iter().filter(|row| row.get::<_, bool>(1)).map(|row| row.get(0)).collect());
     }
-    Ok(eligible)
+    Ok(EffectStart { eligible, pre_rows_json })
 }
 
 /// 생성할 행의 값 출처. 호출자 리터럴(W0) 또는 서버가 읽은 대상 행의 경로(W1).

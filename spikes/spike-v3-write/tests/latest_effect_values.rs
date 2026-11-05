@@ -23,8 +23,14 @@ resource SalesOrder {
   expose apply refresh { target id; bulk maxRows 1 }
   expose compose { bulk maxRows 1; transitions refresh }
 }
-resource Summary { fields { id: Id; order: SalesOrder; label: Text?; created: Time? } }
-resource Item { fields { id: Id; order: SalesOrder; active: Bool; label: Text; created: Time? } }
+resource Summary {
+  fields { id: Id; order: SalesOrder; label: Text?; created: Time? }
+  rows read when order.owner = actor
+}
+resource Item {
+  fields { id: Id; order: SalesOrder; active: Bool; label: Text; created: Time? }
+  rows read when order.owner = actor
+}
 "#;
 
 fn schema() -> String {

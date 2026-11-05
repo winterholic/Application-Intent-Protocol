@@ -29,7 +29,10 @@ resource SalesOrder {
   expose apply refresh { target id; bulk maxRows 3 }
   expose compose { bulk maxRows 3; transitions refresh }
 }
-resource Summary { fields { id: Id; order: SalesOrder; refreshed: Bool } }
+resource Summary {
+  fields { id: Id; order: SalesOrder; refreshed: Bool }
+  rows read when order.owner = actor
+}
 "#;
     let facts = load_str(source, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
     let mut db = connect_with_url(DB).await.unwrap();
