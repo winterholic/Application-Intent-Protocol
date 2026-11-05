@@ -1,0 +1,359 @@
+// Static encryption compile/gate fixture; never used by the live port harness.
+// Version lifecycle, original secret-specific permissions and encrypted storage integration are unverified.
+enum OrgRole { ADMIN, MEMBER }
+enum ProjectRole { ADMIN, MEMBER, VIEWER, NO_ACCESS }
+actor User
+
+// -- predicates ---------------------------------------------------------------------------------------------------
+predicate isOrgMember(viewer: User?, targetOrg: Organization?) = viewer != null and targetOrg != null and exists OrgMembership where user = viewer and org = targetOrg
+predicate isOrgAdmin(viewer: User?, targetOrg: Organization?) = viewer != null and targetOrg != null and exists OrgMembership where user = viewer and org = targetOrg and role = ADMIN
+predicate orgHasNoMember(targetOrg: Organization?) = targetOrg != null and not exists OrgMembership where org = targetOrg
+predicate sharesOrgWith(viewer: User?, other: User?) = viewer != null and other != null and exists OrgMembership where user = other and isOrgMember(viewer, org)
+// Org admins reach every project of their org (draft decision, differs from upstream; see INFISICAL-GAPS.md G7).
+predicate canReadProject(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject and role in (ADMIN, MEMBER, VIEWER))
+predicate canWriteProject(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject and role in (ADMIN, MEMBER))
+predicate isProjectAdmin(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject and role = ADMIN)
+
+resource User {
+  fields { id: Id; email: Text(3..200); username: Text(1..200)? }
+  unique email
+  // A user is visible to themselves and to members of an organization they share, never to the whole table.
+  rows read when this = actor or sharesOrgWith(actor, this)
+  expose read {
+    select id, email, username
+    filter id.eq, email.eq, username.prefix
+    sort id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 1000; cursor }
+  }
+}
+
+resource Organization {
+  fields { id: Id; name: Text(1..100); slug: Text(1..100); createdBy: User }
+  unique slug
+  rows read when isOrgMember(actor, this) or createdBy = actor
+  expose create {
+    allow actor != null and createdBy = actor
+    fields name, slug, createdBy
+  }
+  expose read {
+    select id, name, slug
+    filter id.eq, slug.eq, name.prefix
+    sort id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
+  }
+}
+
+resource OrgMembership {
+  fields { id: Id; user: User; org: Organization; role: OrgRole }
+  unique user, org
+  rows read when isOrgMember(actor, org)
+  // The creator of an organization claims its first admin seat exactly once; afterwards only admins add members.
+  expose create {
+    allow isOrgAdmin(actor, org) or (user = actor and role = ADMIN and org.createdBy = actor and orgHasNoMember(org))
+    fields user, org, role
+  }
+  transition setRole {
+    allow isOrgAdmin(actor, org)
+    from true
+    patch role
+  }
+  expose apply setRole { target id; bulk maxRows 1 }
+  expose read {
+    select id, user, org, role
+    filter user.eq, org.eq
+    sort id
+    traverse user { select id, email }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+resource Project {
+  fields { id: Id; org: Organization; name: Text(1..100); slug: Text(1..100) }
+  unique org, slug
+  rows read when canReadProject(actor, this)
+  expose create {
+    allow isOrgAdmin(actor, org)
+    fields org, name, slug
+  }
+  expose read {
+    select id, org, name, slug
+    filter id.eq, org.eq, slug.eq, name.prefix
+    sort id
+    traverse org { select id, slug }
+    budget { rows 500; depth 2; cost 2000; deadline 2s; offset 1000 }
+  }
+}
+
+resource ProjectMembership {
+  fields { id: Id; user: User; project: Project; role: ProjectRole }
+  unique user, project
+  // A direct member can inspect and leave their own membership even with NO_ACCESS. This grants no
+  // visibility of the project or of another user's membership (each resource keeps its own row policy).
+  rows read when user = actor or canReadProject(actor, project)
+  expose create {
+    allow isProjectAdmin(actor, project) and isOrgMember(user, project.org)
+    fields user, project, role
+  }
+  transition setRole {
+    allow isProjectAdmin(actor, project)
+    from true
+    patch role
+  }
+  expose apply setRole { target id; bulk maxRows 1 }
+  // Upstream deleteProjectMemberships refuses removing yourself; use leaveProject for that
+  // (project-membership-service.ts:426-567, 575-673). This port's fixed ADMIN rule replaces the
+  // EE permission/privilege boundary; group access, approver policies and delivery recipients are not ported.
+  transition remove {
+    allow isProjectAdmin(actor, project) and user != actor
+    from true
+    delete
+  }
+  expose apply remove { target id; bulk maxRows 100 }
+  // The retain-admin guard is only for cert-manager/PAM/agent-vault upstream (membership-fns.ts:143,
+  // db/schemas/models.ts ADMIN_MEMBER_ONLY_PRODUCT_LABELS), not this Secret Manager project.
+  transition leave {
+    allow user = actor
+    from true
+    delete
+  }
+  expose apply leave { target id; bulk maxRows 1 }
+  expose read {
+    select id, user, project, role
+    filter user.eq, project.eq
+    sort id
+    traverse user { select id, email }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+// Environments are rows of their own like upstream project_environments (backend/src/db/schemas/project-environments.ts),
+// and a folder belongs to one environment (secret_folders.envId, 20231218092441_secret-folder.ts:14), not to a project and a
+// free-text environment name. A soft-deleted environment is hidden from readers and from everything below it, and stays
+// visible to project writers, who may restore or purge it (INFISICAL-GAPS.md G16).
+predicate envHasNoRoot(e: Environment?) = e != null and not (exists Folder where env = e and parent = null)
+predicate envHasSecret(e: Environment?) = e != null and exists Secret where folder.env = e
+
+resource Environment {
+  fields { id: Id; project: Project; slug: Text(1..64); name: Text(1..255); position: Int(1..1000000); softDeletedAt: Time?; deletedBy: User? }
+  unique project, slug
+  unique project, position
+  rows read when canReadProject(actor, project) and (softDeletedAt = null or canWriteProject(actor, project))
+  // The caller gives the position. Upstream appends after the last one when it is omitted and shifts the others when it is
+  // taken (project-env-service.ts:113-132), which needs a many update with arithmetic and a project-wide match (G16).
+  expose create {
+    allow canWriteProject(actor, project)
+    fields project, slug, name, position
+  }
+  // Upstream updateEnvironment changes name, slug and position of an active environment (project-env-service.ts:148-241;
+  // soft-deleted rows are not found, project-env-dal.ts findOne). A taken slug or position is refused here by the unique
+  // constraints; upstream refuses a taken slug (:190-205) but reorders the others for a taken position (:223).
+  transition update {
+    allow canWriteProject(actor, project)
+    from softDeletedAt = null
+    patch slug, name, position
+  }
+  expose apply update { target id; bulk maxRows 1 }
+  // deleteEnvironment without hardDelete marks the row and hides it for a 14 day grace period (project-env-service.ts:312-346,
+  // SOFT_DELETE_GRACE_DAYS in project-env-queue.ts:12); purging after the period is a cron job upstream and is not declared.
+  transition softDelete {
+    allow canWriteProject(actor, project)
+    from softDeletedAt = null
+    to softDeletedAt = now, deletedBy = actor
+  }
+  expose apply softDelete { target id; bulk maxRows 1 }
+  // restoreEnvironment (project-env-service.ts:361-443) works only on a soft-deleted row. The grace-elapsed refusal (:402-407)
+  // needs the deleteAfter instant, which needs time arithmetic (G16).
+  transition restore {
+    allow canWriteProject(actor, project)
+    from softDeletedAt != null
+    to softDeletedAt = null, deletedBy = null
+  }
+  expose apply restore { target id; bulk maxRows 1 }
+  // deleteEnvironment with hardDelete = true removes the row at once (project-env-service.ts:298-309) and the database cascades
+  // to folders and secrets. The folders go in the same transaction; an environment that still holds secrets is refused
+  // because the secrets are two hops away from the environment (G16, same product limit as G14).
+  transition hardDelete {
+    allow canWriteProject(actor, project)
+    from not (envHasSecret(this))
+    delete
+    delete many Folder maxRows 1000 where env = this.id
+  }
+  expose apply hardDelete { target id; bulk maxRows 1 }
+  expose read {
+    select id, project, slug, name, position, softDeletedAt, deletedBy
+    filter id.eq, project.eq, slug.eq
+    sort position, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100 }
+  }
+}
+
+// Folders form a tree like upstream secret_folders (parentId, name; backend/src/db/migrations/20231218092441_secret-folder.ts).
+// Every environment has one root folder (parent null, name "root"), so a secret always lives in a folder and the
+// (folder, key) uniqueness below has no NULL hole. Upstream creates the root in the transaction that creates the environment
+// (project-env-service.ts:124,131); `expose create` cannot create a second row (G11), so a writer creates the root of a new
+// environment in a second request, once. Otherwise users create only non-root folders, in the environment of their parent.
+predicate hasSubfolder(f: Folder?) = f != null and exists Folder where parent = f
+predicate hasOverriddenSecret(f: Folder?) = f != null and exists PersonalSecret where secret.folder = f
+predicate folderIsEmpty(f: Folder?) = f != null and not (exists Secret where folder = f) and not (hasSubfolder(f))
+
+resource Folder {
+  fields { id: Id; env: Environment; parent: Folder?; name: Text(1..255); description: Text(0..255)? }
+  unique parent, name
+  rows read when canReadProject(actor, env.project) and env.softDeletedAt = null
+  expose create {
+    allow canWriteProject(actor, env.project) and env.softDeletedAt = null and ((parent != null and parent.env = env) or (parent = null and name = "root" and envHasNoRoot(env)))
+    fields env, parent, name, description
+  }
+  // Upstream updateFolder changes name and description of a non-root folder (secret-folder-service.ts:487-620). A duplicate
+  // sibling name is refused (unique parent, name); the same name is a no-op for the name. Moving is a different
+  // operation upstream (/move) and is not declared here.
+  transition update {
+    allow canWriteProject(actor, env.project)
+    from parent != null
+    patch name, description
+  }
+  expose apply update { target id; bulk maxRows 1 }
+  // Upstream deleteFolder without forceDelete refuses a folder that holds secrets or subfolders
+  // (secret-folder-service.ts:741-870, the `!forceDelete` guard) and never deletes the root, which has no parent
+  // to be looked up under.
+  transition delete {
+    allow canWriteProject(actor, env.project)
+    from parent != null and folderIsEmpty(this)
+    delete
+  }
+  expose apply delete { target id; bulk maxRows 1 }
+  // forceDelete = true: upstream deletes the folder and the database cascades to its secrets and subfolders
+  // (ON DELETE CASCADE on secrets_v2.folderId and secret_folders.parentId). The secrets go in the same transaction.
+  // A folder that still has subfolders is refused: the product has no two-hop delete effect (G14). So is a folder whose
+  // secrets still have personal overrides: the secrets are removed by a plain delete effect that cannot also remove
+  // the overrides referencing them (G15).
+  transition forceDelete {
+    allow canWriteProject(actor, env.project)
+    from parent != null and not (hasSubfolder(this)) and not (hasOverriddenSecret(this))
+    delete
+    delete many Secret maxRows 1000 where folder = this.id
+  }
+  expose apply forceDelete { target id; bulk maxRows 1 }
+  expose read {
+    select id, env, parent, name, description
+    filter id.eq, env.eq, parent.eq, name.eq, name.prefix
+    sort name, id
+    traverse env { select id, slug }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+// One shared secret: a name in a folder. Upstream keeps the same shape in secrets_v2 and enforces one shared secret
+// per (key, folder) with the partial unique index uq_secrets_v2_key_folder_id_shared
+// (backend/src/db/migrations/20260623144551_secret-folder-unique-index.ts), and deleteMany removes the row for real
+// (backend/src/services/secret-v2-bridge/secret-v2-bridge-dal.ts, deleteMany). Personal overrides (type = personal)
+// are modelled as PersonalSecret below; values are envelope-encrypted using the folder ref scope.
+resource Secret {
+  fields { id: Id; folder: Folder; key: Text(1..500); value: Text(1..10000)? encrypted(scope: folder); owner: User; remindedAt: Time? }
+  unique folder, key
+  rows read when canReadProject(actor, folder.env.project) and folder.env.softDeletedAt = null
+  docs { summary "비밀 하나(폴더 안의 이름과 봉투 암호화된 값). 런타임 저장은 WBS 8.18.6 전까지 unavailable gate 유지"; visibility internal }
+  expose create {
+    allow canWriteProject(actor, folder.env.project) and owner = actor
+    fields folder, key, value, owner
+  }
+  // Static patch syntax only; automatic version increments/history are not implemented by this fixture.
+  transition updateValue {
+    allow canWriteProject(actor, folder.env.project)
+    from true
+    patch value
+  }
+  expose apply updateValue { target id; bulk maxRows 1 }
+  // Physical delete like upstream: the row is gone and the name can be created again.
+  transition delete {
+    allow canWriteProject(actor, folder.env.project)
+    from true
+    delete
+    delete many SecretVersion maxRows 1000 where secret = this.id
+    // Upstream deleteMany also removes every user's personal override of the deleted shared secret.
+    delete many PersonalSecret maxRows 1000 where secret = this.id
+  }
+  expose apply delete { target id; bulk maxRows 100 }
+  // Reminder record for the owner (an outbox notification, not a delivered mail).
+  transition remind {
+    allow canReadProject(actor, folder.env.project)
+    from true
+    to remindedAt = now
+    repeat unchanged
+    notify owner "secret.reminder"
+  }
+  expose apply remind { target id; bulk maxRows 1 }
+  expose read {
+    select id, folder, key, value, owner, remindedAt
+    filter id.eq, folder.eq, key.eq, key.prefix, owner.eq
+    sort key, id
+    traverse folder { select id, name, env }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+// Historical versions of a secret (upstream secret_versions_v2). Values are encrypted under the parent secret scope.
+resource SecretVersion {
+  fields { id: Id; secret: Secret; version: Int(1..1000000); value: Text(1..10000)? encrypted(scope: secret) }
+  unique secret, version
+  rows read when canReadProject(actor, secret.folder.env.project) and secret.folder.env.softDeletedAt = null
+  expose create {
+    allow canWriteProject(actor, secret.folder.env.project)
+    fields secret, version, value
+  }
+  expose read {
+    select id, secret, version, value
+    filter id.eq, secret.eq, version.eq
+    sort version, id
+    traverse secret { select id, key }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+// A user's private override of a shared secret: upstream stores it as another secrets_v2 row with type = 'personal' and
+// userId = the owner (backend/src/db/migrations/20240730181850_secret-v2.ts:13,21-22). It exists only next to a shared
+// secret of the same key in the same folder (secret-v2-bridge-service.ts:406-410), is listed to its owner only
+// (secret-v2-bridge-dal.ts:381-413) and cannot be renamed (secret-v2-bridge-service.ts:621-623). Values are encrypted.
+resource PersonalSecret {
+  fields { id: Id; secret: Secret; user: User; value: Text(1..10000)? encrypted(scope: secret) }
+  unique secret, user
+  rows read when user = actor and canReadProject(actor, secret.folder.env.project) and secret.folder.env.softDeletedAt = null
+  expose create {
+    allow user = actor and canReadProject(actor, secret.folder.env.project)
+    fields secret, user, value
+  }
+  transition updateValue {
+    allow user = actor
+    from true
+    patch value
+  }
+  expose apply updateValue { target id; bulk maxRows 1 }
+  transition delete {
+    allow user = actor
+    from true
+    delete
+  }
+  expose apply delete { target id; bulk maxRows 100 }
+  expose read {
+    select id, secret, user, value
+    filter id.eq, secret.eq
+    sort id
+    traverse secret { select id, key }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+// -- jobs ---------------------------------------------------------------------------------------------------------
+// Only jobs with a worker implementation are declared. The other MIT BullMQ queues are mapped in
+// plan-docs/porting/INFISICAL-JOBS.md as "declared only" (no served operation, so nothing can enqueue a job
+// that fails with EXTENSION_ERROR). The queue's reminder delivery itself (mail/Slack) is out of scope:
+// this job records the reminder as an outbox notification through the declared Secret.remind transition.
+operation job secretReminder {
+  input { secret: Secret.Id }
+  output { reminded: Int }
+  allow actor != null and exists Secret where id = input.secret and canReadProject(actor, folder.env.project) and folder.env.softDeletedAt = null
+  access read.Secret, Secret.remind
+  effect managed
+  deadline 30s
+  implementation "infisical_jobs.secret_reminder"
+}
