@@ -71,13 +71,12 @@ test('FlaskBB users delete maps to username lookup plus User.purge; a bound prin
     // binding stay, and nothing is audited. Upstream has no such coupling.
     const [[carolId]] = await lookup('member-carol');
     assert.equal(principals(6), 't');
-    const blocked = await admin.bundle({atomic: [{apply: 'User.purge', target: {ids: [carolId]}}]}, {key: 'users-delete-carol'}).then(
-      () => assert.fail('purge of an account with a bound principal must not commit'),
-      error => error,
-    );
-    // Gap pin (G-14): a permanent FK violation surfaces as an unconfirmed,
-    // retryable write instead of a refusal. Flip this once it is classified.
-    assert.equal(blocked.retry, 'later');
+    const blocked = await admin.bundle({atomic: [{apply: 'User.purge', target: {ids: [carolId]}}]}, {key: 'users-delete-carol'});
+    // A deterministic FK refusal is final; it does not imply permission to
+    // remove actor bindings or their retention records.
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.code, 'WIRE.REFERENCE_CONFLICT');
+    assert.equal(blocked.retry, 'never');
     assert.equal(users(), 5);
     assert.deepEqual(await lookup('member-carol'), [['6', 'member-carol']]);
     assert.equal(principals(6), 't');
@@ -87,7 +86,10 @@ test('FlaskBB users delete maps to username lookup plus User.purge; a bound prin
     // so it does not unblock the delete and no other operator command removes it.
     run(binary, ['service', 'principal', '--config', config, 'revoke', '--subject', 'carol-sub']);
     assert.equal(principals(6), 'f');
-    await assert.rejects(() => admin.bundle({atomic: [{apply: 'User.purge', target: {ids: [carolId]}}]}, {key: 'users-delete-carol-revoked'}));
+    const revoked = await admin.bundle({atomic: [{apply: 'User.purge', target: {ids: [carolId]}}]}, {key: 'users-delete-carol-revoked'});
+    assert.equal(revoked.ok, false);
+    assert.equal(revoked.code, 'WIRE.REFERENCE_CONFLICT');
+    assert.equal(revoked.retry, 'never');
     assert.equal(users(), 5);
     assert.deepEqual(await lookup('member-carol'), [['6', 'member-carol']]);
     assert.equal(principals(6), 'f');

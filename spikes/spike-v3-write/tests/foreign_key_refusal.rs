@@ -19,9 +19,18 @@ actor Member
 resource Parent {
   fields { id: Id; owner: Member }
   rows read when owner = actor
-  transition purge { allow owner = actor; from true; delete }
+  transition purge {
+    allow owner = actor
+    from true
+    delete many Child maxRows 10 where parent = this.id
+    delete
+  }
   expose apply purge { target id; bulk maxRows 1 }
   expose compose { bulk maxRows 1; transitions purge }
+}
+resource Child {
+  fields { id: Id; parent: Parent }
+  rows read when parent.owner = actor
 }
 "#;
     let facts = load_str(source, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
@@ -32,6 +41,7 @@ resource Parent {
     db.batch_execute(&format!(
         "INSERT INTO {schema}.member(id) VALUES (1); \
          INSERT INTO {schema}.parent(id, owner_id) VALUES (100,1); \
+         INSERT INTO {schema}.child(id, parent_id) VALUES (300,100); \
          CREATE TABLE {schema}.binding(id bigint PRIMARY KEY, parent_id bigint NOT NULL, \
            CONSTRAINT retained_binding FOREIGN KEY(parent_id) REFERENCES {schema}.parent(id) DEFERRABLE INITIALLY IMMEDIATE); \
          INSERT INTO {schema}.binding(id,parent_id) VALUES (200,100)"
@@ -69,7 +79,20 @@ resource Parent {
             let binding_count: i64 =
                 db.query_one(&format!("SELECT count(*) FROM {schema}.binding WHERE id=200 AND parent_id=100"), &[]).await.unwrap().get(0);
             assert_eq!((parent_count, binding_count), (1, 1), "{path}/{mode}: both rows survive rollback");
+            let child_count: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.child WHERE id=300"), &[]).await.unwrap().get(0);
+            assert_eq!(child_count, 1, "{path}/{mode}: the delete effect must roll back too");
         }
+    }
+    // Pure-delete compose must run declared effects before deleting its parent;
+    // it must not render an empty UPDATE SET statement.
+    db.batch_execute(&format!("DELETE FROM {schema}.binding WHERE id=200")).await.unwrap();
+    let result =
+        compose(&mut db, &facts, &json!({"compose":"Parent","targets":{"ids":["100"]},"steps":[{"transition":"purge"}]}), &caller, &Knobs::default())
+            .await;
+    assert!(result.is_ok(), "unreferenced compose deletion must commit: {result:?}");
+    for table in ["parent", "child"] {
+        let count: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.{table}"), &[]).await.unwrap().get(0);
+        assert_eq!(count, 0, "compose deletion must remove both the parent and its declared effect rows");
     }
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
     assert!(failures.is_empty(), "{}", failures.join("; "));

@@ -1,5 +1,13 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-06 Linux 코어·SDK·G-15 실행과 G-14 RED 후속
+
+코어 PR 실행 `42125368332`의 실제 checkout `27e42bc`(main `5e4f39f` + core `c4a0f46`)에서 broad gate와 PG 7회귀(boolean/조건부 update 3종/latest 값/nullable projection/PostOrder sequence)가 통과했다. 이 코어와 응답 수집기 6파일 교정은 main `e392060`에 게시됐다. FaceReview 원 실행의 browser 실패 3건은 탈퇴 logout body 누락과 tutorial 미완료 요청이며 DB는 성공했다. 수집기 실제 AST 재진입 RED 및 관련 Python 67 tests GREEN 뒤 main CI `42130341735`·worker `42130341733`이 실행 중이다.
+
+집중 실행 `42129502839`의 실제 SHA `4d42e27`에서 설정 추가·force·재실행·권한·감사와 migrate 행 보존 HTTP/PG 3tests, Python SDK 30tests(생성·타입·설치 wheel 포함), product/prototype SDK build/pack/offline install/strict declarations 9tests가 통과했다. admission 좁은 동시성 재현 1test도 통과했다. 이전 전체 SDK CI의 advisory lock timeout 원인을 단일 좁은 성공만으로 해소했다고 단정하지 않는다.
+
+G-14 PG 회귀는 apply/bundle 즉시·지연 FK 4경로에서 INTERNAL/23503, compose 2경로에서 빈 UPDATE/42601을 실제 관측해 RED다. 후속은 공통 write_err 23503을 확정 `WIRE.REFERENCE_CONFLICT`/retry never로 분류하고, compose delete가 apply와 같은 효과→대상 삭제 순서를 쓰도록 교정했다. registry/emitter/generated 문서의 실제 std-only 9tests는 통과했다. 확장 PG 회귀는 거부 시 child 효과 롤백과 참조 제거 fixture의 정상 compose 삭제까지 검사하며 Linux GREEN 대기다. `cli-users-delete`도 HTTP/SDK never 거부를 요구하도록 갱신했다. principal 바인딩·폐기 기록을 지우는 정책 변경은 없다. G-14 전체·G-6 활성 PostOrder 이관·전체 F01–F17 동등성은 계속 open이다.
+
 ## 2026-11-06 G-15 설정 fixture 서비스 경로 — 계획·DSL 검증, 실DB 대기
 
 `seed/upgrade_settings.py`는 공식 Python SDK의 key 기반 read와 노출 create/edit를 사용한다. 기본 실행은 빠진 그룹·설정만 추가하고, `--force`에서만 기존 이름·설명·값·타입·extra·소속 그룹을 덮어쓴다. 그룹 생성 후 서버 ID를 다시 읽고 설정을 반영하며 SQL 우회는 없다. 원본처럼 전체 fixture가 하나의 트랜잭션은 아니다. 거부와 결과 미확정은 nonzero이며 미확정 응답에는 동일 키·요청을 보존한다. write 인가는 활성 admin/super_mod다. 기존 제품 감사는 edit 전이의 before/after에 적용되고 create 자체 감사는 기존 제한대로 없다.

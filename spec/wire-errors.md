@@ -180,6 +180,13 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 - 원인: The token for an outbound integration could not be obtained.
 - 수정: Operator: fix the integration's credential configuration.
 
+### `WIRE.REFERENCE_CONFLICT`
+
+`class` request, `retry` never
+
+- 원인: A PostgreSQL foreign key rejected the write, including a deferred constraint checked at commit. The whole transaction was rolled back; this is a definite refusal, not an unknown outcome. The response does not expose the referenced row, schema or constraint name.
+- 수정: Use an authorized operation to resolve the reference before making another request. Sending the same request unchanged will not resolve the constraint. Actor bindings and retention records are not removed automatically.
+
 ### `WIRE.RETRY_LATER`
 
 `class` availability, `retry` later

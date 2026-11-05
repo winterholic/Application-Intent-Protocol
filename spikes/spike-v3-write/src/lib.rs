@@ -757,6 +757,7 @@ pub async fn send_commit(tx: Transaction<'_>, on_send: impl FnOnce()) -> Result<
 fn write_err(stage: &str, e: tokio_postgres::Error) -> Reject {
     match e.code().map(|c| c.code()) {
         Some("23505") => Reject { code: "WIRE.ALREADY_EXISTS", msg: format!("{stage}: 유일 제약 위반") },
+        Some("23503") => Reject { code: "WIRE.REFERENCE_CONFLICT", msg: format!("{stage}: 참조 무결성 제약 위반. 전체 취소") },
         Some("23P01") => Reject { code: "WIRE.INVARIANT_VIOLATED", msg: format!("{stage}: 불변식 위반") },
         // 정의의 값 제약(길이·범위·필수)은 호출자 값 오류다. 내부 오류로 보고하지 않는다.
         Some("23514") => Reject { code: "WIRE.BAD_VALUE", msg: format!("{stage}: 값 제약 위반") },
@@ -1869,8 +1870,13 @@ async fn compose_exec(
                     return rej("WIRE.BAD_VALUE", "patch/expect 전이는 values/expect를 제공하는 bundle.apply로 호출해야 함");
                 }
                 let effect_targets = effect_targets_at_transition_start(tx, facts, res, t, &j.change, &decided, knobs).await?;
-                update(tx, facts, res, t, &j.change, &decided, knobs, None).await?;
-                effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs).await?;
+                if facts["resources"][res]["transitions"][t]["delete"] == true {
+                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs).await?;
+                    delete_rows(tx, facts, res, t, &j.change, &decided, knobs).await?;
+                } else {
+                    update(tx, facts, res, t, &j.change, &decided, knobs, None).await?;
+                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs).await?;
+                }
                 out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
             }
             Step::Create(target, vals) => {

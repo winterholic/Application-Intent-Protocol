@@ -125,6 +125,8 @@ fn the_retry_of_the_codes_that_decide_a_write_is_the_documented_one() {
     assert_eq!(retry("WIRE.DB_UNAVAILABLE"), Retry::Later);
     assert_eq!(retry("WIRE.TOKEN_EXPIRED"), Retry::Reauthenticate);
     assert_eq!(retry("WIRE.BAD_VALUE"), Retry::Never);
+    assert_eq!(retry("WIRE.REFERENCE_CONFLICT"), Retry::Never);
+    assert_eq!(retry("WIRE.CONFLICT"), Retry::Later);
 }
 
 /// The managed Mongo/Redis codes carry a class and a retry that keep the operator in charge of configuration faults.

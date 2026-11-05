@@ -65,14 +65,14 @@ jobs:
         run: python3 -m unittest porting.flaskbb.tests.test_settings_upgrade -v
       - name: Verify immediate and deferred foreign key refusals
         if: ${{ !cancelled() }}
-        run: cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test foreign_key_refusal -- --nocapture
+        run: cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test foreign_key_refusal --test commit_classification -- --nocapture
       - name: Build current product CLI
         id: build_cli
         if: ${{ !cancelled() }}
         run: cargo build -p aip-cli --locked
       - name: Verify authenticated settings upgrade and migration preservation
         if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
-        run: node --test --test-concurrency=1 porting/flaskbb/tests/settings-upgrade.test.mjs porting/flaskbb/tests/cli-upgrade.test.mjs
+        run: node --test --test-concurrency=1 porting/flaskbb/tests/settings-upgrade.test.mjs porting/flaskbb/tests/cli-upgrade.test.mjs porting/flaskbb/tests/cli-users-delete.test.mjs
       - name: Verify official Python SDK runtime, generation, types and installed wheel
         if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
         run: python3 -W error::ResourceWarning -m unittest product.tests.python_sdk_test -v
@@ -88,3 +88,6 @@ jobs:
       - name: Diagnose the bounded admission quota failure independently
         if: ${{ !cancelled() }}
         run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --lib admission::tests::simultaneous_connections_share_one_principal_route_quota -- --nocapture
+      - name: Verify wire registry, retry policy and generated documentation
+        if: ${{ !cancelled() }}
+        run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test wire_codes
