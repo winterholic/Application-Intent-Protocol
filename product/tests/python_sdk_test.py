@@ -67,9 +67,85 @@ class PythonSdkTest(unittest.TestCase):
         with self.assertRaises(AipError) as caught:
             client.discover()
         self.assertEqual(caught.exception.code, "WIRE.CONTRACT_MISMATCH")
+        server.script("/capabilities", {"ok": True, "contractFingerprint": OTHER, "operations": {}})
         with self.assertRaises(AipError) as caught:
             client.operation("textLength", {"text": "abc"})
         self.assertEqual(caught.exception.code, "WIRE.CONTRACT_MISMATCH")
+
+    def test_operation_rejects_output_that_does_not_match_discovered_contract(self):
+        server = FakeServer()
+        server.script("/capabilities", {
+            "ok": True,
+            "contractFingerprint": FP,
+            "operations": {
+                "textLength": {
+                    "input": {"text": {"type": "Text", "nullable": False}},
+                    "output": {"length": {"type": "Int", "nullable": False}},
+                },
+            },
+        })
+        server.script("/operation", {"ok": True, "output": {"length": "three"}, "contractFingerprint": FP})
+        client = connect("http://aip", "t1", transport=server)
+        with self.assertRaises(AipError) as caught:
+            client.operation("textLength", {"text": "abc"})
+        self.assertEqual(caught.exception.code, "CLIENT.PROTOCOL_ERROR")
+
+    def test_pinned_operation_discovers_before_rejecting_malformed_output(self):
+        server = FakeServer()
+        server.script("/capabilities", {
+            "ok": True,
+            "contractFingerprint": FP,
+            "operations": {
+                "textLength": {
+                    "output": {"length": {"type": "Int", "nullable": False}},
+                },
+            },
+        })
+        server.script("/operation", {"ok": True, "output": {"length": "three"}, "contractFingerprint": FP})
+        client = connect("http://aip", "t1", FP, transport=server)
+        with self.assertRaises(AipError) as caught:
+            client.operation("textLength", {"text": "abc"})
+        self.assertEqual(caught.exception.code, "CLIENT.PROTOCOL_ERROR")
+        self.assertEqual([call[0] for call in server.calls], ["/session", "/capabilities", "/operation"])
+
+    def test_discovered_operation_descriptors_are_isolated_from_returned_catalog(self):
+        server = FakeServer()
+        capabilities = {
+            "ok": True,
+            "contractFingerprint": FP,
+            "operations": {
+                "textLength": {
+                    "output": {"length": {"type": "Int", "nullable": False}},
+                },
+            },
+        }
+        server.script("/capabilities", capabilities)
+        server.script("/operation", {"ok": True, "output": {"length": "three"}, "contractFingerprint": FP})
+        client = connect("http://aip", "t1", transport=server)
+        catalog = client.discover()
+        catalog["operations"]["textLength"]["output"]["length"]["type"] = "Text"
+        with self.assertRaises(AipError) as caught:
+            client.operation("textLength", {"text": "abc"})
+        self.assertEqual(caught.exception.code, "CLIENT.PROTOCOL_ERROR")
+
+    def test_failed_capability_refresh_does_not_leave_stale_operation_descriptors(self):
+        server = FakeServer()
+        server.script("/capabilities",
+                      {"ok": True, "contractFingerprint": FP, "operations": {
+                          "textLength": {"output": {"length": {"type": "Int", "nullable": False}}},
+                      }},
+                      {"ok": False, "code": "WIRE.DB_UNAVAILABLE"},
+                      {"ok": True, "contractFingerprint": FP, "operations": {
+                          "textLength": {"output": {"length": {"type": "Text", "nullable": False}}},
+                      }})
+        server.script("/operation", {"ok": True, "output": {"length": "three"}, "contractFingerprint": FP})
+        client = connect("http://aip", "t1", transport=server)
+        client.discover()
+        with self.assertRaises(AipError) as caught:
+            client.discover()
+        self.assertEqual(caught.exception.code, "WIRE.DB_UNAVAILABLE")
+        self.assertEqual(client.operation("textLength", {"text": "abc"}), {"length": "three"})
+        self.assertEqual([call[0] for call in server.calls].count("/capabilities"), 3)
 
     def test_lost_response_is_resent_with_the_same_key_and_body(self):
         server = FakeServer()
@@ -625,5 +701,3 @@ class PackageSmokeTest(unittest.TestCase):
         self.assertFalse((pkg_dir / "build").exists(), "build directory should not leak into product/python")
         self.assertFalse((pkg_dir / "dist").exists(), "dist directory should not leak into product/python")
         self.assertEqual(list(pkg_dir.glob("*.egg-info")), [], "egg-info should not leak into product/python")
-
-

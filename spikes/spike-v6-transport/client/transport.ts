@@ -330,6 +330,9 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
   return {
     cache,
     post,
+    async session() {
+      return Object.freeze({ actorId: await ensurePrincipal() });
+    },
     pending: () => [...pending.keys()],
     /**
      * 미확정 쓰기를 버린다. 서버가 그 요청을 실행하지 않았다고 확신할 때만 쓴다(예: 같은 키에 `BAD_REQUEST`를 받았다).

@@ -21,12 +21,19 @@ let tarballPath;
 let packedFiles;
 
 function run(program, args, options = {}) {
+  const { env, ...spawnOptions } = options;
   return spawnSync(program, args, {
-    cwd: options.cwd ?? repoDir,
+    cwd: spawnOptions.cwd ?? repoDir,
     encoding: "utf8",
-    timeout: options.timeout ?? 20_000,
+    timeout: spawnOptions.timeout ?? 20_000,
     maxBuffer: 4 * 1024 * 1024,
-    ...options,
+    env: {
+      ...process.env,
+      npm_config_cache: join(suiteRoot, "npm-cache"),
+      NPM_CONFIG_CACHE: join(suiteRoot, "npm-cache"),
+      ...env,
+    },
+    ...spawnOptions,
   });
 }
 
@@ -96,8 +103,8 @@ test("build emits a private self-contained JS and declaration package that packs
   assert.ok(files.includes("prototype/sdk/index.d.ts"));
   const javascriptFiles = files.filter((file) => file.endsWith(".js"));
   const declarationFiles = files.filter((file) => file.endsWith(".d.ts"));
-  assert.equal(javascriptFiles.length, 5, "the runtime closure contains the five compiled SDK modules");
-  assert.equal(declarationFiles.length, 5, "the type closure contains the five SDK declarations");
+  assert.equal(javascriptFiles.length, 9, "the runtime closure contains the compiled SDK modules");
+  assert.equal(declarationFiles.length, 9, "the type closure contains the SDK declarations");
 
   for (const file of files.filter((name) => name.endsWith(".js") || name.endsWith(".d.ts"))) {
     const contents = readFileSync(join(packageDir, file), "utf8");
@@ -121,8 +128,8 @@ test("build emits a private self-contained JS and declaration package that packs
     }
   }
 
-  assert.equal(packedFiles.filter((file) => file.endsWith(".js")).length, 5);
-  assert.equal(packedFiles.filter((file) => file.endsWith(".d.ts")).length, 5);
+  assert.equal(packedFiles.filter((file) => file.endsWith(".js")).length, 9);
+  assert.equal(packedFiles.filter((file) => file.endsWith(".d.ts")).length, 9);
   assert.ok(packedFiles.some((file) => file.endsWith("prototype/sdk/index.js")));
   assert.ok(packedFiles.some((file) => file.endsWith("prototype/sdk/index.d.ts")));
   assert.ok(readFileSync(tarballPath).byteLength > 0, "npm pack writes the package tarball");

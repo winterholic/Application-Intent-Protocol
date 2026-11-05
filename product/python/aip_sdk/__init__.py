@@ -233,6 +233,9 @@ class Client:
         self._transport = transport or _urllib_transport
         self._principal: Any = ...
         self._pending: dict[str, Any] = {}
+        self._operations: dict[str, dict] = {}
+        self._capabilities_loaded = False
+        self._id_wire = "legacy"
         self.jobs = _Jobs(self)
         self.files = _Files(self)
         self.events = _Events(self)
@@ -298,9 +301,15 @@ class Client:
         if self.contract_fingerprint is None:
             self.discover()
 
+    def _ensure_operations(self) -> None:
+        if not self._capabilities_loaded:
+            self.discover()
+
     # -- discovery ----------------------------------------------------------------------------
     def discover(self) -> dict:
         """Authenticated capability catalog. Without a pinned fingerprint, adopts the server's."""
+        self._operations = {}
+        self._capabilities_loaded = False
         self._ensure_principal()
         response = self._checked(self._post("/capabilities", {}, contract=False), expect_contract=False)
         served = response.get("contractFingerprint")
@@ -309,7 +318,17 @@ class Client:
         if self._pinned and served != self.contract_fingerprint:
             raise AipError("WIRE.CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름", _request_id(response))
         self.contract_fingerprint = served
-        return response
+        id_wire = response.get("idWire")
+        if id_wire in {"legacy", "safe-number-v13", "decimal-string-v13"}:
+            self._id_wire = id_wire
+        operations = response.get("operations")
+        if isinstance(operations, dict):
+            self._operations = {
+                name: copy.deepcopy(descriptor) for name, descriptor in operations.items()
+                if isinstance(name, str) and isinstance(descriptor, dict) and isinstance(descriptor.get("output"), dict)
+            }
+        self._capabilities_loaded = True
+        return copy.deepcopy(response)
 
     # -- data ---------------------------------------------------------------------------------
     def read(self, query: dict) -> list:
@@ -408,8 +427,13 @@ class Client:
     def operation(self, name: str, input: dict) -> Any:
         self._ensure_principal()
         self._ensure_contract()
+        self._ensure_operations()
         response = self._checked(self._post("/operation", {"operation": name, "input": copy.deepcopy(input)}), True)
-        return response.get("output")
+        output = response.get("output")
+        descriptor = self._operations.get(name)
+        if descriptor is not None:
+            validate_operation_output(output, descriptor["output"], self._id_wire)
+        return output
 
     def _managed(self, path: str, body: dict) -> dict:
         self._ensure_principal()

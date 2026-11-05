@@ -37,6 +37,18 @@ test("같은 사용자 토큰 갱신은 원래 키·본문의 미확정 쓰기�
   assert.equal((await client.read(query)).stored, true);
 });
 
+test("공식 TypeScript client의 session은 서버가 검증한 actorId만 반환", async () => {
+  const calls: string[] = [];
+  const client = connect("http://spike.invalid", "session", async (url) => {
+    calls.push(new URL(String(url)).pathname);
+    return reply({ ok: true, principal: { actorId: "9223372036854775807" }, remainingMs: 60_000 });
+  });
+
+  assert.deepEqual(await client.session(), { actorId: "9223372036854775807" });
+  assert.deepEqual(await client.session(), { actorId: "9223372036854775807" });
+  assert.deepEqual(calls, ["/session"]);
+});
+
 test("다른 사용자·잘못된 토큰은 원래 연결과 복구 정보를 유지", async () => {
   const seen: string[] = [];
   const client = connect("http://spike.invalid", "old", backend(async (_path, token) => {

@@ -12,6 +12,7 @@ const binding = {
       fields: {
         email: { type: "Email" },
         date: { type: "Date" },
+        time: { type: "Time" },
       },
       traverse: {},
     },
@@ -71,6 +72,14 @@ test("typed read rejects invalid Email and Date scalar output", async () => {
     const client = clientFor(row);
     await assert.rejects(client.read({ read: "Person", select: ["email", "date"] } as any), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR", JSON.stringify(row));
   }
+});
+
+test("typed read rejects malformed Time scalar output", async () => {
+  const client = clientFor({ time: "not-a-time" });
+  await assert.rejects(
+    client.read({ read: "Person", select: ["time"] } as any),
+    (error: any) => error.code === "CLIENT.PROTOCOL_ERROR",
+  );
 });
 
 test("typed read accepts exact decimal strings and rejects values outside Decimal(p,s)", async () => {

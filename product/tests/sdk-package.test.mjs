@@ -129,6 +129,7 @@ const fetchMock = async (url, init) => {
   return new Response(JSON.stringify({ ok: true, rows: [{ id: "1", title: "cached" }], deps: ["Event"], maxAgeMs: 5_000, contractFingerprint: fingerprint }), { status: 200 });
 };
 const client = connect("http://aip.test", "production-access-token", binding, fetchMock);
+assert.deepEqual(await client.session(), { actorId: "17" });
 const query = { read: "Event", select: ["id", "title"] };
 const first = await client.read(query);
 assert.equal(first.cached, false);

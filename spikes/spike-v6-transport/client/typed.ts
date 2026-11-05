@@ -193,7 +193,7 @@ function validateReadRows(query: unknown, rows: unknown[], descriptors: Readonly
         if ((allowed && !allowed.includes(key)) || !Object.hasOwn(description.fields, key)) reject();
         const d = description.fields[key];
         const scalarValid = d.type === "Id" || d.type === "Ref" ? row[key] === null ? d.nullable : validResultId(row[key], wire)
-          : d.type === "Time" ? row[key] === null ? d.nullable : typeof row[key] === "string" && !row[key].includes("\0")
+          : d.type === "Time" ? row[key] === null ? d.nullable : typeof row[key] === "string" && validTime(row[key])
           : validScalar(row[key], d, wire);
         if (!scalarValid) reject();
       } else {
