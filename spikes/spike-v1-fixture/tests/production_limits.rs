@@ -226,15 +226,19 @@ fn small_stack_child_process_parses_supported_nesting_without_overflow() {
             .spawn(|| {
                 let span = Span { line: 1, col: 1 };
                 let parens = format!("{}x = x{}", "(".repeat(63), ")".repeat(63));
+                eprintln!("small-stack probe: parentheses");
                 assert!(parse_expr_str(&parens, span).is_ok());
                 let recursive_ast = format!("{}x = x", "not ".repeat(63));
+                eprintln!("small-stack probe: negation");
                 assert!(parse_expr_str(&recursive_ast, span).is_ok());
                 let host = include_str!("../fixture/recruitment.h.ts");
                 let index = host.rfind("})").unwrap();
                 let nested = format!("{} nestedTest: {}1{},\n{}", &host[..index], "[".repeat(63), "]".repeat(63), &host[index..]);
+                eprintln!("small-stack probe: host literal");
                 let error = load_str(&nested, Form::HTs).err().expect("unknown nested host key");
                 assert_eq!(error[0].code, "DEF.UNKNOWN_KEY");
                 let wide = std::iter::repeat_n("true", MAX_EXPR_NODES - 1).collect::<Vec<_>>().join(" and ");
+                eprintln!("small-stack probe: flat expression");
                 assert!(parse_expr_str(&wide, span).is_ok());
                 let base = include_str!("../fixture/recruitment.aip");
                 let old = "predicate active(r: Recruitment) = r.status = PUBLISHED and r.periodEnd >= now";
@@ -244,6 +248,7 @@ fn small_stack_child_process_parses_supported_nesting_without_overflow() {
                     .collect::<Vec<_>>()
                     .join("\n");
                 let chain = base.replacen(old, &format!("predicate active(r: Recruitment) = p0()\n{definitions}"), 1);
+                eprintln!("small-stack probe: predicate chain");
                 assert!(load_str(&chain, Form::A).is_ok());
             })
             .unwrap();
@@ -252,7 +257,7 @@ fn small_stack_child_process_parses_supported_nesting_without_overflow() {
     }
 
     let status = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "small_stack_child_process_parses_supported_nesting_without_overflow"])
+        .args(["--exact", "small_stack_child_process_parses_supported_nesting_without_overflow", "--nocapture"])
         .env("AIP_SMALL_STACK_CHILD", "1")
         .status()
         .unwrap();

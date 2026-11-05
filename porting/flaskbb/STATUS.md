@@ -1,5 +1,31 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-01 G-6 PostOrder offline 이관 사전 검사
+
+`seed/post_order_manifest.py`가 검증된 원본/대상 export의 namespace·revision·high-water, ID/UUID 일대일 대응·published 전체 범위·기존 pair/역참조·재실행을 검사한다. 21개 stdlib 회귀 통과. 원순서는 입력의 정수 ID만 사용하며 generator floor를 낮추지 않는다. [입력 형식과 실행](README.md#source-order-import-preflight-g-6). 이 도구는 offline plan만 출력하며 실제 provenance/freshness·DB migration·writer fence·sequence 적용·publish 활성화는 검증하지 않는다. `activation_authorized=false`; app.aip는 아직 PostOrder를 사용하지 않는다. G-6와 전체 포팅은 계속 open이다.
+
+## 2026-10-30 G-6 guard/read-lock 후속 — source 변경, compile·DB 미검증
+
+기준 main `3e7c621d3ccca9e8dec07ed25c03dc5d406a1c0e`. V3 source는 transition pre-state에서 update-effect guard 대상 집합을 계산해 apply/bundle/compose에 전달하고, guard 참조는 `Ctx::lock_reads` 정책을 사용한다. V1 absence marker는 update-effect `when`까지 포함한다. Review 교정으로 target ID 비교를 slice-to-slice로 바꿨다. V4 extension은 allowed transitions의 최강 isolation marker를 자체 transaction 첫 SQL에서 고르고, 이미 SQL을 실행한 caller-owned transaction이 strict level로 전환 불가하면 `WIRE.UNSUPPORTED_ISOLATION`으로 worker 전 거부한다. V6 HTTP extension은 idem SQL 전에, durable apply job은 guard/journal SQL 전에 marker 격리를 선택한다. V4/V6 selection 및 caller-owned 거부 회귀 source를 추가했다. MySQL은 conditional update-effect 전이만 `WIRE.ADAPTER_UNSUPPORTED`로 거부한다. 신규 Rust 코드는 미컴파일·미실행이다. 이전 Cargo cache 접근은 `Operation not permitted`; 이번 standalone rustc check는 `/dev/rmeta…` 생성 거부로 실패했고 우회하지 않았다. DB DSN 미설정/접속 없음. 기존 V1 5/5는 이 수정 전 이력이다. G-6·전체 포팅은 미완이다.
+
+## 2026-10-30 G-6 첫 코어 슬라이스 — V1 conditional update facts, runtime open
+
+시작 SHA `7a9a0acba7eda09fb6dc6c86422d77d30ced771d`. `spike-v1-fixture` update effect에 `when` 조건의 parser/AST/H mapping/sema Bool 검증을 추가했다. TDD RED는 유효 입력의 `when`을 거부하는 parser 진단, GREEN은 V1 latest 타깃 5/5와 A/TS/Python/H four-form 동일 facts·non-Bool 거부다. 기존 타깃 테스트의 raw-string 경계와 H 정의 전용 `exposeApply` 불일치를 함께 고쳤다.
+
+V2 SQL 타깃은 offline dependency resolution(`ctutils 0.4.4` 부재; cached index가 `0.4.3/0.4.2`만 제시)에서 실행 전 중단했다. V2/V3 runtime, PG, snapshot before/after, same-transaction effect/read-set, `WIRE.EFFECT_TARGET_MISSING` 대조는 미실행이다. 이 DSL spelling은 spike 단계이며 product/API 승인이나 parity 완료가 아니다. 다음은 V2/V3 runtime behavior RED→GREEN이다. G-6·7.5.2·전체 포팅은 계속 진행 중이다.
+
+## 2026-10-30 G-6 후속 — UUID 보존 PostOrder 선택, 구현·실DB는 open
+
+순서는 내부 `PostOrder.id: Id`로 보존하고 공개 Post/Topic UUID는 유지한다. existing Id/create/adopt/default 제약을 비교한 선택이며 일반 구현을 시작할 수 있는 schema/create/import·legacy fail-closed·migration/rollback·동시성 계약을 [PRODUCT-GAPS의 G-6 후속 결정](PRODUCT-GAPS.md#g-6-후속-결정--공개-uuid--내부-postorder-2026-10-30)에 기록했다. 아래 “결정하지 않았다”는 앞선 조사 기록이다. 기존 effect는 무조건 재계산·후보 필터·Topic author projection·unhide의 last_updated 등도 원본과 달라 정렬 교체만으로 닫을 수 없다. `HideableQuery`의 viewer별 root 필터와 원본 second_last_post의 명시 순서 부재를 구분했다.
+
+원본 AST method 실행 oracle 8/8, date-for-id 및 post-for-topic-author mutant 2건 검출. stdlib/SQLite adapter 범위이며 actual ORM/PG/AIP는 미실행이다. 다음은 conditional pre-state effect/한 후보의 projection 원자 복사 RED 시험부터다. 이번 단계에 Rust 구현/schema apply는 추가하지 않았고 G-6 open·전체 미완을 유지한다.
+
+## 2026-10-30 G-6 source sort semantics 확인 — 구현·실행 미검증으로 open 유지
+
+원본 `upstream/flaskbb/forum/models.py`의 세 재계산 경로를 직접 대조했다. `Post._deal_with_last_post` 후보는 `Post.id.desc()`로 고르고, `Topic._remove_topic_from_forum` 후보 Topic은 `Topic.last_post_id.desc()`로 고른다. 반면 `Forum.update_last_post`는 `Post.date_created.desc()`만 지정해 timestamp 동률 순서는 정하지 않는다. 포팅은 Post/Topic UUID에 `date_created desc, id desc`를 쓰므로 원 순서와 동등하지 않다. 동시각에서 Post 정수 ID 순서와 UUID lexical 순서가 역전되는 경우, 또는 Post ID 증가순과 date_created가 역전되는 경우의 반례가 있다. Topic `last_post_id`와 Post `date_created`도 독립 값이다.
+
+따라서 generic `latest` selector를 원 동작 보존이라고 승인할 수 없다. 원 ID 순서를 보존할 별도 매핑/sequence나 transition별 effect 계약이 필요할 수 있으나 스키마·공개 ID 모델을 이번 단계에서 정하지 않았다. local commit `53bea548`의 G-6 코드는 여전히 Rust compile·Postgres 실행 전이며 `a397d77` CI에는 없었다. 구체적인 gap·후속 기준은 [PRODUCT-GAPS](PRODUCT-GAPS.md)의 G-6를 본다.
+
 ## 2026-10-20 F13 CLI 매핑: `users delete` 고정·`upgrade` 절반 매핑, 갭 G-14·G-15 기록
 
 원본 확인(파일·행 직접): `flaskbb users delete`는 `cli/users.py:67-89`에서 username 프롬프트(73-77), 정확 일치 조회(79), 없으면 오류(80-82), `--force` 없으면 확인(84-86), `user.delete()`(88)이며 그 본체는 `user/models.py:465-468`의 `db.session.delete`+commit이다. 권한 검사는 없다. `flaskbb upgrade`는 `cli/main.py:232-263`에서 `--all`이면 `alembic.upgrade()`(244), `--fixture`나 `--all`이면 `flaskbb.fixtures.<이름>`을 읽어(248-254) `update_settings_from_fixture`(257-259, 본체 `utils/populate.py:87-145`)로 없는 그룹·설정을 추가하고 `--force`일 때만 덮어쓴다.

@@ -24,6 +24,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      # This disposable job builds several workspaces/features into one target.
+      # Avoid retaining incremental state/debug tables after runner disk exhaustion.
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
       AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
       AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
       # Disposable native-stores fixture credentials; no service secrets are used.
@@ -126,7 +132,15 @@ jobs:
           set -Eeuo pipefail
           source scripts/verify-safe-locator.sh
           aip_verify_stage "broad compiler, runtime, product, worker, transport and SDK gate"
+          df -h "$GITHUB_WORKSPACE"
+          du -sh target
           bash tools/verify.sh
+      - name: Record verification disk usage
+        if: always()
+        shell: bash
+        run: |
+          df -h "$GITHUB_WORKSPACE"
+          if [[ -d target ]]; then du -sh target; fi
       - name: Build AIP CLI for the focused UI diagnostic
         if: ${{ inputs.member_ui_diagnostic }}
         shell: bash
