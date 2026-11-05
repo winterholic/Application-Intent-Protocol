@@ -315,6 +315,7 @@ resource Topic {
 resource Post {
   fields {
     id: Uuid
+    source_order: PostOrder?
     topic: Topic
     forum: Forum
     user: User?
@@ -333,14 +334,18 @@ resource Post {
   rows read when canReadPost(actor, this)
   check postForumMatchesTopic when topic.forum = forum
   check publishedPostHasDate when not published or date_created != null
+  unique source_order
+  check sourceOrderBelongsToPost when source_order = null or source_order.post = this
   expose create {
     allow user = actor and username = actor.username and not published and not deleted and not hidden and canReply(actor, topic) and forum = topic.forum
     fields id, topic, forum, user, username, content, hidden, published, version, deleted
   }
   transition publish {
-    allow user = actor and not published and canReply(actor, topic)
+    allow user = actor and not published and canReply(actor, topic) and not (exists Post where published = true and source_order = null)
     from published = false
     to published = true, date_created = now
+    create PostOrder { post = this }
+    update Post where id = this { source_order = latest PostOrder mapped where mapped.post = this order by mapped.id select mapped.id }
     update Forum where id = this.forum { last_post = this; last_post_user = actor; last_post_title = this.topic.title; last_post_username = this.username; last_post_created = now }
   }
   expose apply publish { target id; bulk maxRows 1 }
@@ -408,6 +413,15 @@ resource Post {
     traverse user { select id, username }
     budget { rows 500; depth 3; cost 10000; deadline 2s; offset 5000 }
   }
+}
+
+// Server-owned native order. Existing published rows must be mapped from a
+// verified original-ID manifest before any further native allocation is allowed.
+// No public read/create/patch operation can choose or rewrite this order.
+resource PostOrder {
+  fields { id: Id; post: Post }
+  unique post
+  rows read when canReadPost(actor, post)
 }
 
 // Internal one-to-one relation keeps the source app's special first-post rules
