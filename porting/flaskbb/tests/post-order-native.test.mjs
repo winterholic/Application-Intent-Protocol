@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {GROUPS_SQL, USERS_SQL, startFixture} from './harness.mjs';
+import {join} from 'node:path';
+import {GROUPS_SQL, USERS_SQL, binary, dbUrl, root, startFixture} from './harness.mjs';
 
 // These are new, disposable native posts. No historical UUID/date ordering is
 // inferred. A deliberately unmapped legacy row must fence further allocation.
@@ -60,5 +61,30 @@ test('FlaskBB native publish owns its PostOrder, replays once and fences unmappe
     assert.equal(sql(`SELECT count(*) FROM ${q}.post_order`), '1');
     assert.equal(sql(`SELECT content FROM ${q}.post WHERE id='${legacy}'`), 'legacy');
     assert.equal(sql(`SELECT last_post_id::text FROM ${q}.forum WHERE id=1`), first, 'refusals preserve the published projection');
+  } finally { await fx.stop(); }
+});
+
+test('FlaskBB fresh welcome installation allocates native order and permits the next publish', {timeout: 90000}, async () => {
+  const fx = await startFixture({prefix: 'aip-flaskbb-install-order-'});
+  const {run, schema, sql, q, config} = fx;
+  try {
+    const seed = run('python3', [join(root, 'porting/flaskbb/seed/install.py'), '--schema', schema,
+      '--admin-username', 'admin', '--admin-email', 'admin@example.test', '--welcome']);
+    run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-At', '-d', dbUrl], {input: seed});
+    const welcome = sql(`SELECT p.id::text || '|' || p.source_order_id || '|' || o.post_id::text
+      FROM ${q}.post p JOIN ${q}.post_order o ON o.id=p.source_order_id`);
+    const [welcomeId, order, reverse] = welcome.split('|');
+    assert.match(order || '', /^[1-9][0-9]*$/);
+    assert.equal(welcomeId, reverse);
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE published AND source_order_id IS NULL`), '0');
+    run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', 'install-admin-sub', '--actor', '1']);
+    const next = '00000000-0000-4000-8000-300000000001';
+    sql(`INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,hidden,published,version,deleted)
+      SELECT '${next}',topic_id,forum_id,1,'admin','next native post',false,false,0,false FROM ${q}.post WHERE id='${welcomeId}'`);
+    const result = await fx.client('install-admin-sub').bundle({atomic: [{apply: 'Post.publish', target: {ids: [next]}}]}, {key: 'install-order-next'});
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const allocated = sql(`SELECT source_order_id FROM ${q}.post WHERE id='${next}'`);
+    assert.ok(BigInt(allocated) > BigInt(order), 'fresh seed and live publishing share the server allocator');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post_order`), '2');
   } finally { await fx.stop(); }
 });
