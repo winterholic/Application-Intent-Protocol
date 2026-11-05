@@ -2151,12 +2151,13 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         std::fs::write(withdraw_output.join("withdraw-db-result.json"), serde_json::to_vec_pretty(&withdraw_db_result).unwrap()).unwrap();
         println!("withdraw browser/DB: {withdraw_db_result}");
         print!("{}", String::from_utf8_lossy(&withdraw_result.stdout));
-        assert!(
-            withdraw_result.status.success(),
-            "withdraw browser failed; inspect safe withdraw artifacts (status {:?})",
-            withdraw_result.status.code()
-        );
-        assert!(withdraw_db_ok, "withdraw DB/session isolation or lifecycle failed; see boolean evidence");
+        let mut account_journey_failures = Vec::new();
+        if !withdraw_result.status.success() {
+            account_journey_failures.push(format!("withdraw browser failed (status {:?})", withdraw_result.status.code()));
+        }
+        if !withdraw_db_ok {
+            account_journey_failures.push("withdraw DB/session isolation or lifecycle failed".to_owned());
+        }
 
         // Signup and both tutorial actions have their own new accounts, created by the original UI (never pre-seeded).
         for (action, account_email, account_name) in
@@ -2231,12 +2232,20 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             std::fs::write(account_output.join("signup-db-result.json"), serde_json::to_vec_pretty(&signup_db).unwrap()).unwrap();
             println!("signup browser/DB: {signup_db}");
             print!("{}", String::from_utf8_lossy(&signup_result.stdout));
-            assert!(
-                signup_result.status.success(),
-                "signup browser failed; inspect account-{action} safe artifacts (status {:?})",
-                signup_result.status.code()
-            );
-            assert!(signup_db_ok, "signup defaults/genres/hash/isolation failed; see boolean evidence");
+            if !signup_result.status.success() {
+                account_journey_failures.push(format!("signup browser failed for action {action} (status {:?})", signup_result.status.code()));
+            }
+            if !signup_db_ok {
+                account_journey_failures.push(format!("signup DB/defaults/genres/hash/isolation failed for action {action}"));
+            }
+            // This tutorial depends on this account's successful signup; the next account is independent.
+            if !signup_result.status.success() || !signup_db_ok {
+                let tutorial_blocked = json!({"journey": "member_tutorial", "action": action, "status": "blocked",
+                    "reason": "signup prerequisite failed", "browser_status": "not_run", "database_status": "not_run"});
+                std::fs::write(account_output.join("tutorial-db-result.json"), serde_json::to_vec_pretty(&tutorial_blocked).unwrap()).unwrap();
+                println!("tutorial blocked by signup prerequisite: {tutorial_blocked}");
+                continue;
+            }
 
             let tutorial_business_before = business_snapshot_except_user(&mut setup, Some(&user)).await;
             let stable_sql =
@@ -2280,12 +2289,13 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             std::fs::write(account_output.join("tutorial-db-result.json"), serde_json::to_vec_pretty(&tutorial_db).unwrap()).unwrap();
             println!("tutorial browser/DB: {tutorial_db}");
             print!("{}", String::from_utf8_lossy(&tutorial_result.stdout));
-            assert!(
-                tutorial_result.status.success(),
-                "tutorial browser failed; inspect account-{action} safe artifacts (status {:?})",
-                tutorial_result.status.code()
-            );
-            assert!(tutorial_db_ok, "tutorial defaults/columns/genres/session isolation failed; see boolean evidence");
+            if !tutorial_result.status.success() {
+                account_journey_failures.push(format!("tutorial browser failed for action {action} (status {:?})", tutorial_result.status.code()));
+            }
+            if !tutorial_db_ok {
+                account_journey_failures.push(format!("tutorial DB/defaults/columns/genres/session isolation failed for action {action}"));
+            }
         }
+        assert!(account_journey_failures.is_empty(), "independent account journeys failed: {}", account_journey_failures.join("; "));
     }
 }
