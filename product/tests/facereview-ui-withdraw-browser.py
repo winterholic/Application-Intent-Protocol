@@ -23,6 +23,7 @@ from playwright.sync_api import expect, sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
     body_failure_reason,
+    wait_for_api_completion,
     member_withdraw_evidence,
     safe_browser_failure_type,
 )
@@ -74,6 +75,9 @@ def main() -> int:
         path = urlsplit(response.url).path
         row = {"path": path, "method": request.method, "status": response.status,
                "authorization_present": "authorization" in request.headers, "body_captured": False}
+        # Register before all_headers() can dispatch requestfinished reentrantly.
+        rows.append(row)
+        pending[request] = (response, row)
         if path in {"/read", "/extension", "/apply"}:
             row["contract_matches_runtime"] = request.headers.get("x-aip-contract") == expected_contract
         try:
@@ -92,8 +96,6 @@ def main() -> int:
                 row["payload_matches"] = bool(user_id) and request_payload == {"apply": "User.withdraw", "target": {"ids": [user_id]}}
             if isinstance(request_payload, dict) and request_payload.get("extension") == "User.myEmotionSummary":
                 row["write_extension"] = "User.myEmotionSummary"
-        rows.append(row)
-        pending[request] = (response, row)
 
     def capture_body(request):
         if request not in pending:
@@ -186,6 +188,7 @@ def main() -> int:
                 page.wait_for_load_state("networkidle")
                 ui["signed_out"] = True
                 shot("withdraw-signed-out.png")
+                wait_for_api_completion(page, started, finished, pending, failures)
                 evidence = member_withdraw_evidence(rows, ui)
                 assert evidence["verified"], "withdraw bodies and original UI must all be verified"
                 assert not failures and started == finished, "all API requests must finish"

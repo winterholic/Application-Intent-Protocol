@@ -4,8 +4,24 @@ import hashlib
 import json
 import math
 import re
+import time
 from typing import Any
 from urllib.parse import urlsplit
+
+
+def wait_for_api_completion(page, started, finished, pending, failures, timeout_ms=15000):
+    """Pump browser events until tracked API requests and their bodies finish."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        if failures:
+            raise AssertionError("API request failed before evidence was complete")
+        if started == finished and not pending:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError("API requests and response bodies did not finish before evidence was collected")
+        # A SPA can retain the previous document's networkidle state. Yield to
+        # request/response/requestfinished instead of trusting that cached state.
+        page.wait_for_timeout(50)
 
 
 LIST_EXTENSIONS = {

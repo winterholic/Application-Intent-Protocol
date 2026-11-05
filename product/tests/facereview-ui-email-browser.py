@@ -22,6 +22,7 @@ from playwright.sync_api import expect, sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
     body_failure_reason,
+    wait_for_api_completion,
     member_email_evidence,
     safe_browser_failure_type,
 )
@@ -211,6 +212,7 @@ def main() -> int:
                 page.locator(".my-page-container").evaluate("el => Promise.all(el.getAnimations({subtree:true}).filter(a => a.animationName === 'fadeInUp').map(a => a.finished))")
                 ui["reloaded_verified"] = True
                 shot("email-verified-reloaded.png")
+                wait_for_api_completion(page, started, finished, pending, failures)
                 evidence = member_email_evidence(rows, ui)
                 assert evidence["verified"], "email verification bodies and persistent original UI must all be verified"
                 assert not failures and started == finished, "all API requests must finish"
