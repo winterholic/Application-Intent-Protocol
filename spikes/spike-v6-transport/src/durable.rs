@@ -1312,6 +1312,13 @@ impl Host {
             return Err("WIRE.ACCESS_NOT_DECLARED");
         }
         let read_only = op == "read" || op == "aggregate" || op == "files" && input["action"] == "get";
+        // Resolve the write and its isolation marker before this owner starts SQL in the transaction.
+        // Invalid requests retain their existing later error path and use the default isolation here.
+        let apply_request = if op == "apply" { Some(spike_v4_worker::write::job_apply_request(name, input, self.wire)) } else { None };
+        let serializable = apply_request
+            .as_ref()
+            .and_then(|request| request.as_ref().ok())
+            .is_some_and(|request| spike_v3_write::write_needs_serializable(&self.facts, request));
         let suffix = if read_only {
             String::new()
         } else {
@@ -1330,6 +1337,7 @@ impl Host {
         let digest = journal.marker(&effect, &journal_context).map_err(|e| e.code)?;
         let mut db = connect(&self.rt).await?;
         let tx = db.transaction().await.map_err(db_error)?;
+        tx.batch_execute(&format!("{}; SET LOCAL TimeZone='UTC'", spike_v3_write::isolation_sql(serializable))).await.map_err(db_error)?;
         guard(&tx, &self.rt, &self.grant).await?;
         locked_lease(&tx, &self.rt, &self.lease).await?;
         let caller = authorize(&tx, &self.facts, &self.lease.operation, &self.lease.input, self.lease.actor, self.wire).await?;
@@ -1394,7 +1402,11 @@ impl Host {
         .map_err(db_error)?;
         let output = match op {
             "apply" => {
-                let request = spike_v4_worker::write::job_apply_request(name, input, self.wire).map_err(|e| e.code)?;
+                let request = match apply_request {
+                    Some(Ok(request)) => request,
+                    Some(Err(error)) => return Err(error.code),
+                    None => return Err("WIRE.INTERNAL"),
+                };
                 let knobs = spike_v3_write::Knobs {
                     audit_via: Some("job"),
                     audit_key: Some(format!("{}:{effect_key}", self.lease.run_id)),
@@ -1402,7 +1414,6 @@ impl Host {
                     internal: true,
                     ..spike_v3_write::Knobs::default()
                 };
-                tx.batch_execute("SET LOCAL TimeZone='UTC'").await.map_err(db_error)?;
                 // The transition, deferred checks and the effect journal commit in one transaction.
                 let applied = match spike_v3_write::apply_in_with_wire(&tx, &self.facts, &request, &caller, &knobs, self.wire).await {
                     Ok(applied) => spike_v3_write::checks_in(&tx, &self.facts, &caller, &knobs).await.map(|_| applied),

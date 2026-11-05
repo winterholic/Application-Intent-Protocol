@@ -4,7 +4,8 @@ use serde_json::{json, Value};
 use spike_v2_read::id_wire::{emit_entity_id, emit_id, parse_id, IdWire, MAX_SAFE_ID};
 use spike_v2_read::plan::{Caller, Reject};
 use spike_v3_write::{
-    apply_in_with_wire, before_commit_rejection, checks_in, connection_failed, lost_before_commit, send_commit, CommitFailure, Knobs,
+    apply_in_with_wire, before_commit_rejection, checks_in, classify_write_error, connection_failed, isolation_sql, lost_before_commit, send_commit,
+    CommitFailure, Knobs,
 };
 use std::time::{Duration, Instant};
 use tokio_postgres::{Client, Transaction};
@@ -34,6 +35,45 @@ fn write_invocation<'a>(facts: &'a Value, name: &str, input: &Value, wire: IdWir
     check_write_record(facts, &declaration["input"], input, "입력", wire)?;
     let deadline = Duration::from_millis(declaration["deadlineMs"].as_u64().unwrap_or(1000));
     Ok(WriteInvocation { declaration, wire, deadline, expires: Instant::now() + deadline })
+}
+
+/// A write extension may call any declared transition, so its transaction must meet the strictest marker in `access`.
+pub fn write_needs_serializable(facts: &Value, name: &str) -> bool {
+    let Some((resource, extension)) = name.split_once('.') else { return false };
+    facts["resources"][resource]["extensions"][extension]["access"].as_object().is_some_and(|access| {
+        access.keys().any(|transition| {
+            let Some((resource, transition)) = transition.split_once('.') else { return false };
+            facts["resources"][resource]["transitions"][transition]["isolation"] == "serializable"
+        })
+    })
+}
+
+async fn select_transaction_isolation(tx: &Transaction<'_>, serializable: bool) -> Result<(), Reject> {
+    tx.batch_execute(isolation_sql(serializable)).await.map_err(|error| {
+        if connection_failed(&error) {
+            return lost_before_commit();
+        }
+        if error.code().is_some_and(|code| code.code() == "25001") {
+            return Reject {
+                code: "WIRE.UNSUPPORTED_ISOLATION",
+                msg: "caller-owned transaction은 이미 SQL을 실행해 필요한 격리 수준을 선택할 수 없음".into(),
+            };
+        }
+        classify_write_error("쓰기 격리 설정", error)
+    })
+}
+
+async fn require_transaction_isolation(tx: &Transaction<'_>, serializable: bool) -> Result<(), Reject> {
+    let current: String = tx
+        .query_one("SELECT current_setting('transaction_isolation')", &[])
+        .await
+        .map_err(|error| classify_write_error("쓰기 격리 확인", error))?
+        .get(0);
+    let required = if serializable { "serializable" } else { "read committed" };
+    if current != required {
+        return rej("WIRE.UNSUPPORTED_ISOLATION", format!("caller-owned transaction 격리가 {current}; {required} 필요"));
+    }
+    Ok(())
 }
 
 /// The worker side of a write action: the server sends invoke/reply frames and reads the
@@ -279,6 +319,7 @@ pub async fn prepare_write_in(
     caller: &Caller,
 ) -> Result<PreparedWrite, Reject> {
     let invocation = write_invocation(facts, name, input, IdWire::Legacy)?;
+    select_transaction_isolation(tx, write_needs_serializable(facts, name)).await?;
     run_write_in(tx, w, facts, input, caller, invocation).await
 }
 
@@ -292,6 +333,22 @@ pub async fn prepare_write_in_with_wire(
     wire: IdWire,
 ) -> Result<PreparedWrite, Reject> {
     let invocation = write_invocation(facts, name, input, wire)?;
+    select_transaction_isolation(tx, write_needs_serializable(facts, name)).await?;
+    run_write_in(tx, w, facts, input, caller, invocation).await
+}
+
+/// The transaction owner selected isolation before its first query (for example, before an idempotency lookup).
+pub async fn prepare_write_in_with_wire_configured_isolation(
+    tx: &Transaction<'_>,
+    w: &mut Worker,
+    facts: &Value,
+    name: &str,
+    input: &Value,
+    caller: &Caller,
+    wire: IdWire,
+) -> Result<PreparedWrite, Reject> {
+    let invocation = write_invocation(facts, name, input, wire)?;
+    require_transaction_isolation(tx, write_needs_serializable(facts, name)).await?;
     run_write_in(tx, w, facts, input, caller, invocation).await
 }
 
@@ -304,6 +361,10 @@ pub async fn invoke_write(db: &mut Client, w: &mut Worker, facts: &Value, name: 
             Reject { code: "WIRE.INTERNAL", msg: "트랜잭션 시작 실패".into() }
         }
     })?;
+    if let Err(error) = select_transaction_isolation(&tx, write_needs_serializable(facts, name)).await {
+        let _ = tx.rollback().await;
+        return Err(error);
+    }
     match run_write_in(&tx, w, facts, input, caller, invocation).await {
         Ok(prepared) => {
             let left = prepared.expires.saturating_duration_since(Instant::now());
@@ -334,12 +395,9 @@ async fn run_write_in(
     w.next_invoke += 1;
     let invoke_id = w.next_invoke;
     let token = crate::grant_token('w', invoke_id);
-    tx.batch_execute(&format!(
-        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout = '{}ms'; SET LOCAL TimeZone = 'UTC'",
-        deadline.as_millis()
-    ))
-    .await
-    .map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "세션 설정 실패".into() })?;
+    tx.batch_execute(&format!("SET LOCAL statement_timeout = '{}ms'; SET LOCAL TimeZone = 'UTC'", deadline.as_millis()))
+        .await
+        .map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "세션 설정 실패".into() })?;
     w.send_before(&json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token }), expires).await?;
     // ctx 쓰기가 한 번이라도 실패하면 확장이 오류를 잡고 성공을 돌려줘도 커밋하지 않는다(트랜잭션 오염 방지).
     let mut poisoned: Option<&'static str> = None;
@@ -601,5 +659,30 @@ mod duplicate_create_conflict_tests {
             Err(error) => error,
         };
         assert_eq!(error.code, "WIRE.CONFLICT");
+    }
+}
+
+#[cfg(test)]
+mod write_isolation_selection_tests {
+    use super::write_needs_serializable;
+    use serde_json::json;
+
+    #[test]
+    fn extension_requires_strictest_isolation_of_every_allowed_transition() {
+        let facts = json!({"resources":{"Event":{
+            "transitions":{
+                "plain":{"isolation":null},
+                "guarded":{"isolation":"serializable"}
+            },
+            "extensions":{
+                "plain":{"access":{"Event.plain":{}}},
+                "mixed":{"access":{"Event.plain":{},"Event.guarded":{}}},
+                "guarded":{"access":{"Event.guarded":{}}}
+            }
+        }}});
+        assert!(!write_needs_serializable(&facts, "Event.plain"));
+        assert!(write_needs_serializable(&facts, "Event.mixed"));
+        assert!(write_needs_serializable(&facts, "Event.guarded"));
+        assert!(!write_needs_serializable(&facts, "Event.missing"));
     }
 }

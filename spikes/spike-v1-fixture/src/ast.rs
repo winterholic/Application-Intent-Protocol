@@ -167,6 +167,8 @@ pub enum Effect {
     Update {
         resource: String,
         max_rows: Option<i64>,
+        /// Optional condition evaluated against the transition's pre-state.
+        when: Option<Expr>,
         matches: Vec<(String, Expr)>,
         values: Vec<(String, Expr)>,
         span: Span,
@@ -274,6 +276,16 @@ pub enum Expr {
     Str(String),
     Call(String, Vec<Expr>, Span),
     Exists(String, Box<Expr>, Span),
+    /// Server-side scalar selection from the latest matching row. Only valid in effect values.
+    Latest {
+        resource: String,
+        alias: String,
+        where_: Box<Expr>,
+        order_by: Box<Expr>,
+        select: Box<Expr>,
+        otherwise: Option<Box<Expr>>,
+        span: Span,
+    },
     /// `+`/`-`. 의미 검사는 전이 `to`의 `필드 = 같은 필드 ± 정수`만 받는다.
     Arith(&'static str, Box<Expr>, Box<Expr>, Span),
 }
