@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {GROUPS_SQL, USERS_SQL, seedNativePostOrders, startFixture} from './harness.mjs';
+
+const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const base = (sql, q, schema) => {
+  sql(GROUPS_SQL(schema)); sql(USERS_SQL(schema));
+  sql(`INSERT INTO ${q}.category(id,title,description,position) VALUES(1,'General','fixture',1);
+    INSERT INTO ${q}.forum(id,category_id,title,description,position,locked,show_moderators) VALUES(1,1,'Forum','fixture',1,false,false);
+    INSERT INTO ${q}.forum_group_access(id,forum_id,group_id) VALUES(1,1,2),(2,1,3);`);
+};
+
+test('native publish advances the Topic pointer and date together with Forum and PostOrder', {timeout:90000}, async () => {
+  const topic=id(1), post=id(2);
+  const fx=await startFixture({actors:{alice:2}, seed(sql,q,schema) {
+    base(sql,q,schema);
+    sql(`INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,locked,important,views,published,deleted,hidden)
+      VALUES('${topic}',1,'Topic',2,'member-alice',false,false,0,false,false,false);
+      INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,hidden,published,version,deleted)
+      VALUES('${post}','${topic}',1,2,'member-alice','draft',false,false,0,false);`);
+  }});
+  try {
+    const result=await fx.client('alice').bundle({atomic:[{apply:'Post.publish',target:{ids:[post]}}]}, {key:'topic-pointer-publish'});
+    assert.equal(result.ok,true,JSON.stringify(result));
+    // JSON field lookup makes a missing Topic pointer a semantic RED, not a SQL error.
+    assert.equal(fx.sql(`SELECT to_jsonb(t)->>'last_post_id' FROM ${fx.q}.topic t WHERE id='${topic}'`),post);
+    assert.equal(fx.sql(`SELECT t.last_updated=p.date_created AND f.last_post_created=p.date_created
+      FROM ${fx.q}.topic t JOIN ${fx.q}.post p ON p.id='${post}' JOIN ${fx.q}.forum f ON f.id=1 WHERE t.id='${topic}'`),'t');
+    const before=fx.sql(`SELECT to_jsonb(t)::text FROM ${fx.q}.topic t WHERE id='${topic}'`);
+    assert.equal((await fx.client('alice').bundle({atomic:[{apply:'Post.publish',target:{ids:[post]}}]}, {key:'topic-pointer-publish'})).ok,true);
+    assert.equal(fx.sql(`SELECT to_jsonb(t)::text FROM ${fx.q}.topic t WHERE id='${topic}'`),before);
+  } finally { await fx.stop(); }
+});
+
+for (const mode of ['older','tie','newer','empty']) {
+  test(`Topic unhide ${mode}: strict source comparison, Topic projection and first-post metadata`, {timeout:90000}, async () => {
+    const topic=id(10), first=id(11), last=id(12), otherTopic=id(20), other=id(21);
+    const fx=await startFixture({actors:{admin:3,alice:2}, seed(sql,q,schema) {
+      base(sql,q,schema);
+      sql(`INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden,hidden_by_id,hidden_at)
+        VALUES('${topic}',1,'Restored Topic',NULL,'topic-author','2020-01-01','2025-01-02',false,false,0,true,false,true,3,'2025-01-03'),
+        ('${otherTopic}',1,'Other Topic',3,'admin-bob','2020-01-01','2030-01-01',false,false,0,true,false,false,NULL,NULL);
+        INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,hidden_by_id,hidden_at,published,version,deleted)
+        VALUES('${first}','${topic}',1,2,'post-author','first','2020-01-01',true,3,'2025-01-03',true,0,false),
+        ('${last}','${topic}',1,2,'reply-author','last','2025-01-01',false,NULL,NULL,true,0,false),
+        ('${other}','${otherTopic}',1,3,'other-author','other','2030-01-01',false,NULL,NULL,true,0,false);
+        INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topic}','${first}');
+        UPDATE ${q}.topic SET last_post_id='${last}' WHERE id='${topic}';
+        UPDATE ${q}.topic SET last_post_id='${other}' WHERE id='${otherTopic}';`);
+      seedNativePostOrders(sql,q,[first,last,other]);
+      if(mode!=='empty') {
+        const date={older:'2025-01-03',tie:'2025-01-02',newer:'2025-01-01'}[mode];
+        sql(`UPDATE ${q}.forum SET last_post_id='${other}',last_post_user_id=3,last_post_title='sentinel-title',
+          last_post_username='sentinel-name',last_post_created='${date}' WHERE id=1`);
+      }
+    }});
+    const {q,sql}=fx;
+    const forum=()=>sql(`SELECT jsonb_build_array(last_post_id,last_post_user_id,last_post_title,last_post_username,last_post_created)::text FROM ${q}.forum WHERE id=1`);
+    try {
+      const before=forum();
+      const preserved=sql(`SELECT to_jsonb(t)-'hidden'-'hidden_by_id'-'hidden_at' FROM ${q}.topic t WHERE id='${topic}'`);
+      const denied=await fx.client('alice').bundle({atomic:[{apply:'Topic.unhide',target:{ids:[topic]}}]}, {key:`topic-unhide-denied-${mode}`});
+      assert.equal(denied.ok,false);
+      assert.equal(forum(),before);
+      assert.equal(sql(`SELECT hidden FROM ${q}.topic WHERE id='${topic}'`),'t');
+      const result=await fx.client('admin').bundle({atomic:[{apply:'Topic.unhide',target:{ids:[topic]}}]}, {key:`topic-unhide-${mode}`});
+      assert.equal(result.ok,true,JSON.stringify(result));
+      assert.equal(sql(`SELECT to_jsonb(t)-'hidden'-'hidden_by_id'-'hidden_at' FROM ${q}.topic t WHERE id='${topic}'`),preserved,'unhide preserves Topic pointer, dates and unrelated columns');
+      assert.equal(sql(`SELECT NOT hidden AND hidden_by_id IS NULL AND hidden_at IS NULL FROM ${q}.post WHERE id='${first}'`),'t');
+      if(mode==='older'||mode==='tie') assert.equal(forum(),before,'older/equal restored Topic cannot refresh any Forum field');
+      else {
+        assert.deepEqual(JSON.parse(forum()).slice(0,4),[last,null,'Restored Topic','topic-author']);
+        assert.equal(sql(`SELECT last_post_created='2025-01-02'::timestamptz FROM ${q}.forum WHERE id=1`),'t');
+      }
+      assert.equal(sql(`SELECT content||'|'||hidden FROM ${q}.post WHERE id='${other}'`),'other|false');
+      const applied=forum();
+      assert.equal((await fx.client('admin').bundle({atomic:[{apply:'Topic.unhide',target:{ids:[topic]}}]}, {key:`topic-unhide-${mode}`})).ok,true);
+      assert.equal(forum(),applied);
+    } finally { await fx.stop(); }
+  });
+}

@@ -18,6 +18,11 @@ test('FlaskBB PostOrder schema upgrade preserves legacy UUIDs and requires the e
       legacy = legacy.replace(text, '');
     };
     removeOnce('    source_order: PostOrder?\n');
+    // This fixture preserves the prior schema, without guessing a historical Topic pointer.
+    assert.equal(legacy.split('resource Topic {\n  fields {\n    id: Uuid\n    last_post: Post?\n').length,2);
+    legacy=legacy.replace('resource Topic {\n  fields {\n    id: Uuid\n    last_post: Post?\n','resource Topic {\n  fields {\n    id: Uuid\n');
+    removeOnce('    update Topic where id = this.topic { last_post = this; last_updated = now }\n');
+    legacy=legacy.replace('last_post = this.last_post\n','last_post = this.forum.last_post\n');
     removeOnce('  unique source_order\n  check sourceOrderBelongsToPost when source_order = null or source_order.post = this\n');
     removeOnce(' and not (exists Post where published = true and source_order = null)');
     removeOnce('    create PostOrder { post = this }\n    update Post where id = this { source_order = latest PostOrder mapped where mapped.post = this order by mapped.id select mapped.id }\n');
@@ -53,6 +58,7 @@ test('FlaskBB PostOrder schema upgrade preserves legacy UUIDs and requires the e
     assert.equal(snapshot(), before, 'additive migration must preserve UUIDs, content and actors');
     assert.equal(sql(`SELECT count(*) FROM ${q}.post_order`), '0', 'migration must not invent original IDs');
     assert.equal(sql(`SELECT source_order_id IS NULL FROM ${q}.post WHERE id='${post}'`), 't');
+    assert.equal(sql(`SELECT last_post_id IS NULL FROM ${q}.topic WHERE id='${topic}'`),'t','migration does not invent a source Topic pointer');
     assert.equal(JSON.parse(run(binary, ['service', 'check', definition])).ok, true);
   } finally {
     try { if (fx) await fx.stop(); }

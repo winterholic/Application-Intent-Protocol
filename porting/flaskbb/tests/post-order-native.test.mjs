@@ -76,6 +76,7 @@ test('FlaskBB fresh welcome installation allocates native order and permits the 
     const [welcomeId, order, reverse] = welcome.split('|');
     assert.match(order || '', /^[1-9][0-9]*$/);
     assert.equal(welcomeId, reverse);
+    assert.equal(sql(`SELECT last_post_id::text FROM ${q}.topic`),welcomeId,'fresh Topic keeps its explicit last post');
     assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE published AND source_order_id IS NULL`), '0');
     run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', 'install-admin-sub', '--actor', '1']);
     const next = '00000000-0000-4000-8000-300000000001';

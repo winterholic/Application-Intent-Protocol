@@ -276,7 +276,7 @@ pub enum Expr {
     Str(String),
     Call(String, Vec<Expr>, Span),
     Exists(String, Box<Expr>, Span),
-    /// Server-side scalar selection from the latest matching row. Only valid in effect values.
+    /// Server-side scalar selection from the latest matching row. Only valid in update effect values and target matches.
     Latest {
         resource: String,
         alias: String,
