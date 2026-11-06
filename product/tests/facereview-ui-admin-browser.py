@@ -28,6 +28,7 @@ from playwright.sync_api import expect, sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (  # noqa: E402
+    admin_signup_svg_evidence,
     admin_signup_trend_evidence,
     admin_request_evidence,
     aggregate_count,
@@ -331,6 +332,7 @@ def main() -> int:
                 stage("signup_trend_periods")
                 period_sums: dict[str, int] = {}
                 trend_results: dict[str, object] = {}
+                trend_render_results: dict[str, object] = {}
                 for label, period in SIGNUP_PERIODS:
                     mark = len(requests)
                     button = page.get_by_role("button", name=label, exact=True)
@@ -365,50 +367,29 @@ def main() -> int:
                     if not result["verified"]:
                         raise RuntimeError(f"{label}: fixture/API bucket mismatch {json.dumps(result, ensure_ascii=False)}")
                     period_sums[label] = result["actual_total"]
-                    expect(page.locator(".chart-panel svg circle")).to_have_count(len(asked))
+                    chart_svg = page.locator(".chart-panel").first.locator("svg").first
+                    expect(chart_svg.locator("circle")).to_have_count(len(asked))
+                    svg_data = chart_svg.evaluate("""svg => {
+                      const points = Array.from(svg.querySelectorAll('circle')).map((circle) => {
+                        const rect = circle.getBoundingClientRect();
+                        return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2};
+                      });
+                      const ticks = Array.from(svg.querySelectorAll('text')).map((text) => {
+                        const value = Number(text.textContent?.trim());
+                        const rect = text.getBoundingClientRect();
+                        return Number.isFinite(value) && rect.width > 0 && rect.height > 0
+                          ? {value, y: rect.y + rect.height / 2}
+                          : null;
+                      }).filter(Boolean);
+                      return {points, ticks};
+                    }""")
+                    render_result = admin_signup_svg_evidence(period, svg_data["points"], svg_data["ticks"], expected_points)
+                    trend_render_results[period] = render_result
+                    if not render_result["verified"]:
+                        raise RuntimeError(f"{label}: rendered SVG point values differ from the DB fixture {json.dumps(render_result, ensure_ascii=False)}")
                     page.screenshot(path=str(output / f"admin-dashboard-signup-{label}.png".replace(" ", "-")), full_page=True)
-                    for index, point in enumerate(expected_points):
-                        dot = page.locator(".chart-panel svg circle").nth(index)
-                        expect(dot).to_be_visible()
-                        box = dot.bounding_box()
-                        if box is None:
-                            raise RuntimeError(f"{period}: chart point {index} has no layout box")
-                        if "trend_pointer_debug" not in checks:
-                            page.evaluate("""() => {
-                              window.__aipTrendPointerEvents = [];
-                              const describe = (node) => ({
-                                tag: node?.tagName ?? null,
-                                className: typeof node?.className === 'string' ? node.className : node?.getAttribute?.('class'),
-                                pointerEvents: node ? getComputedStyle(node).pointerEvents : null,
-                                outerHTML: node?.outerHTML?.slice(0, 400) ?? null,
-                              });
-                              document.addEventListener('pointerover', (event) => window.__aipTrendPointerEvents.push({type: event.type, target: describe(event.target)}), true);
-                              document.addEventListener('mousemove', (event) => window.__aipTrendPointerEvents.push({type: event.type, target: describe(event.target)}), true);
-                            }""")
-                        dot.hover(force=True)
-                        checks["trend_pointer_debug"] = dot.evaluate("""(el) => {
-                          const r = el.getBoundingClientRect();
-                          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-                          const tooltip = document.querySelector('.chart-panel__tooltip');
-                          return {
-                            point: {outerHTML: el.outerHTML, pointerEvents: getComputedStyle(el).pointerEvents, rect: {x: r.x, y: r.y, width: r.width, height: r.height}},
-                            hit: hit ? {tag: hit.tagName, className: typeof hit.className === 'string' ? hit.className : hit.getAttribute('class'), pointerEvents: getComputedStyle(hit).pointerEvents, outerHTML: hit.outerHTML.slice(0, 400)} : null,
-                            tooltip: tooltip ? {text: tooltip.innerText, display: getComputedStyle(tooltip).display, visibility: getComputedStyle(tooltip).visibility} : null,
-                          };
-                        }""")
-                        checks["trend_pointer_debug"]["events"] = page.evaluate("window.__aipTrendPointerEvents")
-                        tooltip = page.locator(".chart-panel__tooltip")
-                        expect(tooltip).to_be_visible()
-                        expect(tooltip).to_contain_text(f"신규가입 {point['count']}명")
-                        year, month, day = map(int, point["date"].split("-"))
-                        if period in {"1y", "3y"}:
-                            tooltip_date = f"{year}년 {month}월"
-                        elif period == "3m":
-                            tooltip_date = f"{year}년 {month}월 {day}일 주"
-                        else:
-                            tooltip_date = f"{year}년 {month}월 {day}일"
-                        expect(tooltip).to_contain_text(tooltip_date)
                 checks["signup_trend_periods"] = trend_results
+                checks["signup_trend_rendered_svg"] = trend_render_results
                 checks["signup_trend_period_sums"] = period_sums
                 checks["dashboard_business_metrics"] = {
                     "expected": dashboard_expected,

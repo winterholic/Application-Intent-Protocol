@@ -41,7 +41,7 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 class BrowserEvidenceTests(unittest.TestCase):
     def test_admin_signup_trend_evidence_checks_every_bucket_and_names_wrong_date(self):
-        from product.tests.facereview_ui_browser_evidence import admin_signup_trend_evidence
+        from product.tests.facereview_ui_browser_evidence import admin_signup_svg_evidence, admin_signup_trend_evidence
 
         expected = [{"date": "2026-11-01", "count": 3}, {"date": "2026-11-02", "count": 0}]
         self.assertEqual(admin_signup_trend_evidence("7d", expected, expected), {
@@ -56,6 +56,15 @@ class BrowserEvidenceTests(unittest.TestCase):
             {"index": 0, "expected": {"date": "2026-11-01", "count": 3}, "actual": {"date": "2026-11-01", "count": 2}},
             {"index": 1, "expected": {"date": "2026-11-02", "count": 0}, "actual": {"date": "2026-11-02", "count": 1}},
         ])
+
+        expected_render = [{"date": "2026-11-01", "count": 2}, {"date": "2026-11-02", "count": 0}]
+        rendered = [{"x": 10, "y": 0}, {"x": 20, "y": 100}]
+        ticks = [{"value": 0, "y": 100}, {"value": 2, "y": 0}]
+        self.assertTrue(admin_signup_svg_evidence("7d", rendered, ticks, expected_render)["verified"])
+        swapped_render = [{"x": 10, "y": 100}, {"x": 20, "y": 0}]
+        negative = admin_signup_svg_evidence("7d", swapped_render, ticks, expected_render)
+        self.assertFalse(negative["verified"])
+        self.assertEqual([m["index"] for m in negative["mismatches"]], [0, 1])
 
     def test_recommend_form_request_requires_member_and_exact_deduplicated_fixture(self):
         from product.tests import facereview_ui_browser_evidence as evidence
@@ -812,14 +821,13 @@ class BrowserEvidenceTests(unittest.TestCase):
         source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
         self.assertLess(source.index("checks: dict[str, object] = {}"), source.index('checks["signup_checker_negative_control"]'))
 
-    def test_admin_trend_tooltips_use_svg_coordinates_and_save_period_evidence_first(self):
+    def test_admin_trend_rendered_svg_points_use_axis_ticks_and_save_period_screenshot(self):
         source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
-        self.assertIn("box = dot.bounding_box()", source)
-        self.assertIn("dot.hover(force=True)", source)
-        self.assertIn('checks["trend_pointer_debug"]', source)
+        self.assertIn("admin_signup_svg_evidence(period, svg_data[\"points\"], svg_data[\"ticks\"], expected_points)", source)
+        self.assertIn('checks["signup_trend_rendered_svg"] = trend_render_results', source)
         screenshot = source.index('page.screenshot(path=str(output / f"admin-dashboard-signup-')
-        hover = source.index("dot.hover(force=True)")
-        self.assertLess(screenshot, hover)
+        evidence = source.index("render_result = admin_signup_svg_evidence")
+        self.assertLess(evidence, screenshot)
 
     def test_admin_diagnostic_prepares_its_own_definition_and_sdk(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()

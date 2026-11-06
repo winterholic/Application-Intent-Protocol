@@ -1109,6 +1109,57 @@ def admin_signup_trend_evidence(period: str, actual: Any, expected: Any) -> dict
     }
 
 
+def admin_signup_svg_evidence(period: str, rendered_points: Any, axis_ticks: Any, expected: Any) -> dict[str, object]:
+    """Recover values from rendered SVG point coordinates and labeled y-axis ticks."""
+    expected_points = expected if isinstance(expected, list) else []
+    mismatches: list[dict[str, object]] = []
+    valid = (
+        isinstance(rendered_points, list)
+        and isinstance(axis_ticks, list)
+        and len(rendered_points) == len(expected_points)
+        and len(axis_ticks) >= 2
+        and all(isinstance(point, dict) and isinstance(point.get("x"), (int, float)) and isinstance(point.get("y"), (int, float)) for point in rendered_points)
+        and all(isinstance(tick, dict) and isinstance(tick.get("value"), (int, float)) and isinstance(tick.get("y"), (int, float)) for tick in axis_ticks)
+    )
+    if valid:
+        valid = all(
+            isinstance(point, dict) and isinstance(point.get("date"), str)
+            and isinstance(point.get("count"), int) and not isinstance(point.get("count"), bool)
+            for point in expected_points
+        )
+    if valid:
+        low = min(axis_ticks, key=lambda tick: tick["value"])
+        high = max(axis_ticks, key=lambda tick: tick["value"])
+        valid = high["value"] > low["value"] and high["y"] != low["y"]
+    actual_points: list[dict[str, object]] = []
+    if valid:
+        previous_x = None
+        for index, (point, wanted) in enumerate(zip(rendered_points, expected_points)):
+            x, y = float(point["x"]), float(point["y"])
+            estimated = (low["value"] + (low["y"] - y) * (high["value"] - low["value"]) / (low["y"] - high["y"]))
+            actual_count = int(round(estimated))
+            actual = {"date": wanted["date"], "count": actual_count}
+            actual_points.append(actual)
+            if (previous_x is not None and x <= previous_x) or abs(estimated - wanted["count"]) > 0.35:
+                mismatches.append({"index": index, "expected": wanted, "actual": actual, "estimated_count": round(estimated, 4), "x_order_valid": previous_x is None or x > previous_x})
+            previous_x = x
+    else:
+        mismatches.append({"index": None, "expected": "ordered rendered points and at least two distinct labeled y-axis ticks", "actual": "invalid SVG chart evidence"})
+    actual_total = sum(point["count"] for point in actual_points)
+    expected_total = sum(point.get("count", 0) for point in expected_points if isinstance(point, dict) and isinstance(point.get("count"), int))
+    return {
+        "period": period,
+        "expected_buckets": len(expected_points),
+        "rendered_buckets": len(actual_points),
+        "expected_total": expected_total,
+        "rendered_total": actual_total,
+        "expected_points": expected_points,
+        "rendered_points": actual_points,
+        "verified": valid and not mismatches and len(actual_points) == len(expected_points),
+        "mismatches": mismatches,
+    }
+
+
 def safe_page_error_name(error: Any) -> str:
     """Playwright wraps a page error in its own class; the JavaScript name is `error.name`. Only a few well-known names are kept."""
     name = getattr(error, "name", type(error).__name__)
