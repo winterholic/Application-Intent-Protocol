@@ -104,6 +104,15 @@ pub enum ObjectsConfig {
         max_total_bytes: u64,
         #[serde(default = "owner_object_count")]
         max_objects: usize,
+        /// Opt-in `ListObjectsV2` scan: seconds between complete listings of one owner (60 to 604800). Omitted: never lists.
+        #[serde(default)]
+        scan_interval_secs: Option<u64>,
+        #[serde(default = "scan_page_keys")]
+        scan_page_keys: u16,
+        #[serde(default = "scan_max_pages_per_tick")]
+        scan_max_pages_per_tick: u16,
+        #[serde(default = "scan_lease_secs")]
+        scan_lease_secs: u64,
     },
     #[serde(rename = "gcs_hmac")]
     GcsHmac {
@@ -114,6 +123,15 @@ pub enum ObjectsConfig {
         max_total_bytes: u64,
         #[serde(default = "owner_object_count")]
         max_objects: usize,
+        /// Opt-in `ListObjectsV2` scan: seconds between complete listings of one owner (60 to 604800). Omitted: never lists.
+        #[serde(default)]
+        scan_interval_secs: Option<u64>,
+        #[serde(default = "scan_page_keys")]
+        scan_page_keys: u16,
+        #[serde(default = "scan_max_pages_per_tick")]
+        scan_max_pages_per_tick: u16,
+        #[serde(default = "scan_lease_secs")]
+        scan_lease_secs: u64,
     },
 }
 fn owner_object_bytes() -> u64 {
@@ -121,6 +139,15 @@ fn owner_object_bytes() -> u64 {
 }
 fn owner_object_count() -> usize {
     1000
+}
+fn scan_page_keys() -> u16 {
+    250
+}
+fn scan_max_pages_per_tick() -> u16 {
+    4
+}
+fn scan_lease_secs() -> u64 {
+    300
 }
 fn max_object_bytes() -> u64 {
     5 * 1024 * 1024 * 1024
@@ -345,7 +372,9 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
                 .map_err(|_| configuration_error())?,
             )))
         }
-        Some(ObjectsConfig::S3 { endpoint, bucket, region, access_key_env, secret_key_env, session_token_env, max_total_bytes, max_objects }) => {
+        Some(ObjectsConfig::S3 {
+            endpoint, bucket, region, access_key_env, secret_key_env, session_token_env, max_total_bytes, max_objects, ..
+        }) => {
             if *max_total_bytes == 0 || *max_total_bytes > i64::MAX as u64 || *max_objects == 0 || *max_objects > 100_000 {
                 return Err(configuration_error());
             }
@@ -362,7 +391,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
             }
             Some(ObjectStorage::S3(Arc::new(aip_execution::objects::S3Store::new(s).map_err(|_| configuration_error())?)))
         }
-        Some(ObjectsConfig::GcsHmac { bucket, access_key_env, secret_key_env, max_total_bytes, max_objects }) => {
+        Some(ObjectsConfig::GcsHmac { bucket, access_key_env, secret_key_env, max_total_bytes, max_objects, .. }) => {
             if *max_total_bytes == 0 || *max_total_bytes > i64::MAX as u64 || *max_objects == 0 || *max_objects > 100_000 {
                 return Err(configuration_error());
             }
@@ -370,6 +399,18 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
                 .with_owner_quota(*max_total_bytes, *max_objects);
             Some(ObjectStorage::GcsHmac(Arc::new(aip_execution::gcs::GcsStore::new(config).map_err(|_| configuration_error())?)))
         }
+    };
+    let object_scan = match &config.objects {
+        Some(
+            ObjectsConfig::S3 { scan_interval_secs, scan_page_keys, scan_max_pages_per_tick, scan_lease_secs, .. }
+            | ObjectsConfig::GcsHmac { scan_interval_secs, scan_page_keys, scan_max_pages_per_tick, scan_lease_secs, .. },
+        ) => scan_interval_secs.map(|interval| spike_v6_transport::infrastructure::ObjectScan {
+            interval: Duration::from_secs(interval),
+            page_keys: *scan_page_keys,
+            max_pages_per_tick: *scan_max_pages_per_tick,
+            lease: Duration::from_secs(*scan_lease_secs),
+        }),
+        _ => None,
     };
     let r = &config.realtime;
     let realtime = RealTimeOptions {
@@ -443,6 +484,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         resource_limits,
         object_transfer_lifetime: Duration::from_millis(config.object_transfer_lifetime_ms),
         object_reconcile_interval: Duration::from_secs(60),
+        object_scan,
         rag: None,
         rag_client_index: false,
         triggers: Default::default(),

@@ -123,6 +123,43 @@ impl DataChanges {
     }
 }
 
+/// Opt-in `ListObjectsV2` scan that adopts bucket objects the ledger never counted (uploaded before the ledger, or after a
+/// reservation's hold ran out). Every list request is billed by the provider, so the scan is off unless configured and
+/// bounded in three ways: how often one owner is listed again, how many keys one page holds, and how many pages one
+/// reconcile tick may request across all owners. Spending is therefore at most `max_pages_per_tick` requests per tick per
+/// instance, and a provider cost cap is still the operator's to set (see the release gate).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObjectScan {
+    /// Time between two complete listings of one owner's prefix.
+    pub interval: std::time::Duration,
+    pub page_keys: u16,
+    pub max_pages_per_tick: u16,
+    /// How long a claimed owner is left alone by other instances, and after a failed list call.
+    pub lease: std::time::Duration,
+}
+
+impl ObjectScan {
+    pub const MIN_INTERVAL_SECS: u64 = 60;
+    pub const MAX_INTERVAL_SECS: u64 = 7 * 24 * 3600;
+
+    pub fn validate(&self) -> std::io::Result<()> {
+        let invalid = |message| Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, message));
+        if !(Self::MIN_INTERVAL_SECS..=Self::MAX_INTERVAL_SECS).contains(&self.interval.as_secs()) || self.interval.subsec_nanos() != 0 {
+            return invalid("object scan interval must be 60 to 604800 whole seconds");
+        }
+        if !(1..=aip_execution::objects::MAX_LIST_KEYS).contains(&self.page_keys) {
+            return invalid("object scan page size must be 1 to 1000 keys");
+        }
+        if !(1..=100).contains(&self.max_pages_per_tick) {
+            return invalid("object scan page budget must be 1 to 100 pages per tick");
+        }
+        if !(1..=86_400).contains(&self.lease.as_secs()) || self.lease.subsec_nanos() != 0 {
+            return invalid("object scan lease must be 1 to 86400 whole seconds");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct Infrastructure {
     pub db_pool: crate::pool::PoolOptions,
@@ -142,6 +179,8 @@ pub struct Infrastructure {
     pub object_transfer_lifetime: std::time::Duration,
     /// How often expired S3 reservations are checked against the store. Tests shorten it; production keeps the default.
     pub object_reconcile_interval: std::time::Duration,
+    /// `None` (the default) never lists the bucket.
+    pub object_scan: Option<ObjectScan>,
     pub rag: Option<Arc<aip_execution::rag::RagEngine>>,
     pub rag_client_index: bool,
     pub triggers: Arc<crate::triggers::Triggers>,
@@ -181,6 +220,7 @@ impl Default for Infrastructure {
             resource_limits: ResourceLimits::default(),
             object_transfer_lifetime: std::time::Duration::from_secs(15 * 60),
             object_reconcile_interval: std::time::Duration::from_secs(60),
+            object_scan: None,
             rag: None,
             rag_client_index: false,
             triggers: Arc::default(),
@@ -237,6 +277,9 @@ impl Infrastructure {
         }
         self.resource_limits.validate()?;
         self.retention.validate()?;
+        if let Some(scan) = &self.object_scan {
+            scan.validate()?;
+        }
         if !(std::time::Duration::from_secs(1)..=std::time::Duration::from_secs(24 * 60 * 60)).contains(&self.object_transfer_lifetime) {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid object transfer lifetime"));
         }

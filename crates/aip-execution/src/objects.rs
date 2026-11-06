@@ -556,10 +556,7 @@ impl S3Store {
     /// Returns an owner-scoped view. The caller's principal identifier is
     /// hashed before it becomes part of the object path.
     pub fn for_owner(&self, owner: &str) -> Result<Self, Error> {
-        if owner.is_empty() || owner.len() > 2048 || owner.chars().any(char::is_control) {
-            return Err(Error::InvalidConfig);
-        }
-        let prefix = hex(&Sha256::digest(owner.as_bytes()));
+        let prefix = owner_prefix(owner)?;
         let mut scoped = self.clone();
         scoped.owner_prefix = Some(prefix);
         Ok(scoped)
@@ -691,6 +688,30 @@ impl S3Store {
         }
     }
 
+    /// One page of `ListObjectsV2` under this owner's prefix. A billed request: callers bound how many pages they ask for
+    /// and persist `ListPage::next_token` to resume later instead of listing everything at once. Only an owner-scoped
+    /// view may list, so a scan can never see another owner's keys.
+    pub async fn list_objects_v2(&self, max_keys: u16, continuation_token: Option<&str>) -> Result<ListPage, Error> {
+        let prefix = self.owner_prefix.as_deref().ok_or(Error::InvalidConfig)?;
+        if !(1..=MAX_LIST_KEYS).contains(&max_keys) || continuation_token.is_some_and(|token| !valid_continuation_token(token)) {
+            return Err(Error::InvalidConfig);
+        }
+        let mut url = self.endpoint.clone();
+        let base = url.path().trim_end_matches('/');
+        url.set_path(&format!("{base}/{}", aws_encode(&self.config.bucket)));
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("list-type", "2").append_pair("max-keys", &max_keys.to_string()).append_pair("prefix", &format!("{prefix}/"));
+            if let Some(token) = continuation_token {
+                query.append_pair("continuation-token", token);
+            }
+        }
+        let response = self.signed_request(Method::GET, url, Vec::new(), Vec::new()).await?;
+        let body = bounded_body(response).await?;
+        let xml = String::from_utf8(body).map_err(|e| Error::Protocol(e.to_string()))?;
+        parse_list_page(&xml, prefix, max_keys)
+    }
+
     /// Owner ceilings the server applies to presigned uploads: total bytes and object count.
     pub fn owner_quota(&self) -> (u64, usize) {
         (self.config.max_owner_bytes, self.config.max_objects)
@@ -800,6 +821,88 @@ impl S3Store {
         url.set_path(&format!("{base}/{}/{owner}{}", aws_encode(&self.config.bucket), key.as_str()));
         Ok(url)
     }
+}
+
+/// Upper bound of `max-keys` for one `ListObjectsV2` request (the store's own page maximum).
+pub const MAX_LIST_KEYS: u16 = 1000;
+const MAX_CONTINUATION_TOKEN_BYTES: usize = 2048;
+
+/// What one `ListObjectsV2` page held under an owner's prefix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListPage {
+    /// Objects whose key is `<owner_prefix>/<uuid>`, with the size the store reported.
+    pub items: Vec<(ObjectKey, u64)>,
+    /// Keys under the prefix whose last segment is not a canonical object id. They are counted, never adopted or deleted.
+    pub skipped_keys: usize,
+    /// Present when the listing is truncated; pass it back to continue after this page.
+    pub next_token: Option<String>,
+}
+
+/// The SHA-256 namespace an owner's objects live under in the bucket (`<bucket>/<owner_prefix>/<object_id>`).
+/// One way: the owner cannot be recovered from it, which is why the ledger keeps an explicit owner table.
+pub fn owner_prefix(owner: &str) -> Result<String, Error> {
+    if owner.is_empty() || owner.len() > 2048 || owner.chars().any(char::is_control) {
+        return Err(Error::InvalidConfig);
+    }
+    Ok(hex(&Sha256::digest(owner.as_bytes())))
+}
+
+/// Splits a bucket-relative key (`<owner_prefix>/<object_id>`, an optional leading `/` is ignored) into its parts.
+/// The prefix is only checked for shape; resolving it to an owner is the ledger's job.
+pub fn parse_scoped_object_path(path: &str) -> Result<(String, ObjectKey), Error> {
+    let (prefix, id) = path.strip_prefix('/').unwrap_or(path).split_once('/').ok_or(Error::InvalidKey)?;
+    if !valid_owner_prefix(prefix) {
+        return Err(Error::InvalidKey);
+    }
+    Ok((prefix.to_owned(), ObjectKey::parse(id)?))
+}
+
+fn valid_owner_prefix(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn valid_continuation_token(token: &str) -> bool {
+    !token.is_empty() && token.len() <= MAX_CONTINUATION_TOKEN_BYTES && !token.chars().any(char::is_control)
+}
+
+fn parse_list_page(xml: &str, owner_prefix: &str, max_keys: u16) -> Result<ListPage, Error> {
+    if xml.contains("<Error>") || !xml.contains("<ListBucketResult") {
+        return Err(Error::Protocol("object store returned an unexpected listing".into()));
+    }
+    let scope = format!("{owner_prefix}/");
+    let mut items = Vec::new();
+    let mut skipped_keys = 0;
+    let mut seen = 0usize;
+    let mut rest = xml;
+    while let Some(start) = rest.find("<Contents>") {
+        let after = &rest[start + "<Contents>".len()..];
+        let end = after.find("</Contents>").ok_or_else(|| Error::Protocol("unterminated listing entry".into()))?;
+        let entry = &after[..end];
+        rest = &after[end + "</Contents>".len()..];
+        seen += 1;
+        if seen > usize::from(max_keys) {
+            return Err(Error::Protocol("listing returned more keys than requested".into()));
+        }
+        let key = xml_tag(entry, "Key").ok_or_else(|| Error::Protocol("listing entry omitted Key".into()))?;
+        let size = xml_tag(entry, "Size")
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| Error::Protocol("listing entry omitted a valid Size".into()))?;
+        let Some(suffix) = key.strip_prefix(&scope) else {
+            return Err(Error::Protocol("listing returned a key outside the owner prefix".into()));
+        };
+        // `ObjectKey::parse` folds case; the bucket does not, so only the exact canonical spelling names an object we issued.
+        match ObjectKey::parse(suffix) {
+            Ok(object) if object.as_str() == suffix => items.push((object, size)),
+            _ => skipped_keys += 1,
+        }
+    }
+    let next_token = if xml_tag(xml, "IsTruncated").as_deref() == Some("true") {
+        let token = xml_tag(xml, "NextContinuationToken").filter(|token| valid_continuation_token(token));
+        Some(token.ok_or_else(|| Error::Protocol("truncated listing omitted a usable continuation token".into()))?)
+    } else {
+        None
+    };
+    Ok(ListPage { items, skipped_keys, next_token })
 }
 
 fn validate_certificate_pem_bundle(bundle: &[u8]) -> Result<(), Error> {
@@ -1364,5 +1467,124 @@ mod sigv4_tests {
             format!("AWS4-HMAC-SHA256\n20130524T000000Z\n20130524/us-east-1/s3/aws4_request\n{}", hex(&Sha256::digest(canonical.as_bytes())));
         let signature = hex(&hmac(&signing_key(secret, "20130524", "us-east-1"), to_sign.as_bytes()));
         assert_eq!(signature, "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404");
+    }
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::*;
+
+    const PREFIX: &str = "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90";
+    const ID_A: &str = "00000000-0000-4000-8000-000000000001";
+    const ID_B: &str = "00000000-0000-4000-8000-000000000002";
+    const ID_C: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+    fn entry(key: &str, size: u64) -> String {
+        format!(
+            "<Contents><Key>{key}</Key><LastModified>2026-11-06T00:00:00.000Z</LastModified><ETag>&quot;e&quot;</ETag><Size>{size}</Size></Contents>"
+        )
+    }
+
+    fn page(entries: &[String], truncated: Option<&str>) -> String {
+        let tail = match truncated {
+            Some(token) => format!("<IsTruncated>true</IsTruncated><NextContinuationToken>{token}</NextContinuationToken>"),
+            None => "<IsTruncated>false</IsTruncated>".to_owned(),
+        };
+        format!(
+            "<?xml version=\"1.0\"?><ListBucketResult><Name>b</Name><KeyCount>{}</KeyCount>{}{tail}</ListBucketResult>",
+            entries.len(),
+            entries.concat()
+        )
+    }
+
+    #[test]
+    fn owner_prefix_is_the_sha256_of_the_owner_and_rejects_unusable_owners() {
+        assert_eq!(owner_prefix("alice").unwrap(), PREFIX);
+        assert!(owner_prefix("").is_err());
+        assert!(owner_prefix("a\nb").is_err());
+        assert!(owner_prefix(&"x".repeat(2049)).is_err());
+        let store = S3Store::new(S3Config::new("https://objects.example.test", "bucket", "us-east-1", "ak", "sk")).unwrap();
+        assert_eq!(store.for_owner("alice").unwrap().owner_prefix.as_deref(), Some(PREFIX));
+    }
+
+    #[test]
+    fn list_page_xml_yields_objects_sizes_and_the_continuation_token() {
+        let xml = page(&[entry(&format!("{PREFIX}/{ID_A}"), 7), entry(&format!("{PREFIX}/{ID_B}"), 0)], Some("tok+/=1"));
+        let parsed = parse_list_page(&xml, PREFIX, 250).unwrap();
+        assert_eq!(parsed.items, vec![(ObjectKey::parse(ID_A).unwrap(), 7), (ObjectKey::parse(ID_B).unwrap(), 0)]);
+        assert_eq!(parsed.skipped_keys, 0);
+        assert_eq!(parsed.next_token.as_deref(), Some("tok+/=1"));
+        let last = parse_list_page(&page(&[], None), PREFIX, 250).unwrap();
+        assert_eq!((last.items.len(), last.next_token), (0, None));
+    }
+
+    #[test]
+    fn non_uuid_suffixes_are_counted_as_skipped_and_never_returned() {
+        let xml = page(
+            &[
+                entry(&format!("{PREFIX}/{ID_A}"), 1),
+                entry(&format!("{PREFIX}/readme.txt"), 2),
+                entry(&format!("{PREFIX}/{}", ID_C.to_uppercase()), 3),
+                entry(&format!("{PREFIX}/nested/{ID_B}"), 4),
+                entry(&format!("{PREFIX}/"), 0),
+            ],
+            None,
+        );
+        let parsed = parse_list_page(&xml, PREFIX, 250).unwrap();
+        assert_eq!(parsed.items, vec![(ObjectKey::parse(ID_A).unwrap(), 1)]);
+        assert_eq!(parsed.skipped_keys, 4);
+    }
+
+    #[test]
+    fn a_key_outside_the_owner_prefix_is_a_protocol_error() {
+        let other = "f".repeat(64);
+        for key in [format!("{other}/{ID_A}"), ID_A.to_owned(), format!("{PREFIX}{ID_A}")] {
+            let xml = page(&[entry(&format!("{PREFIX}/{ID_B}"), 1), entry(&key, 1)], None);
+            assert!(matches!(parse_list_page(&xml, PREFIX, 250), Err(Error::Protocol(_))), "{key} must not be accepted");
+        }
+    }
+
+    #[test]
+    fn malformed_listings_are_protocol_errors() {
+        let good = entry(&format!("{PREFIX}/{ID_A}"), 1);
+        for xml in [
+            "<Error><Code>AccessDenied</Code></Error>".to_owned(),
+            "<html></html>".to_owned(),
+            page(&[entry(&format!("{PREFIX}/{ID_A}"), 1).replace("<Size>1</Size>", "<Size>x</Size>")], None),
+            page(&[entry(&format!("{PREFIX}/{ID_A}"), 1).replace("<Size>1</Size>", "")], None),
+            // Truncated but no token to continue with.
+            page(std::slice::from_ref(&good), None).replace("false", "true"),
+            // More keys than max-keys asked for.
+            page(&[good.clone(), good.clone()], None),
+        ] {
+            assert!(matches!(parse_list_page(&xml, PREFIX, 1), Err(Error::Protocol(_))), "{xml}");
+        }
+        assert!(parse_list_page(&page(std::slice::from_ref(&good), None), PREFIX, 1).is_ok());
+    }
+
+    #[test]
+    fn scoped_object_paths_split_into_prefix_and_key() {
+        let (prefix, key) = parse_scoped_object_path(&format!("{PREFIX}/{ID_A}")).unwrap();
+        assert_eq!((prefix.as_str(), key.as_str()), (PREFIX, ID_A.to_owned()));
+        assert_eq!(parse_scoped_object_path(&format!("/{PREFIX}/{ID_A}")).unwrap().1.as_str(), ID_A);
+        for bad in [
+            ID_A.to_owned(),
+            format!("{PREFIX}/"),
+            format!("short/{ID_A}"),
+            format!("{}/{ID_A}", PREFIX.to_uppercase()),
+            format!("{PREFIX}/x/{ID_A}"),
+        ] {
+            assert!(parse_scoped_object_path(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn only_an_owner_scoped_store_with_sane_arguments_may_list() {
+        let store = S3Store::new(S3Config::new("https://objects.example.test", "bucket", "us-east-1", "ak", "sk")).unwrap();
+        assert!(matches!(store.list_objects_v2(250, None).await, Err(Error::InvalidConfig)), "an unscoped store would list every owner");
+        let scoped = store.for_owner("alice").unwrap();
+        for (max_keys, token) in [(0, None), (MAX_LIST_KEYS + 1, None), (10, Some("")), (10, Some("a\nb"))] {
+            assert!(matches!(scoped.list_objects_v2(max_keys, token).await, Err(Error::InvalidConfig)), "{max_keys} {token:?}");
+        }
     }
 }

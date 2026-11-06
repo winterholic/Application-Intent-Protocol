@@ -3,7 +3,7 @@
 //! lived URLs and small JSON control requests.
 
 use crate::{auth::Session, cors, durable, infrastructure::ObjectStorage, server::Runtime};
-use aip_execution::object_ledger::{Error as LedgerError, Kind as LedgerKind, ObjectLedger, Outcome};
+use aip_execution::object_ledger::{Error as LedgerError, Kind as LedgerKind, ObjectLedger, Outcome, ScanPolicy, ScanTickReport};
 use aip_execution::objects::{
     CompletedPart, Error as ObjectError, LocalStore, MultipartUpload, ObjectKey, S3Store, MAX_S3_OBJECT_BYTES, MAX_S3_PART_BYTES,
 };
@@ -625,7 +625,48 @@ pub(crate) async fn reconcile_loop(rt: Arc<Runtime>) {
         if let Err(code) = reconcile_once(&rt).await {
             eprintln!("{}", json!({"event":"object_reconcile_failed","code":code}));
         }
+        if rt.infrastructure.object_scan.is_some() {
+            match scan_once(&rt).await {
+                Ok(tick) if tick.pages > 0 => eprintln!(
+                    "{}",
+                    json!({"event":"object_scan","pages":tick.pages,"ownersCompleted":tick.owners_completed,"ownersFailed":tick.owners_failed,
+                           "adopted":tick.rows.adopted,"unchanged":tick.rows.unchanged,"skippedMultipart":tick.rows.skipped_multipart,
+                           "skippedFenced":tick.rows.skipped_fenced,"skippedKeys":tick.skipped_keys})
+                ),
+                Ok(_) => {}
+                Err(code) => eprintln!("{}", json!({"event":"object_scan_failed","code":code})),
+            }
+        }
     }
+}
+
+/// One opt-in `ListObjectsV2` pass (see `ObjectScan`). Every instance may run it; the owner lease taken in
+/// `claim_scan_targets` keeps them off each other's prefixes, and the page budget caps what one tick can bill.
+pub(crate) async fn scan_once(rt: &Runtime) -> Result<ScanTickReport, &'static str> {
+    let Some(scan) = rt.infrastructure.object_scan else { return Ok(ScanTickReport::default()) };
+    let base = match &rt.infrastructure.objects {
+        Some(ObjectStorage::S3(base)) => base.as_ref().clone(),
+        Some(ObjectStorage::GcsHmac(base)) => base.s3_compatible_store().clone(),
+        _ => return Ok(ScanTickReport::default()),
+    };
+    let ledger = ledger_for(rt, &base)?;
+    let policy = ScanPolicy {
+        page_keys: scan.page_keys,
+        max_pages: scan.max_pages_per_tick,
+        lease_secs: scan.lease.as_secs(),
+        rescan_secs: scan.interval.as_secs(),
+        resume_secs: rt.infrastructure.object_reconcile_interval.as_secs().max(1),
+    };
+    with_db(rt, move |mut db| async move {
+        let result = ledger
+            .scan_tick(&mut db, &policy, |target, token, max_keys| {
+                let base = base.clone();
+                async move { base.for_owner(&target.owner)?.list_objects_v2(max_keys, token.as_deref()).await }
+            })
+            .await;
+        (db, result)
+    })
+    .await
 }
 
 pub(crate) async fn reconcile_once(rt: &Runtime) -> Result<usize, &'static str> {
