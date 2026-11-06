@@ -1,12 +1,18 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-06 승인된 historical PostOrder SQL·실DB 경계 검증
+
+집중 [42136991305](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42136991305), 실제 checkout `209b8bdb57473313f7047b62e08c8dc89c958c9d`에서 Python 승인/SQL 5건과 실제 PostgreSQL/HTTP 4건이 통과했다. `seed/post_order_import.py`는 명시 manifest·검토 snapshot·대상 schema와 migration marker에 묶인 digest를 확인한 뒤 SQL만 출력한다. 제품 writer와 같은 advisory fence를 사용하고 잠금 아래 live snapshot을 다시 비교한다. 실제 시험은 writer 충돌 거부, marker/snapshot 변경 거부, mapping·역참조·sequence RESTART 후 강제 실패의 전체 rollback, 원본 UUID·내용·작성자·시각·숨김/삭제 상태 보존, source ID 41/42와 high-water 80 뒤 native 81 할당을 확인했다. 기존 native·신규 설치·schema upgrade도 같은 실행에서 통과했다.
+
+`source_provenance_verified=false`와 `activation_authorized=false`는 유지한다. 입력 namespace/revision 문자열은 실제 원본 출처나 최신성의 증명이 아니다. migration marker는 전체 live catalog drift 검사와 같지 않으며, 원본 projection 동등성·운영 이관/rollback·F01–F17 전체 포팅은 미완료다. 초기 787 시험 실패는 제품 SQL 실행 전 테스트의 sequence composite JSON 변환 오류였고, 209b8bd는 snapshot 필드를 명시한 test-only 교정이다.
+
 ## 2026-11-06 PostOrder 활성 schema·native publish·신규 설치·additive migration 검증
 
 전용 [42133821900](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42133821900), 실제 checkout `cf9097577ed2887fddaaadffafb8971393175212`에서 세 실HTTP/PostgreSQL 시험이 통과했다. 활성 앱은 내부 `PostOrder`와 nullable/unique/역참조 검사 `Post.source_order`를 선언한다. 공개 입력·읽기에 순서를 노출하지 않고 `Post.publish`에서 생성·연결·기존 Forum projection을 같은 serializable 트랜잭션으로 처리한다. 같은 키 재전송은 한 번만 할당하고, 비소유자·미매핑 legacy 게시글이 있는 상태의 거부는 allocator와 행을 보존한다.
 
 최초 `b578edc` 실행은 실제 `post_order` 관계 부재로 RED였다. native publish는 `fec861e`에서 GREEN을 확보했고, 별도 설치 회귀 `08ca6d2`는 환영 게시글 mapping 누락으로 RED였다. 교정된 설치 seed는 새 welcome 행에 서버 identity를 사용한다. schema migration은 검토 digest를 요구하며 잘못된 digest를 거부하고, 기존 UUID·내용·사용자 행을 보존하며 기존 게시글의 원 ID를 추측하거나 backfill하지 않는다. 기존 UI 회귀용 신규 synthetic fixture만 명시한 생성 순서로 할당한다.
 
-원본 ID manifest의 실제 provenance/freshness, historical import executor·writer fence·high-water 적용, 마지막 글 후보/trigger/projection의 원본 동등성, 전체 F01–F17은 계속 미완료다. 기존 core PG 7회귀와 offline manifest 21건을 이 증거와 중복 실행하지 않았다.
+아래 native 검증 당시 미완이던 historical import executor·writer fence·high-water는 위 209b8bd 실행에서 추가 검증했다. 원본 ID manifest의 실제 provenance/freshness, 전체 catalog drift, 마지막 글 후보/trigger/projection의 원본 동등성, 전체 F01–F17은 계속 미완료다. 기존 core PG 7회귀와 offline manifest 21건을 이 증거와 중복 실행하지 않았다.
 
 ## 2026-11-06 G-14 오류 계약·G-15 설정 갱신 Linux GREEN
 

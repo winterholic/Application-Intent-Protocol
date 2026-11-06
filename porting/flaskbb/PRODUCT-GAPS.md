@@ -1,6 +1,6 @@
 # FlaskBB 포팅이 드러낸 AIP 제품 갭
 
-초기 근거는 2026-10-18 실DB 재검증(`evidence/run-752-*.log`)이며, G-2·G-5·G-8은 이후 main 구현과 독립 CI 근거로 갱신했다. 2026-11-06 코어 PG 7회귀는 실제 checkout `27e42bc`에서 통과해 main `e392060`에 반영됐다. G-6 native PostOrder schema/publish·신규 설치·additive migration은 집중 `42133821900`/실제 `cf90975`의 3tests에서 검증했다. 원본 ID의 실제 import·writer fence/high-water 적용·projection 동등성은 여전히 미완료다. 갭은 제품에 없거나 의미 동등성이 입증되지 않은 것만 적는다.
+초기 근거는 2026-10-18 실DB 재검증(`evidence/run-752-*.log`)이며, G-2·G-5·G-8은 이후 main 구현과 독립 CI 근거로 갱신했다. 2026-11-06 코어 PG 7회귀는 실제 checkout `27e42bc`에서 통과해 main `e392060`에 반영됐다. G-6 native PostOrder schema/publish·신규 설치·additive migration은 집중 `42133821900`/실제 `cf90975`의 3tests에서 검증했다. 승인-bound historical SQL·writer fence/high-water·rollback은 실제 `209b8bd`/`42136991305`의 PG/HTTP 4건에서 검증했다. 원본 provenance/freshness·전체 live catalog drift·projection 동등성은 여전히 미완료다. 갭은 제품에 없거나 의미 동등성이 입증되지 않은 것만 적는다.
 
 | ID | 갭 | 근거 | 현재 처리 | 설계안(미구현) |
 |---|---|---|---|---|
