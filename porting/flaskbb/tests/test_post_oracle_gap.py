@@ -105,9 +105,13 @@ class PostOracleGap(unittest.TestCase):
         for post_id, day, hidden, topic_hidden in posts:
             if topic_hidden:
                 topic.hidden = True
-            row = Post(id=post_id, username=user.username, content="body",
-                       date_created=datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(days=day),
-                       hidden=hidden)
+            row = Post(content="body", user=user, topic=topic)
+            row.id = post_id
+            row.date_created = (
+                datetime(2020, 1, 1, tzinfo=timezone.utc) +
+                timedelta(days=day)
+            )
+            row.hidden = hidden
             row.topic = topic
             row.user = user
             rows.append(row)
