@@ -443,7 +443,8 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
     });
     let metric_cohort_before = cell(&mut setup, "SELECT SHA2(GROUP_CONCAT(CONCAT_WS('|',user_id,DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),role,is_deleted) ORDER BY user_id SEPARATOR '\n'),256) FROM user WHERE user_id LIKE '88888888-%'")
         .await.expect("cohort fingerprint");
-    let evidence_dir = Path::new(&std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("run-owned browser evidence directory"));
+    let evidence_dir_path = std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("run-owned browser evidence directory");
+    let evidence_dir = Path::new(&evidence_dir_path);
     std::fs::create_dir_all(evidence_dir).unwrap();
     let source_sha = std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local-unset".to_owned());
     let verify_command = "cargo test --locked -p aip-cli --features mysql --test mysql_facereview_admin_ui -- --ignored --exact facereview_admin_console_runs_through_the_generated_sdk_and_the_servers_own_policy --nocapture --test-threads=1";
