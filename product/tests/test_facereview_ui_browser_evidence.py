@@ -816,6 +816,7 @@ class BrowserEvidenceTests(unittest.TestCase):
         source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
         self.assertIn("box = dot.bounding_box()", source)
         self.assertIn("dot.hover(force=True)", source)
+        self.assertIn('checks["trend_pointer_debug"]', source)
         screenshot = source.index('page.screenshot(path=str(output / f"admin-dashboard-signup-')
         hover = source.index("dot.hover(force=True)")
         self.assertLess(screenshot, hover)

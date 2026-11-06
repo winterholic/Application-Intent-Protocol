@@ -373,7 +373,30 @@ def main() -> int:
                         box = dot.bounding_box()
                         if box is None:
                             raise RuntimeError(f"{period}: chart point {index} has no layout box")
+                        if "trend_pointer_debug" not in checks:
+                            page.evaluate("""() => {
+                              window.__aipTrendPointerEvents = [];
+                              const describe = (node) => ({
+                                tag: node?.tagName ?? null,
+                                className: typeof node?.className === 'string' ? node.className : node?.getAttribute?.('class'),
+                                pointerEvents: node ? getComputedStyle(node).pointerEvents : null,
+                                outerHTML: node?.outerHTML?.slice(0, 400) ?? null,
+                              });
+                              document.addEventListener('pointerover', (event) => window.__aipTrendPointerEvents.push({type: event.type, target: describe(event.target)}), true);
+                              document.addEventListener('mousemove', (event) => window.__aipTrendPointerEvents.push({type: event.type, target: describe(event.target)}), true);
+                            }""")
                         dot.hover(force=True)
+                        checks["trend_pointer_debug"] = dot.evaluate("""(el) => {
+                          const r = el.getBoundingClientRect();
+                          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+                          const tooltip = document.querySelector('.chart-panel__tooltip');
+                          return {
+                            point: {outerHTML: el.outerHTML, pointerEvents: getComputedStyle(el).pointerEvents, rect: {x: r.x, y: r.y, width: r.width, height: r.height}},
+                            hit: hit ? {tag: hit.tagName, className: typeof hit.className === 'string' ? hit.className : hit.getAttribute('class'), pointerEvents: getComputedStyle(hit).pointerEvents, outerHTML: hit.outerHTML.slice(0, 400)} : null,
+                            tooltip: tooltip ? {text: tooltip.innerText, display: getComputedStyle(tooltip).display, visibility: getComputedStyle(tooltip).visibility} : null,
+                          };
+                        }""")
+                        checks["trend_pointer_debug"]["events"] = page.evaluate("window.__aipTrendPointerEvents")
                         tooltip = page.locator(".chart-panel__tooltip")
                         expect(tooltip).to_be_visible()
                         expect(tooltip).to_contain_text(f"신규가입 {point['count']}명")
