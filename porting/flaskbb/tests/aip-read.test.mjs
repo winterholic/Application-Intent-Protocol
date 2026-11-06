@@ -282,7 +282,7 @@ test('AIP server enforces forum group visibility and unique link relations with 
     const replyDelete = await member.bundle({atomic: [{apply: 'Post.delete', target: {ids: [replyId]}}]}, {key: `delete-post-${replyId}`});
     assert.equal(replyDelete.ok, true, JSON.stringify(replyDelete));
     assert.equal((await member.read({read: 'Post', select: ['id'], filter: [{field: 'id', op: 'eq', value: replyId}], limit: 1})).rows.length, 0);
-    assert.equal(sql(`SELECT deleted FROM ${q}.post WHERE id='${replyId}'`), 't', 'delete is a retained tombstone in the AIP model');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${replyId}'`), '0', 'Post.delete physically removes the reply row');
     const readonlyDelete = await readOnly.bundle({atomic: [{apply: 'Topic.delete', target: {ids: [topicId]}}]}, {key: `deny-delete-topic-${topicId}`});
     assert.equal(readonlyDelete.code, 'WIRE.FORBIDDEN', JSON.stringify(readonlyDelete));
     const topicDelete = await member.bundle({atomic: [
@@ -290,8 +290,8 @@ test('AIP server enforces forum group visibility and unique link relations with 
       {apply: 'Post.delete', target: {ids: [firstPostId]}},
     ]}, {key: `delete-topic-${topicId}`});
     assert.equal(topicDelete.ok, true, JSON.stringify(topicDelete));
-    assert.equal(sql(`SELECT deleted FROM ${q}.topic WHERE id='${topicId}'`), 't');
-    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${topicId}' AND deleted`), '2', 'topic deletion tombstones its complete post set');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id='${topicId}'`), '0', 'Topic.delete physically removes the topic row');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${topicId}'`), '0', 'Topic.delete physically removes its complete post set');
     assert.equal((await member.read({read: 'Topic', select: ['id'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows.length, 0);
     assert.equal((await member.read({read: 'Post', select: ['id'], filter: [{field: 'id', op: 'eq', value: firstPostId}], limit: 1})).rows.length, 0);
     const countsAfterDelete = (await member.read({read: 'Forum', select: ['topic_count', 'post_count'], filter: [{field: 'id', op: 'eq', value: '2'}], limit: 1})).rows[0];
