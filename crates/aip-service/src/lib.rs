@@ -1145,7 +1145,7 @@ async fn rekey_cli(config: Config, options_path: PathBuf) -> Result<Value, Value
     options.assert_complete_inventory().map_err(|e| error("INCOMPLETE_REKEY_INVENTORY", &e.to_string()))?;
 
     // 3. Operational gate: reject execution until authoritative schema inventory equivalence verification is integrated
-    if !rekey_operational_inventory_verified(&config.schema, &options) {
+    if !encryption_runtime::rekey_operational_inventory_verified(&config.schema, &options) {
         return Err(error(
             "REKEY_OPERATIONAL_GATE_CLOSED",
             "운영 rekey CLI 차단: 정의 메타데이터 기반 전수 인벤토리 동등성 검증 엔진이 아직 제품에 연결되지 않음 (DB 변경 전 차단)",
@@ -1173,12 +1173,6 @@ async fn rekey_cli(config: Config, options_path: PathBuf) -> Result<Value, Value
         "scope_kind": options.scope_kind,
         "reports": reports,
     }))
-}
-
-/// Helper returning whether authoritative deployment-schema inventory has been verified.
-/// Always returns false until full compiler metadata extraction is wired to the operational CLI.
-fn rekey_operational_inventory_verified(_schema: &str, _options: &encryption_runtime::RekeyOptions) -> bool {
-    false
 }
 
 const AUDIT_BAD_QUERY: &str = "via는 apply·extension·job, limit은 1에서 500, since는 RFC 3339 시각(예: 2026-10-01T00:00:00Z)이어야 함";

@@ -13,7 +13,7 @@ use aip_execution::{
     write_sealer::StoreSealer,
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{path::PathBuf, sync::Arc};
 use tokio_postgres::Client;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -21,6 +21,7 @@ pub enum Error {
     InvalidConfig(String),
     Crypto(String),
     Database(String),
+    OperationalGateClosed,
 }
 
 impl std::fmt::Display for Error {
@@ -29,6 +30,7 @@ impl std::fmt::Display for Error {
             Self::InvalidConfig(msg) => write!(f, "설정 오류: {msg}"),
             Self::Crypto(msg) => write!(f, "암호화 오류: {msg}"),
             Self::Database(msg) => write!(f, "데이터베이스 오류: {msg}"),
+            Self::OperationalGateClosed => write!(f, "운영 rekey 차단: 전수 인벤토리 검증이 제품 경로에 연결되지 않음"),
         }
     }
 }
@@ -135,9 +137,16 @@ impl KekConfig {
 
 /// Binds `StoreSealer` and `StoreOpener` for a deployment schema using the loaded provider.
 pub fn bind_sealer_and_opener(store: DekStore, provider: LocalProvider, budget_client: Client) -> (StoreSealer, StoreOpener) {
+    let provider = Arc::new(provider);
     let sealer = StoreSealer::new(store.clone(), provider.clone(), budget_client);
     let opener = StoreOpener::new(store, provider);
     (sealer, opener)
+}
+
+/// Whether authoritative deployment-schema inventory has been verified.
+/// This remains closed until the definition metadata equivalence engine is integrated.
+pub(crate) fn rekey_operational_inventory_verified(_schema: &str, _options: &RekeyOptions) -> bool {
+    false
 }
 
 /// Rekey operational parameters parsed from CLI or management worker.
@@ -226,15 +235,18 @@ pub async fn execute_rekey(
     kek_config: &KekConfig,
     options: &RekeyOptions,
 ) -> Result<Vec<RekeyReport>, Error> {
+    // Validate caller-supplied structure and completeness before the operational fence.
+    let scope = options.validate()?;
+    options.assert_complete_inventory()?;
+
+    // This public API is a second enforcement boundary; the CLI fence alone is insufficient.
+    if !rekey_operational_inventory_verified(schema, options) {
+        return Err(Error::OperationalGateClosed);
+    }
+
     let store = DekStore::new(schema).map_err(|e| Error::InvalidConfig(format!("schema `{schema}`가 유효하지 않음: {e:?}")))?;
     kek_config.validate()?;
     let provider = kek_config.load_provider()?;
-
-    // 1. Structural validation before touching DB
-    let scope = options.validate()?;
-
-    // 2. Prevent partial target slice from retiring DEK across the whole scope
-    options.assert_complete_inventory()?;
 
     let targets: Vec<RekeyTarget> =
         options.targets.iter().map(|t| RekeyTarget::new(&t.table, &t.column, &t.id_column, &t.resource, &t.field, scope.clone())).collect();
@@ -262,5 +274,14 @@ mod tests {
         let config = KekConfig::Spec { spec: "invalid".into(), active: "k1".into() };
         let err = config.load_provider().unwrap_err();
         assert!(matches!(err, Error::Crypto(_)));
+    }
+
+    #[test]
+    fn sealer_and_opener_share_one_provider_allocation() {
+        let provider = Arc::new(LocalProvider::from_spec("k1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=", "k1").unwrap());
+        let sealer_provider = provider.clone();
+        let opener_provider = provider;
+        assert!(Arc::ptr_eq(&sealer_provider, &opener_provider));
+        assert_eq!(Arc::strong_count(&sealer_provider), 2);
     }
 }

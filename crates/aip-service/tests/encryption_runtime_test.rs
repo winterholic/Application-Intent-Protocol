@@ -4,6 +4,46 @@ use aip_execution::encryption::DekStore;
 use aip_service::encryption_runtime::{Error, KekConfig, RekeyOptions, RekeyTargetSpec};
 use std::path::PathBuf;
 
+#[tokio::test]
+async fn public_execute_rekey_rejects_incomplete_inventory_and_closed_operational_gate() {
+    let database_url = std::env::var("AIP_TEST_DATABASE_URL").expect("CI-provided isolated test database URL");
+    let (mut db, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls).await.expect("connect test database");
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let (mut budget, budget_connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls).await.expect("connect budget test database");
+    tokio::spawn(async move {
+        let _ = budget_connection.await;
+    });
+    let config = KekConfig::Spec { spec: "k1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=".into(), active: "k1".into() };
+    let mut options = RekeyOptions {
+        scope_kind: "service".into(),
+        scope_id: "global".into(),
+        holder_id: "worker-1".into(),
+        targets: vec![RekeyTargetSpec {
+            table: "secret".into(),
+            column: "value".into(),
+            id_column: "id".into(),
+            resource: "Secret".into(),
+            field: "value".into(),
+        }],
+        inventory_complete: false,
+    };
+
+    let error = aip_service::encryption_runtime::execute_rekey(&mut db, &mut budget, "public", &config, &options)
+        .await
+        .expect_err("public execute_rekey must reject an incomplete inventory");
+    assert!(matches!(error, Error::InvalidConfig(message) if message.contains("inventory_complete")));
+
+    options.inventory_complete = true;
+
+    let error = aip_service::encryption_runtime::execute_rekey(&mut db, &mut budget, "public", &config, &options)
+        .await
+        .expect_err("public execute_rekey must enforce the closed operational gate");
+
+    assert_eq!(error, Error::OperationalGateClosed);
+}
+
 #[test]
 fn kek_spec_loads_provider_without_leaking_keys_in_debug_or_display() {
     let spec = "k1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=";
