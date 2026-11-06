@@ -2,7 +2,7 @@ name: FlaskBB PostOrder
 
 on:
   push:
-    branches: [main, verify/flaskbb-postorder-20261106]
+    branches: [main, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106]
     paths:
       - '.github/workflows/flaskbb-post-order.yml'
       - 'porting/flaskbb/app.aip'
@@ -57,4 +57,4 @@ jobs:
       - name: Build the product CLI
         run: cargo build -p aip-cli --locked
       - name: Verify active FlaskBB native ordering and the legacy allocation fence
-        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs
+        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs
