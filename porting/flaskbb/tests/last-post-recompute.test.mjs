@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {GROUPS_SQL, USERS_SQL, startFixture} from './harness.mjs';
+import {GROUPS_SQL, USERS_SQL, seedNativePostOrders, startFixture} from './harness.mjs';
 
 // WBS 7.5.2 G-6. Upstream Post.hide/Post.delete call `_deal_with_last_post`: when the
 // post is both its topic's and its forum's last post, the forum falls back to the newest
@@ -30,6 +30,12 @@ test('FlaskBB forum and topic last-post projections recover after post hide/dele
         [b1, topicB, 3, 'admin-bob', '2025-01-02T12:00:00Z'], [b2, topicB, 3, 'admin-bob', '2025-01-04T12:00:00Z'],
       ]) sql(`INSERT INTO ${q}.post (id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted) VALUES ('${post}','${topic}',1,${user},'${name}','body','${date}',false,true,0,false);`);
       sql(`INSERT INTO ${q}.topic_first_post (topic_id,post_id) VALUES ('${topicA}','${a1}'),('${topicB}','${b1}');`);
+      // New synthetic posts have an explicit source order and Topic pointers.
+      // This fixture aligns source IDs and dates; it does not decide the open
+      // upstream relationship-order contract for arbitrary historical data.
+      seedNativePostOrders(sql,q,[a1,b1,a2,b2]);
+      sql(`UPDATE ${q}.topic SET last_post_id='${a2}' WHERE id='${topicA}';
+        UPDATE ${q}.topic SET last_post_id='${b2}' WHERE id='${topicB}';`);
       sql(`UPDATE ${q}.forum SET last_post_id='${b2}', last_post_user_id=3, last_post_title='Topic B', last_post_username='admin-bob', last_post_created='2025-01-04T12:00:00Z' WHERE id=1;`);
     },
   });

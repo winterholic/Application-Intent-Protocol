@@ -378,7 +378,6 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
             operations = [
                 {"create": "Post", "values": {"id": post_id, "topic": topic_id, "forum": topics[0]["forum"], "user": user["id"], "username": user["username"], "content": content, "hidden": False, "published": False, "version": 0, "deleted": False}},
                 {"apply": "Post.publish", "target": {"ids": [post_id]}},
-                {"apply": "Topic.bump", "target": {"ids": [topic_id]}},
             ]
             return submit_bundle(client, operations, f"flaskbb-reply-{post_id}", lambda: url_for("topic_view", topic_id=topic_id))
         except AipError as error:

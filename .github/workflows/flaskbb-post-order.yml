@@ -9,6 +9,10 @@ on:
       - 'porting/flaskbb/seed/install.py'
       - 'porting/flaskbb/tests/harness.mjs'
       - 'porting/flaskbb/tests/post-order-*.test.mjs'
+      - 'porting/flaskbb/tests/last-post-recompute.test.mjs'
+      - 'porting/flaskbb/tests/aip-read.test.mjs'
+      - 'porting/flaskbb/tests/test_ui_host.py'
+      - 'porting/flaskbb/ui/app.py'
       - 'spikes/spike-v1-fixture/tests/latest_effect_match.rs'
       - 'spikes/spike-v1-fixture/src/sema.rs'
       - 'spikes/spike-v1-fixture/src/isolation.rs'
@@ -60,6 +64,8 @@ jobs:
           rustup update stable
           rustup default stable
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+          python3 -m venv "$RUNNER_TEMP/flaskbb-ui"
+          "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
       - name: Build the product CLI
         id: product-build
         run: cargo build -p aip-cli --locked
@@ -76,4 +82,9 @@ jobs:
         run: cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test latest_effect_match
       - name: Verify active FlaskBB native ordering and the legacy allocation fence
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
-        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs
+        env:
+          AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
+        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs porting/flaskbb/tests/last-post-recompute.test.mjs porting/flaskbb/tests/aip-read.test.mjs
+      - name: Verify FlaskBB UI atomic publish requests
+        if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
+        run: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host
