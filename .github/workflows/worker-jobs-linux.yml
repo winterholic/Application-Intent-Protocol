@@ -2,6 +2,12 @@ name: Linux worker jobs
 
 on:
   workflow_dispatch:
+    inputs:
+      crypto_repair_only:
+        description: Run only the isolated encryption compile and rejection checks
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -24,6 +30,7 @@ concurrency:
 
 jobs:
   worker-jobs:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.crypto_repair_only != true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -169,3 +176,71 @@ jobs:
           porting/flaskbb/tests/aip-read.test.mjs
           porting/flaskbb/tests/unread-cutoff.test.mjs
           porting/flaskbb/tests/features.test.mjs
+
+  crypto-compile-repair:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.crypto_repair_only == true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+      CRYPTO_EVIDENCE_DIR: ${{ runner.temp }}/crypto-repair-evidence
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Record source revision and run metadata
+        run: scripts/crypto-ci-capture.sh metadata
+      - name: Install PostgreSQL client and stable Rust
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          rustup update stable
+          rustup default stable
+      - name: Check Rust formatting
+        if: ${{ always() }}
+        run: scripts/crypto-ci-capture.sh fmt
+      - name: Compile locked service and execution packages
+        if: ${{ always() }}
+        run: scripts/crypto-ci-capture.sh check
+      - name: Run encryption runtime tests
+        if: ${{ always() }}
+        run: scripts/crypto-ci-capture.sh service_test
+      - name: Run encryption sealer and opener tests
+        if: ${{ always() }}
+        run: scripts/crypto-ci-capture.sh execution_test
+      - name: Run related Clippy targets
+        if: ${{ always() }}
+        run: scripts/crypto-ci-capture.sh clippy
+      - name: Build product CLI
+        id: cli_build
+        if: ${{ always() }}
+        run: scripts/crypto-ci-capture.sh cli_build
+      - name: Exercise actual CLI inventory and closed-gate refusals
+        if: ${{ always() && steps.cli_build.outcome == 'success' }}
+        run: scripts/crypto-ci-capture.sh cli_gate
+      - name: Record skipped CLI check when build fails
+        if: ${{ always() && steps.cli_build.outcome != 'success' }}
+        run: scripts/crypto-ci-capture.sh cli_gate_skipped
+      - name: Upload structured crypto verification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crypto-compile-repair-${{ github.run_id }}
+          path: ${{ runner.temp }}/crypto-repair-evidence/
+          if-no-files-found: error
+          retention-days: 30
