@@ -947,16 +947,21 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             .unwrap(),
         )
         .unwrap();
-        assert!(
-            add.status.success(),
-            "React add-bookmark browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
-            add.status.code(),
-            String::from_utf8_lossy(&add.stdout),
-            String::from_utf8_lossy(&add.stderr)
-        );
+        if !add.status.success() {
+            journey_failures.push(format!(
+                "React add-bookmark browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
+                add.status.code(),
+                String::from_utf8_lossy(&add.stdout),
+                String::from_utf8_lossy(&add.stderr)
+            ));
+        }
         print!("{}", String::from_utf8_lossy(&add.stdout));
-        assert!(like_add_ok, "like add persists exactly one member row and preserves other members' likes");
-        assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("1"), "browser bookmark add persists one row in MySQL");
+        if !like_add_ok {
+            journey_failures.push("like add persistence or other members preservation failed".to_owned());
+        }
+        if cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref() != Some("1") {
+            journey_failures.push("browser bookmark add persists one row in MySQL failed".to_owned());
+        }
 
         let revoked_before: i64 =
             cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{LEGACY}' AND revoked_at IS NOT NULL"))
@@ -991,18 +996,25 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         )
         .unwrap();
         println!("member logout browser/DB: {}", logout_db);
-        assert!(
-            remove.status.success(),
-            "React remove-bookmark browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
-            remove.status.code(),
-            String::from_utf8_lossy(&remove.stdout),
-            String::from_utf8_lossy(&remove.stderr)
-        );
+        if !remove.status.success() {
+            journey_failures.push(format!(
+                "React remove-bookmark browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
+                remove.status.code(),
+                String::from_utf8_lossy(&remove.stdout),
+                String::from_utf8_lossy(&remove.stderr)
+            ));
+        }
         print!("{}", String::from_utf8_lossy(&remove.stdout));
-        assert!(like_remove_ok, "like remove deletes the member row and preserves other members' likes");
-        assert_eq!(revoked_after - revoked_before, 1, "the real member logout revokes its newly created session in MySQL");
-        assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "browser bookmark remove deletes the member row in MySQL");
-        println!("React browser journey: login, member video list, bookmark on/reload (MySQL rows=1), off/reload (MySQL rows=0)");
+        if !like_remove_ok {
+            journey_failures.push("like remove persistence or other members preservation failed".to_owned());
+        }
+        if revoked_after - revoked_before != 1 {
+            journey_failures.push("member logout did not revoke exactly one newly created session".to_owned());
+        }
+        if cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref() != Some("0") {
+            journey_failures.push("browser bookmark remove deletes the member row in MySQL failed".to_owned());
+        }
+        println!("React browser journeys attempted: member lists, bookmark on/off and logout; DB verdicts collected");
 
         // Each original comment UI action runs in a fresh browser, with a DB checkpoint
         // before the next action. Compare every unrelated row, including other members'

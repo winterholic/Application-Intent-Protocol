@@ -40,6 +40,44 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_bookmark_listing_summary_requires_exact_request_shape_and_keeps_only_counts(self):
+        from product.tests.facereview_ui_browser_evidence import bookmark_listing_request_matches, bookmark_listing_response_evidence
+
+        request = {'extension': 'Video.homeBookmark', 'input': {'page': 1, 'size': 20, 'emotion': 'all'}}
+        self.assertTrue(bookmark_listing_request_matches(request))
+        for broken in [None, {}, {**request, 'extension': 'Video.homeVideoAll'},
+                       *[{**request, 'input': {**request['input'], key: value}} for key, value in
+                         [('page', True), ('page', 2), ('size', 10), ('emotion', 'sad'), ('user', 'private-user')]]]:
+            self.assertFalse(bookmark_listing_request_matches(broken))
+        response = {'output': {'videos': json.dumps([{'video_id': VIDEO_ID, 'title': 'private-title'}])}}
+        self.assertEqual(bookmark_listing_response_evidence(response, VIDEO_ID),
+                         {'response_list_length': 1, 'contains_fixture_video': True})
+        self.assertEqual(bookmark_listing_response_evidence({'output': {'videos': '[]'}}, VIDEO_ID),
+                         {'response_list_length': 0, 'contains_fixture_video': False})
+        for invalid in [None, {}, {'output': {'videos': '{}'}}, {'output': {'videos': 'broken'}}]:
+            self.assertEqual(bookmark_listing_response_evidence(invalid, VIDEO_ID),
+                             {'response_list_length': None, 'contains_fixture_video': False})
+
+    def test_bookmark_listing_gate_requires_completed_response_and_both_render_states(self):
+        from product.tests.facereview_ui_browser_evidence import bookmark_listing_evidence
+
+        row = {'path': '/extension', 'extension_request': {'extension': 'Video.homeBookmark'},
+               'bookmark_listing_input_matches': True, 'status': 200, 'body_captured': True,
+               'ok': True, 'contract_matches_runtime': True, 'response_list_length': 1,
+               'contains_fixture_video': True}
+        self.assertTrue(bookmark_listing_evidence([row], False, True)['verified'])
+        empty = {**row, 'response_list_length': 0, 'contains_fixture_video': False}
+        self.assertTrue(bookmark_listing_evidence([empty], True, True)['verified'])
+        for changed in [{'body_captured': False}, {'ok': False}, {'status': 500},
+                        {'bookmark_listing_input_matches': False}, {'contract_matches_runtime': False},
+                        {'response_list_length': None}, {'response_list_length': True},
+                        {'response_list_length': 2}, {'contains_fixture_video': False}]:
+            self.assertFalse(bookmark_listing_evidence([{**row, **changed}], False, True)['verified'])
+        for rows in [[], [row, row], [empty], [{**row, 'extension_request': {'extension': 'private-extension'}}]]:
+            self.assertFalse(bookmark_listing_evidence(rows, False, True)['verified'])
+        self.assertFalse(bookmark_listing_evidence([row], False, False)['verified'])
+        self.assertFalse(bookmark_listing_evidence([row], True, True)['verified'])
+
     def test_member_read_names_cover_detail_recent_related_and_bookmark_without_values(self):
         for name in ('Video.watchDetail', 'User.myRecentVideos',
                      'Video.watchRecommended', 'Video.homeBookmark'):

@@ -47,6 +47,9 @@ from product.tests.facereview_ui_browser_evidence import (
     member_comment_evidence,
     member_search_request_matches,
     member_search_evidence,
+    bookmark_listing_request_matches,
+    bookmark_listing_response_evidence,
+    bookmark_listing_evidence,
 )
 
 
@@ -232,6 +235,8 @@ def main() -> int:
     like_evidence: dict[str, object] = {}
     comment_evidence: dict[str, object] = {}
     search_evidence: dict[str, object] = {}
+    bookmark_listing_checks: list[dict[str, object]] = []
+    bookmark_listing_failures: list[dict[str, str]] = []
     bookmark_api_row_count: int | None = None
     thumbnail_server = None
     thumbnail_thread = None
@@ -327,6 +332,8 @@ def main() -> int:
         extension_request = entry["extension_request"]
         if extension_request:
             row.update(extension_response_evidence(str(extension_request["extension"]), envelope, VIDEO_ID))
+            if extension_request['extension'] == 'Video.homeBookmark':
+                row.update(bookmark_listing_response_evidence(envelope, VIDEO_ID))
         if entry["bookmark_read"]:
             row["bookmark_read_observation"] = {
                 "corr": row["corr"],
@@ -365,6 +372,8 @@ def main() -> int:
                     row["comment_content_matches"] = comment_action == "delete" or request["values"]["content"] == COMMENT_EDITED
         if parsed.path == "/extension":
             payload = response.request.post_data_json
+            if isinstance(payload, dict) and payload.get('extension') == 'Video.homeBookmark':
+                row['bookmark_listing_input_matches'] = bookmark_listing_request_matches(payload)
             if isinstance(payload, dict) and payload.get("extension") == "Video.homeSearch":
                 row["search_input_matches"] = any(
                     member_search_request_matches(payload, keyword) for keyword in (VIDEO_TITLE, SEARCH_ABSENT)
@@ -881,6 +890,49 @@ def main() -> int:
                             screenshot = output / f"{args.phase}-like-reloaded.png"
                             page.screenshot(path=str(screenshot), full_page=True)
                             screenshot_names.append(screenshot.name)
+                            # Reuse the persisted member fixture to verify the separate list
+                            # route. Record its failure, then still attempt the logout journey.
+                            for reloaded in (False, True):
+                                listing_stage = 'reload' if reloaded else 'open'
+                                journey_stage = f'bookmark_listing_{listing_stage}'
+                                try:
+                                    deadline = time.monotonic() + 15
+                                    while unfinished_requests() or pending_bodies:
+                                        if time.monotonic() >= deadline:
+                                            raise AssertionError('API requests did not settle before bookmark navigation')
+                                        page.wait_for_timeout(50)
+                                    listing_start = len(api_paths)
+                                    if reloaded:
+                                        page.reload(wait_until='domcontentloaded')
+                                    else:
+                                        page.goto(f'http://localhost:{ui_port}/bookmark', wait_until='domcontentloaded')
+                                    expect(page).to_have_url(re.compile(r'/bookmark$'))
+                                    cards = page.locator('.bookmark-page-container .video-item-container')
+                                    empty = args.phase == 'remove'
+                                    if empty:
+                                        expect(page.locator('.bookmark-empty')).to_be_visible(timeout=30000)
+                                        expect(page.locator('.bookmark-empty-title')).to_have_text('아직 저장한 영상이 없어요')
+                                        expect(cards).to_have_count(0)
+                                    else:
+                                        expect(cards).to_have_count(1, timeout=30000)
+                                        expect(cards.locator('.video-title')).to_have_text(VIDEO_TITLE)
+                                        expect(cards.first).to_be_visible()
+                                        expect(page.locator('.bookmark-empty')).to_have_count(0)
+                                    deadline = time.monotonic() + 15
+                                    while True:
+                                        rows = api_paths[listing_start:]
+                                        check = bookmark_listing_evidence(rows, empty, True)
+                                        if check['verified'] and not unfinished_requests() and not pending_bodies:
+                                            break
+                                        if time.monotonic() >= deadline:
+                                            raise AssertionError('bookmark listing response and rendered fixture did not agree')
+                                        page.wait_for_timeout(50)
+                                    bookmark_listing_checks.append({'stage': listing_stage, **check})
+                                    screenshot = output / f'{args.phase}-bookmark-list-{listing_stage}.png'
+                                    page.screenshot(path=str(screenshot), full_page=True)
+                                    screenshot_names.append(screenshot.name)
+                                except Exception as error:
+                                    bookmark_listing_failures.append({'stage': listing_stage, 'failure_type': safe_browser_failure_type(error)})
                             if args.phase == "remove":
                                 # Keep existing bookmark validation scoped to its own journey. The
                                 # original logout redirects to /main; visitor policy remains deferred.
@@ -991,6 +1043,8 @@ def main() -> int:
                 "React bookmark /read never reached a terminal request event: "
                 + json.dumps({"failed": failed_bookmark_reads, "unfinished_corr": unfinished_bookmark_reads})
             )
+        if bookmark_listing_failures:
+            raise AssertionError('bookmark listing checks failed: ' + json.dumps(bookmark_listing_failures))
         if page_errors:
             raise RuntimeError("browser reported an unhandled React page error")
         if fixture_thumbnail_redirect_count < 1 or 200 not in fixture_thumbnail_response_statuses:
@@ -1018,6 +1072,8 @@ def main() -> int:
             "member_like": like_evidence,
             "member_comment": comment_evidence,
             "member_search": search_evidence,
+            "member_bookmark_listing": bookmark_listing_checks,
+            "bookmark_listing_failures": bookmark_listing_failures,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
             "failure_route_class": failure_route_class,
@@ -1065,6 +1121,8 @@ def main() -> int:
             "member_like": like_evidence,
             "member_comment": comment_evidence,
             "member_search": search_evidence,
+            "member_bookmark_listing": bookmark_listing_checks,
+            "bookmark_listing_failures": bookmark_listing_failures,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
             "failure_route_class": failure_route_class,
