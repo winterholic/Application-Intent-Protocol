@@ -32,7 +32,7 @@ test('FlaskBB historical PostOrder import binds approval, fences writers, preser
   const execute = input => run('psql', ['-X','-v','ON_ERROR_STOP=1','-Atq','-d',dbUrl], {input});
   const state = () => sql(`SELECT jsonb_build_object('posts',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM ${q}.post p),
     'orders',(SELECT COALESCE(jsonb_agg(to_jsonb(o) ORDER BY id),'[]'::jsonb) FROM ${q}.post_order o),
-    'generator',(SELECT to_jsonb(s) FROM ${q}.post_order_id_seq s))::text`);
+    'generator',(SELECT jsonb_build_object('last_value',last_value,'is_called',is_called) FROM ${q}.post_order_id_seq))::text`);
   const unchanged = () => sql(`SELECT jsonb_agg(to_jsonb(p)-'source_order_id' ORDER BY id)::text FROM ${q}.post p`);
   let holder;
   try {
