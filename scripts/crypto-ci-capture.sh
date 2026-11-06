@@ -5,27 +5,38 @@ step=${1:?step name required}
 evidence_dir=${CRYPTO_EVIDENCE_DIR:?CRYPTO_EVIDENCE_DIR is required}
 mkdir -p "$evidence_dir"
 result="$evidence_dir/$step.json"
-log="$RUNNER_TEMP/crypto-repair-$step.log"
+stdout="$RUNNER_TEMP/crypto-repair-$step.stdout"
+stderr="$RUNNER_TEMP/crypto-repair-$step.stderr"
 
 run_command() {
   local label=$1
   shift
   set +e
-  "$@" >"$log" 2>&1
+  "$@" >"$stdout" 2>"$stderr"
   local code=$?
   set -e
-  python3 - "$result" "$step" "$label" "$code" "$log" <<'PY'
+  python3 - "$result" "$step" "$label" "$code" "$stdout" "$stderr" "$evidence_dir" <<'PY'
 import json, pathlib, re, sys
-result, step, label, code, log = sys.argv[1:]
-text = pathlib.Path(log).read_text(errors="replace")
-text = re.sub(r"k[0-9]+:[A-Za-z0-9+/=_-]+", "kN:[REDACTED]", text)
-text = re.sub(r"\b[A-Za-z0-9+/]{40,}={0,2}\b", "[REDACTED_BASE64]", text)
-excerpt = "\n".join(text.splitlines()[-12:])[-1800:] if int(code) else ""
+result, step, label, code, stdout, stderr, evidence_dir = sys.argv[1:]
+def sanitize(path):
+    text = pathlib.Path(path).read_text(errors="replace")
+    text = re.sub(r"k[0-9]+:[A-Za-z0-9+/=_-]+", "kN:[REDACTED]", text)
+    return re.sub(r"\b[A-Za-z0-9+/]{40,}={0,2}\b", "[REDACTED_BASE64]", text)
+stdout_text, stderr_text = sanitize(stdout), sanitize(stderr)
+evidence_dir = pathlib.Path(evidence_dir)
+stdout_file, stderr_file = evidence_dir / f"{step}.stdout.txt", evidence_dir / f"{step}.stderr.txt"
+stdout_file.write_text(stdout_text)
+stderr_file.write_text(stderr_text)
+sha = __import__("subprocess").check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+excerpt = "\n".join((stdout_text + "\n" + stderr_text).splitlines()[-12:])[-1800:] if int(code) else ""
 payload = {
     "step": step,
     "command": label,
+    "source_revision": sha,
     "status": "passed" if int(code) == 0 else "failed",
     "exit_code": int(code),
+    "stdout_file": str(stdout_file),
+    "stderr_file": str(stderr_file),
     "error_excerpt": excerpt,
 }
 pathlib.Path(result).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
