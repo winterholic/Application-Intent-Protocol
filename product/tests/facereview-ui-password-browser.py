@@ -244,7 +244,7 @@ def main() -> int:
                 stage = "completed"
                 status = 0
             except Exception as error:
-                failure_type = safe_browser_failure_type(type(error).__name__)
+                failure_type = safe_browser_failure_type(error)
                 failure_line = next((frame.lineno for frame in reversed(traceback.extract_tb(error.__traceback__)) if Path(frame.filename).resolve() == Path(__file__).resolve()), None)
                 if page is not None:
                     failure_path = urlsplit(page.url).path
@@ -257,7 +257,7 @@ def main() -> int:
             finally:
                 browser.close()
     except Exception as error:
-        failure_type = safe_browser_failure_type(type(error).__name__)
+        failure_type = safe_browser_failure_type(error)
         failure_line = next((frame.lineno for frame in reversed(traceback.extract_tb(error.__traceback__)) if Path(frame.filename).resolve() == Path(__file__).resolve()), None)
         status = 1
     finally:
