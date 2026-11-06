@@ -18,6 +18,13 @@ test('FlaskBB PostOrder schema upgrade preserves legacy UUIDs and requires the e
     const orderPredicates=legacy.match(/^predicate topicHide(?:OrderKnown|ReplacesForum|NullReplacement).*$/gm);
     assert.equal(orderPredicates?.length,3);
     legacy=legacy.replace(/^predicate topicHide(?:OrderKnown|ReplacesForum|NullReplacement).*\n/gm,'');
+    const deletePredicates=legacy.match(/^predicate topicDelete(?:Candidate|RecalculatesForum|KeepsForum).*$/gm);
+    assert.equal(deletePredicates?.length,3);
+    legacy=legacy.replace(/^predicate topicDelete(?:Candidate|RecalculatesForum|KeepsForum).*\n/gm,'');
+    const deleteStart=legacy.indexOf('  transition delete {',legacy.indexOf('resource Topic {'));
+    const deleteEnd=legacy.indexOf('  expose apply delete { target id; bulk maxRows 1 }',deleteStart);
+    assert.ok(deleteStart>0 && deleteEnd>deleteStart);
+    legacy=legacy.slice(0,deleteStart)+'  transition delete { allow canDeleteTopic(actor, this); from deleted = false; to deleted = true }\n'+legacy.slice(deleteEnd);
     const hideStart=legacy.indexOf('  transition hide {',legacy.indexOf('resource Topic {'));
     const hideEnd=legacy.indexOf('  expose apply hide { target id; bulk maxRows 1 }',hideStart);
     assert.ok(hideStart>0 && hideEnd>hideStart);

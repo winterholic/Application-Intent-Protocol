@@ -28,6 +28,13 @@ predicate userPurgeable(targetUser: User?) = targetUser != null and not (exists 
 predicate topicHideOrderKnown(targetTopic: Topic) = not (exists Topic where forum = targetTopic.forum and published and not deleted and hidden != true and last_post != null and last_post.source_order = null)
 predicate topicHideReplacesForum(targetTopic: Topic) = targetTopic.last_post = null or not (exists Topic where forum = targetTopic.forum and id != targetTopic.id and published and not deleted and hidden != true and (last_post = null or last_post.source_order > targetTopic.last_post.source_order))
 predicate topicHideNullReplacement(targetTopic: Topic) = exists Topic where forum = targetTopic.forum and id != targetTopic.id and published and not deleted and hidden != true and last_post = null
+// Upstream Topic.delete conditionally calls Forum.update_last_post. Its root
+// Post query applies the viewer's hidden-Post filter, not Topic.hidden. Retain
+// the current pointer when it is already in the maximal-date candidate set;
+// the source query does not define a winner among equal dates.
+predicate topicDeleteCandidate(viewer: User?, targetTopic: Topic, candidate: Post?) = candidate != null and candidate.forum = targetTopic.forum and candidate.topic != targetTopic and candidate.published and not candidate.deleted and not candidate.topic.deleted and (canViewHidden(viewer) or candidate.hidden != true)
+predicate topicDeleteRecalculatesForum(targetTopic: Topic) = targetTopic.forum.last_post = null or targetTopic.forum.last_post = targetTopic.last_post
+predicate topicDeleteKeepsForum(viewer: User?, targetTopic: Topic) = topicDeleteCandidate(viewer, targetTopic, targetTopic.forum.last_post) and not (exists Post where topicDeleteCandidate(viewer, targetTopic, this) and date_created > targetTopic.forum.last_post.date_created)
 access visibleUserTotal = totalOfVisible(User)
 access visibleForumTotal = totalOfVisible(Forum)
 access visibleTopicTotal = totalOfVisible(Topic)
@@ -315,12 +322,12 @@ resource Topic {
     allow actor.activated and (canDeleteTopic(actor, this) or (user = actor and not locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost)))
     from deleted = false
     to deleted = true
-    update Forum where id = this.forum {
-      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.id
-      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.user
-      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
-      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.username
-      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.hidden and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+    update Forum when topicDeleteRecalculatesForum(this) and not topicDeleteKeepsForum(actor, this) where id = this.forum {
+      last_post = latest Post candidate where topicDeleteCandidate(actor, this, candidate) order by candidate.date_created select candidate.id
+      last_post_user = latest Post candidate where topicDeleteCandidate(actor, this, candidate) order by candidate.date_created select candidate.user
+      last_post_title = latest Post candidate where topicDeleteCandidate(actor, this, candidate) order by candidate.date_created select candidate.topic.title
+      last_post_username = latest Post candidate where topicDeleteCandidate(actor, this, candidate) order by candidate.date_created select candidate.username
+      last_post_created = latest Post candidate where topicDeleteCandidate(actor, this, candidate) order by candidate.date_created select candidate.date_created
     }
   }
   expose apply delete { target id; bulk maxRows 1 }

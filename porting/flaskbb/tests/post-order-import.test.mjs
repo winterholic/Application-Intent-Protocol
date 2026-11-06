@@ -19,8 +19,8 @@ test('FlaskBB historical PostOrder import binds approval, fences writers, preser
       sql(`INSERT INTO ${q}.category(id,title,description,position) VALUES (1,'General','fixture',1);
         INSERT INTO ${q}.forum(id,category_id,title,description,position,locked,show_moderators) VALUES (1,1,'Forum','fixture',1,false,false);
         INSERT INTO ${q}.forum_group_access(id,forum_id,group_id) VALUES (1,1,2);
-        INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,locked,important,views,published,deleted,hidden)
-          VALUES ('${topic}',1,'Imported',2,'member-alice',false,false,0,true,false,false);`);
+        INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden)
+          VALUES ('${topic}',1,'Imported',2,'member-alice','2020-01-01','2025-01-01',false,false,0,true,false,false);`);
       for (const [post, published, hidden, deleted, date] of [[old,true,false,false,'2025-01-01'],[later,true,true,true,'2020-01-01'],[draft,false,false,false,'2026-01-01']]) {
         sql(`INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted)
           VALUES ('${post}','${topic}',1,2,'member-alice','preserved content','${date}',${hidden},${published},0,${deleted});`);
