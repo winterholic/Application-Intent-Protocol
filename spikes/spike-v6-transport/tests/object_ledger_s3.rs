@@ -9,7 +9,7 @@ use spike_v1_fixture::{digest, load_str, Form};
 use spike_v2_read::{id_wire::IdWire, sqlgen};
 use spike_v6_transport::{
     auth::{AuthError, Authenticator, DurablePrincipal, Session},
-    infrastructure::{Infrastructure, ObjectStorage},
+    infrastructure::{Infrastructure, ObjectScan, ObjectStorage},
     server::{listen_with_infrastructure, DeploymentFence, Server, ServerOptions},
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -92,6 +92,10 @@ struct Fixture {
 
 impl Fixture {
     async fn start(store: S3Store) -> Self {
+        Self::start_with_scan(store, None).await
+    }
+
+    async fn start_with_scan(store: S3Store, object_scan: Option<ObjectScan>) -> Self {
         let lock = SCHEMA_LOCK.lock().await;
         let schema = SCHEMA.clone();
         sqlgen::set_schema(&schema);
@@ -108,6 +112,7 @@ impl Fixture {
         let fingerprint = spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, IdWire::SafeNumber);
         let infrastructure = Infrastructure {
             objects: Some(ObjectStorage::S3(Arc::new(store))),
+            object_scan,
             object_reconcile_interval: Duration::from_millis(200),
             ..Infrastructure::default()
         };
@@ -189,6 +194,92 @@ fn put_request(size: u64) -> Value {
 const BYTES: &str = "SELECT COALESCE(sum(bytes),0)::bigint FROM {infra}.aip_object_ledger";
 const ROWS: &str = "SELECT count(*) FROM {infra}.aip_object_ledger";
 const HELD: &str = "SELECT count(*) FROM {infra}.aip_object_ledger WHERE settling";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_valid_principal_is_seeded_for_list_scan_before_any_ledger_row_exists() {
+    let fixture = Fixture::start_with_scan(
+        S3Store::new(S3Config::new("https://127.0.0.1:1", "bucket", "us-east-1", "ak", "sk").with_owner_quota(10 * MIB, 10)).unwrap(),
+        Some(ObjectScan { interval: Duration::from_secs(60), page_keys: 10, max_pages_per_tick: 1, lease: Duration::from_secs(300) }),
+    )
+    .await;
+    let alice_owner = digest(&json!(["test", "alice", 1, 0]));
+    let alice_prefix = aip_execution::objects::owner_prefix(&alice_owner).unwrap();
+    let bob_owner = digest(&json!(["test", "bob", 1, 0]));
+    let bob_prefix = aip_execution::objects::owner_prefix(&bob_owner).unwrap();
+    let carol_owner = digest(&json!(["test", "carol", 1, 0]));
+    let carol_prefix = aip_execution::objects::owner_prefix(&carol_owner).unwrap();
+
+    fixture.wait_until("active aip_principals seeded without ledger rows", "SELECT count(*) FROM {infra}.aip_object_owners", 2).await;
+    assert_eq!(fixture.number(ROWS).await, 0, "the out-of-band seed creates no ledger entries");
+    assert_eq!(
+        fixture
+            .db
+            .query_one(
+                &format!("SELECT count(*) FROM {}.aip_object_owners WHERE owner_prefix IN ($1,$2)", fixture.infra),
+                &[&alice_prefix, &bob_prefix]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        2,
+        "only the exact validated principal prefixes are registered"
+    );
+    tokio::time::sleep(Duration::from_millis(450)).await;
+    assert_eq!(fixture.number("SELECT count(*) FROM {infra}.aip_object_owners").await, 2, "repeated scan ticks do not duplicate owner rows");
+    let invalid = json!({"unexpected":true});
+    assert_eq!(fixture.control("alice", "/objects/confirm", invalid.clone()).await["code"], "WIRE.BAD_REQUEST");
+    assert_eq!(fixture.number(ROWS).await, 0, "validation must not invent ledger rows");
+    assert_eq!(fixture.control("alice", "/objects/confirm", invalid.clone()).await["code"], "WIRE.BAD_REQUEST", "revalidation is idempotent");
+    assert_eq!(fixture.number("SELECT count(*) FROM {infra}.aip_object_owners").await, 2);
+
+    fixture
+        .db
+        .execute(&format!("INSERT INTO {}.aip_principals(issuer,subject,actor_id) VALUES ('test','carol',1)", SCHEMA.as_str()), &[])
+        .await
+        .unwrap();
+    assert_eq!(fixture.control("carol", "/objects/confirm", invalid.clone()).await["code"], "WIRE.BAD_REQUEST");
+    assert_eq!(fixture.number("SELECT count(*) FROM {infra}.aip_object_owners").await, 3, "a new validated owner is registered in-band");
+    assert_eq!(
+        fixture
+            .db
+            .query_one(&format!("SELECT owner FROM {}.aip_object_owners WHERE owner_prefix=$1", fixture.infra), &[&carol_prefix])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        carol_owner
+    );
+
+    fixture
+        .db
+        .execute(&format!("UPDATE {}.aip_principals SET enabled=false WHERE issuer='test' AND subject='bob'", SCHEMA.as_str()), &[])
+        .await
+        .unwrap();
+    assert_eq!(fixture.control("bob", "/objects/confirm", invalid).await["code"], "WIRE.UNAUTHENTICATED");
+    assert_ne!(alice_prefix, bob_prefix, "principal prefixes stay isolated");
+    let alice_mapping: String = fixture
+        .db
+        .query_one(&format!("SELECT owner FROM {}.aip_object_owners WHERE owner_prefix=$1", fixture.infra), &[&alice_prefix])
+        .await
+        .unwrap()
+        .get(0);
+    let bob_mapping: String = fixture
+        .db
+        .query_one(&format!("SELECT owner FROM {}.aip_object_owners WHERE owner_prefix=$1", fixture.infra), &[&bob_prefix])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!((alice_mapping.as_str(), bob_mapping.as_str()), (alice_owner.as_str(), bob_owner.as_str()));
+    assert_eq!(fixture.number("SELECT count(*) FROM {infra}.aip_object_owners").await, 3, "owner mappings persist across revoke");
+    assert!(
+        fixture
+            .db
+            .query_opt(&format!("SELECT owner FROM {}.aip_object_owners WHERE owner_prefix=$1", fixture.infra), &[&"0".repeat(64)])
+            .await
+            .unwrap()
+            .is_none(),
+        "unknown prefixes never resolve to another principal"
+    );
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn signing_uploads_is_refused_once_the_owner_quota_is_signed_for() {

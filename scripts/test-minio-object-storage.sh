@@ -86,7 +86,24 @@ export AIP_MINIO_SECRET_KEY=aip-test-secret-please-rotate
 export AIP_MINIO_CA_PEM="$task_dir/ca.pem"
 
 cd "$repo_root"
-cargo test -p aip-execution --test cloud_storage minio_https_actual_object_and_multipart_contract --locked -- --ignored --nocapture
+evidence_dir="${AIP_STORAGE_EVIDENCE_DIR:-$task_dir/evidence}"
+mkdir -p "$evidence_dir"
+failed=0
+run_test() {
+  local label="$1"
+  shift
+  if python3 "$repo_root/scripts/run-storage-check.py" --dir "$evidence_dir" --label "$label" -- "$@"; then
+    return 0
+  else
+    failed=1
+    return 0
+  fi
+}
 
-# Per-owner quota and expired-upload cleanup through the real server (needs the dedicated test PostgreSQL, see VALIDATION.md).
-cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test object_ledger_s3 --locked -- --ignored --nocapture
+run_test tls-minio-contract cargo test -p aip-execution --test cloud_storage minio_https_actual_object_and_multipart_contract --locked -- --ignored --nocapture
+# Per-owner quota and expired-upload cleanup through the real server (needs the dedicated test PostgreSQL).
+run_test pg-minio-ledger cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test object_ledger_s3 --locked -- --ignored --nocapture
+# Independent WBS 8.20 probe: real PG ledger and TLS MinIO listing boundary.
+run_test pg-minio-list-scan cargo test -p aip-execution --test object_ledger_scan_minio --locked -- --ignored --nocapture
+
+exit "$failed"

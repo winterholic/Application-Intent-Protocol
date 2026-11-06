@@ -3,7 +3,7 @@
 //! lived URLs and small JSON control requests.
 
 use crate::{auth::Session, cors, durable, infrastructure::ObjectStorage, server::Runtime};
-use aip_execution::object_ledger::{Error as LedgerError, Kind as LedgerKind, ObjectLedger, Outcome};
+use aip_execution::object_ledger::{Error as LedgerError, Kind as LedgerKind, ObjectLedger, Outcome, ScanPolicy, ScanTickReport};
 use aip_execution::objects::{
     CompletedPart, Error as ObjectError, LocalStore, MultipartUpload, ObjectKey, S3Store, MAX_S3_OBJECT_BYTES, MAX_S3_PART_BYTES,
 };
@@ -283,6 +283,17 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
         Ok(ledger) => ledger,
         Err(code) => return failure(code),
     };
+    // Registration follows durable validation, so newly added principals enter the scan map on their first object
+    // request while revoked principals cannot add a mapping.
+    let (ledger_for_seed, owner_for_seed) = (ledger.clone(), owner.clone());
+    let seeded = with_db(rt, move |mut db| async move {
+        let result = ledger_for_seed.register_owner(&mut db, &owner_for_seed).await.map(|_| ());
+        (db, result)
+    })
+    .await;
+    if let Err(code) = seeded {
+        return failure(code);
+    }
     let response = match path {
         "/objects/sign" => sign_with_ledger(rt, &ledger, &owner, &store, body).await,
         "/objects/confirm" => confirm_with_ledger(rt, &ledger, &owner, &store, body).await,
@@ -625,7 +636,90 @@ pub(crate) async fn reconcile_loop(rt: Arc<Runtime>) {
         if let Err(code) = reconcile_once(&rt).await {
             eprintln!("{}", json!({"event":"object_reconcile_failed","code":code}));
         }
+        if rt.infrastructure.object_scan.is_some() {
+            match scan_once(&rt).await {
+                Ok(tick) if tick.pages > 0 => eprintln!(
+                    "{}",
+                    json!({"event":"object_scan","pages":tick.pages,"ownersCompleted":tick.owners_completed,"ownersFailed":tick.owners_failed,
+                           "adopted":tick.rows.adopted,"unchanged":tick.rows.unchanged,"skippedMultipart":tick.rows.skipped_multipart,
+                           "skippedFenced":tick.rows.skipped_fenced,"skippedKeys":tick.skipped_keys})
+                ),
+                Ok(_) => {}
+                Err(code) => eprintln!("{}", json!({"event":"object_scan_failed","code":code})),
+            }
+        }
     }
+}
+
+/// One opt-in `ListObjectsV2` pass (see `ObjectScan`). Every instance may run it; the owner lease taken in
+/// `claim_scan_targets` keeps them off each other's prefixes, and the page budget caps what one tick can bill.
+pub(crate) async fn scan_once(rt: &Runtime) -> Result<ScanTickReport, &'static str> {
+    let Some(scan) = rt.infrastructure.object_scan else { return Ok(ScanTickReport::default()) };
+    let base = match &rt.infrastructure.objects {
+        Some(ObjectStorage::S3(base)) => base.as_ref().clone(),
+        Some(ObjectStorage::GcsHmac(base)) => base.s3_compatible_store().clone(),
+        _ => return Ok(ScanTickReport::default()),
+    };
+    let ledger = ledger_for(rt, &base)?;
+    seed_active_principal_owners(rt, &ledger).await?;
+    let policy = ScanPolicy {
+        page_keys: scan.page_keys,
+        max_pages: scan.max_pages_per_tick,
+        lease_secs: scan.lease.as_secs(),
+        rescan_secs: scan.interval.as_secs(),
+        resume_secs: rt.infrastructure.object_reconcile_interval.as_secs().max(1),
+    };
+    with_db(rt, move |mut db| async move {
+        let result = ledger
+            .scan_tick(&mut db, &policy, |target, token, max_keys| {
+                let base = base.clone();
+                async move { base.for_owner(&target.owner)?.list_objects_v2(max_keys, token.as_deref()).await }
+            })
+            .await;
+        (db, result)
+    })
+    .await
+}
+
+/// Seeds the persistent owner-prefix map from the deployment's currently active principals once per object-ledger
+/// schema. Ledger writes and validated object requests register subsequent principals in-band.
+async fn seed_active_principal_owners(rt: &Runtime, ledger: &ObjectLedger) -> Result<(), &'static str> {
+    let deployment = rt.deployment.as_ref().ok_or("WIRE.NOT_AVAILABLE")?;
+    let deployment_schema = deployment.schema.clone();
+    let ledger = ledger.clone();
+    with_db(rt, move |mut db| async move {
+        let result: Result<(), LedgerError> = async {
+            if ledger.owner_seed_completed(&db).await? {
+                return Ok(());
+            }
+            let rows = db
+                .query(
+                    &format!(
+                        "SELECT issuer,subject,actor_id FROM {deployment_schema}.aip_principals WHERE enabled=true ORDER BY issuer,subject,actor_id"
+                    ),
+                    &[],
+                )
+                .await
+                .map_err(|error| LedgerError::Database(error.to_string()))?;
+            let owners: Vec<String> = rows
+                .into_iter()
+                .map(|row| {
+                    durable::owner(&crate::auth::DurablePrincipal {
+                        issuer: row.get(0),
+                        subject: row.get(1),
+                        actor_id: row.get(2),
+                        issued_at: 0,
+                        min_iat: 0,
+                    })
+                })
+                .collect();
+            ledger.seed_owners_once(&mut db, &owners).await?;
+            Ok(())
+        }
+        .await;
+        (db, result)
+    })
+    .await
 }
 
 pub(crate) async fn reconcile_once(rt: &Runtime) -> Result<usize, &'static str> {

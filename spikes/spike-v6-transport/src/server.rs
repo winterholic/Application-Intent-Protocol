@@ -332,7 +332,9 @@ pub(crate) async fn listen_with_fingerprint(
         let pool = runtime.db_pool.as_ref().expect("pool initialized");
         tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, async {
             let db = pool.acquire().await.map_err(|_| io::Error::other("object ledger database unavailable"))?;
-            install_or_accept_provisioned(&db, &object_ledger_ddl(&infra), &format!("{infra}.aip_object_ledger"), "object ledger").await?;
+            // The owner-seed marker is the newest object of the ledger DDL: a database provisioned before it existed
+            // must be provisioned again, not accepted on the strength of the older owner table.
+            install_or_accept_provisioned(&db, &object_ledger_ddl(&infra), &format!("{infra}.aip_object_owner_seed"), "object ledger").await?;
             db.release().await.map_err(|_| io::Error::other("object ledger connection reset failed"))
         })
         .await

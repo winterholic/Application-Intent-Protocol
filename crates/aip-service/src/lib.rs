@@ -2083,6 +2083,60 @@ mod managed_config_tests {
     }
 
     #[test]
+    fn object_bucket_scan_is_off_by_default_and_its_cost_bounds_are_validated() {
+        let build = |objects: Value| {
+            let config: Config = serde_json::from_value(json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+                "objects":objects
+            }))
+            .unwrap();
+            infrastructure::build_with_environment(&config, &|_| Some("secret".to_owned()))
+        };
+        let s3 = |extra: Value| {
+            let mut value = json!({"kind":"s3","endpoint":"https://objects.example.test","bucket":"b","region":"us-east-1","access_key_env":"A","secret_key_env":"S"});
+            for (key, field) in extra.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            value
+        };
+        assert_eq!(build(s3(json!({}))).unwrap().object_scan, None, "a billed request is never made unless asked for");
+        assert_eq!(
+            build(s3(json!({"scan_page_keys":1000,"scan_max_pages_per_tick":100}))).unwrap().object_scan,
+            None,
+            "bounds alone do not enable it"
+        );
+        let scan = build(s3(json!({"scan_interval_secs":3600}))).unwrap().object_scan.unwrap();
+        assert_eq!(
+            (scan.interval.as_secs(), scan.page_keys, scan.max_pages_per_tick, scan.lease.as_secs()),
+            (3600, 250, 4, 300),
+            "defaults: 250 keys a page, 4 pages a tick, 5 minute lease"
+        );
+        let gcs = build(
+            json!({"kind":"gcs_hmac","bucket":"b","access_key_env":"A","secret_key_env":"S","scan_interval_secs":60,"scan_page_keys":1000,"scan_max_pages_per_tick":1}),
+        );
+        let scan = gcs.unwrap().object_scan.unwrap();
+        assert_eq!((scan.interval.as_secs(), scan.page_keys, scan.max_pages_per_tick), (60, 1000, 1));
+        for invalid in [
+            json!({"scan_interval_secs":59}),
+            json!({"scan_interval_secs":604801}),
+            json!({"scan_interval_secs":3600,"scan_page_keys":0}),
+            json!({"scan_interval_secs":3600,"scan_page_keys":1001}),
+            json!({"scan_interval_secs":3600,"scan_max_pages_per_tick":0}),
+            json!({"scan_interval_secs":3600,"scan_max_pages_per_tick":101}),
+            json!({"scan_interval_secs":3600,"scan_lease_secs":0}),
+        ] {
+            assert_eq!(build(s3(invalid.clone())).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG", "{invalid}");
+        }
+        let local = serde_json::from_value::<Config>(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "objects":{"kind":"local","directory":"/tmp/x","scan_interval_secs":60}
+        }));
+        assert!(local.is_err(), "local storage has no bucket to list");
+    }
+
+    #[test]
     fn retention_defaults_keep_unhandled_history_and_out_of_range_days_are_rejected() {
         let build = |retention: Option<Value>| {
             let mut value = json!({

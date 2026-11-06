@@ -3,7 +3,7 @@
 //! This is an HMAC-key backend, not the native Cloud Storage client library or
 //! ADC integration. Requests use the XML API and AWS4-HMAC-SHA256 extensions.
 
-use crate::objects::{CompletedPart, Error, MultipartUpload, ObjectKey, S3Config, S3Store};
+use crate::objects::{CompletedPart, Error, ListPage, MultipartUpload, ObjectKey, S3Config, S3Store};
 
 /// Credentials for Google's documented S3-compatible XML API.
 ///
@@ -82,6 +82,11 @@ impl GcsStore {
 
     pub async fn abort_multipart(&self, upload: &MultipartUpload) -> Result<(), Error> {
         self.inner.abort_multipart(upload).await
+    }
+
+    /// One billed `ListObjectsV2` page of this owner's objects, through the XML API's S3 interoperability.
+    pub async fn list_objects_v2(&self, max_keys: u16, continuation_token: Option<&str>) -> Result<ListPage, Error> {
+        self.inner.list_objects_v2(max_keys, continuation_token).await
     }
 
     pub fn s3_compatible_store(&self) -> &S3Store {

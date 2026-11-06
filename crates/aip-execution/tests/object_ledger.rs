@@ -1,5 +1,7 @@
-use aip_execution::object_ledger::{Error, Kind, ObjectLedger, Outcome, State, Usage};
+use aip_execution::object_ledger::{Error, Kind, ObjectLedger, Outcome, ScanPageReport, ScanPolicy, State, Usage};
+use aip_execution::objects::{Error as ObjectError, ListPage, ObjectKey, owner_prefix};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use tokio_postgres::{Client, NoTls};
 
 const DB: &str = aip_test_support::test_database_url!();
@@ -32,6 +34,40 @@ impl Db {
         self.client
             .batch_execute(&format!(
                 "UPDATE {}.aip_object_ledger SET expires_at=clock_timestamp()-interval '1 second' WHERE expires_at IS NOT NULL",
+                self.schema
+            ))
+            .await
+            .unwrap();
+    }
+
+    async fn row(&self, owner: &str, object_id: &str) -> Option<(String, i64, i64)> {
+        self.client
+            .query_opt(
+                &format!("SELECT state,bytes,version FROM {}.aip_object_ledger WHERE owner=$1 AND object_id=$2", self.schema),
+                &[&owner, &object_id],
+            )
+            .await
+            .unwrap()
+            .map(|row| (row.get(0), row.get(1), row.get(2)))
+    }
+
+    async fn owner_rows(&self) -> i64 {
+        self.client.query_one(&format!("SELECT count(*) FROM {}.aip_object_owners", self.schema), &[]).await.unwrap().get(0)
+    }
+
+    async fn owner_token(&self, owner: &str) -> Option<String> {
+        self.client
+            .query_one(&format!("SELECT continuation_token FROM {}.aip_object_owners WHERE owner=$1", self.schema), &[&owner])
+            .await
+            .unwrap()
+            .get(0)
+    }
+
+    /// Makes every registered owner due again and drops its lease, as if its delay had passed.
+    async fn owners_due(&self) {
+        self.client
+            .batch_execute(&format!(
+                "UPDATE {}.aip_object_owners SET next_scan_at=clock_timestamp()-interval '1 second',lease_until=NULL",
                 self.schema
             ))
             .await
@@ -474,4 +510,326 @@ async fn confirmation_cannot_convert_an_active_multipart_into_a_completed_object
     ledger.require_open_multipart(&mut db.client, "alice", "active", "upload").await.unwrap();
     assert_eq!(db.part_rows().await, 1);
     assert_eq!(ledger.usage(&db.client, "alice").await.unwrap().bytes, 90);
+}
+
+const ALICE_PREFIX: &str = "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90";
+
+#[tokio::test]
+async fn owner_registration_is_automatic_and_survives_the_last_ledger_row() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100 * MIB, 100);
+    assert_eq!(db.owner_rows().await, 0);
+    ledger.reserve_put(&mut db.client, "alice", "a", MIB, 600).await.unwrap();
+    ledger.reserve_put(&mut db.client, "alice", "b", MIB, 600).await.unwrap();
+    ledger.start_multipart(&mut db.client, "bob", "m", "upload", 600).await.unwrap();
+    ledger.adopt_object(&mut db.client, "carol", "c", 3).await.unwrap();
+    assert_eq!(db.owner_rows().await, 3, "each owner is registered once, by whichever write came first");
+    assert_eq!(ledger.owner_for_prefix(&db.client, ALICE_PREFIX).await.unwrap().as_deref(), Some("alice"));
+    assert_eq!(ledger.owner_for_prefix(&db.client, &owner_prefix("carol").unwrap()).await.unwrap().as_deref(), Some("carol"));
+    assert_eq!(ledger.owner_for_prefix(&db.client, &"0".repeat(64)).await.unwrap(), None);
+
+    // The hold expires, the store has nothing, and the last ledger row of the owner is deleted.
+    db.expire_all().await;
+    for due in ledger.claim_due(&mut db.client, 10, 60).await.unwrap() {
+        let outcome = if due.kind == Kind::Multipart { Outcome::Absent } else { Outcome::Stored(MIB) };
+        assert!(ledger.resolve(&mut db.client, &due, outcome).await.unwrap());
+    }
+    ledger.delete_signed(&mut db.client, "alice", "a", 600).await.unwrap();
+    db.expire_all().await;
+    for due in ledger.claim_due(&mut db.client, 10, 60).await.unwrap() {
+        assert!(ledger.resolve(&mut db.client, &due, Outcome::Absent).await.unwrap());
+    }
+    assert_eq!(db.row("alice", "a").await, None);
+    assert_eq!(db.owner_rows().await, 3, "an owner with no ledger row is still known, so its prefix can still be scanned");
+    assert_eq!(ledger.owner_for_prefix(&db.client, ALICE_PREFIX).await.unwrap().as_deref(), Some("alice"));
+    assert_eq!(ledger.register_owner(&mut db.client, "alice").await.unwrap(), ALICE_PREFIX);
+    assert_eq!(db.owner_rows().await, 3);
+    assert_eq!(ledger.register_owner(&mut db.client, "").await, Err(Error::InvalidRequest));
+}
+
+#[tokio::test]
+async fn installing_the_ledger_registers_owners_that_already_have_rows() {
+    let db = Db::new().await;
+    db.client
+        .batch_execute(&format!(
+            "INSERT INTO {0}.aip_object_ledger (owner,object_id,kind,state,bytes) VALUES ('alice','a','PUT','COMPLETE',1),('alice','b','PUT','COMPLETE',1),('bob','c','PUT','COMPLETE',1)",
+            db.schema
+        ))
+        .await
+        .unwrap();
+    db.client.batch_execute(&ObjectLedger::ddl(&db.schema).unwrap()).await.unwrap();
+    db.client.batch_execute(&ObjectLedger::ddl(&db.schema).unwrap()).await.unwrap();
+    assert_eq!(db.owner_rows().await, 2);
+    let prefix: String =
+        db.client.query_one(&format!("SELECT owner_prefix FROM {}.aip_object_owners WHERE owner='alice'", db.schema), &[]).await.unwrap().get(0);
+    assert_eq!(prefix, ALICE_PREFIX, "the SQL backfill must hash exactly like the bucket path does");
+}
+
+#[tokio::test]
+async fn out_of_band_owner_seed_is_idempotent_and_keeps_prefixes_isolated() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100 * MIB, 100);
+    assert!(!ledger.owner_seed_completed(&db.client).await.unwrap());
+    assert_eq!(ledger.seed_owners_once(&mut db.client, &[String::new()]).await, Err(Error::InvalidRequest));
+    assert!(!ledger.owner_seed_completed(&db.client).await.unwrap(), "invalid input cannot mark an incomplete seed complete");
+
+    let owners = vec!["alice".to_owned(), "bob".to_owned()];
+    assert!(ledger.seed_owners_once(&mut db.client, &owners).await.unwrap());
+    assert!(!ledger.seed_owners_once(&mut db.client, &owners).await.unwrap(), "a repeated seed is a no-op");
+    assert!(ledger.owner_seed_completed(&db.client).await.unwrap());
+    assert_eq!(db.owner_rows().await, 2);
+    assert_eq!(db.rows().await, 0, "seeding owners does not fabricate object ledger entries");
+    assert_eq!(ledger.owner_for_prefix(&db.client, &owner_prefix("alice").unwrap()).await.unwrap().as_deref(), Some("alice"));
+    assert_eq!(ledger.owner_for_prefix(&db.client, &owner_prefix("bob").unwrap()).await.unwrap().as_deref(), Some("bob"));
+    assert_ne!(owner_prefix("alice").unwrap(), owner_prefix("bob").unwrap());
+    assert_eq!(ledger.owner_for_prefix(&db.client, &"0".repeat(64)).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn scan_targets_are_leased_and_resume_from_the_persisted_continuation_token() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100 * MIB, 100);
+    ledger.register_owner(&mut db.client, "alice").await.unwrap();
+    let targets = ledger.claim_scan_targets(&mut db.client, 10, 60).await.unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!((targets[0].owner.as_str(), targets[0].owner_prefix.as_str(), targets[0].continuation_token.clone()), ("alice", ALICE_PREFIX, None));
+    assert!(ledger.claim_scan_targets(&mut db.client, 10, 60).await.unwrap().is_empty(), "a leased owner is not handed out twice");
+
+    let none = Default::default();
+    let first = [("00000000-0000-4000-8000-000000000001".to_owned(), 5)];
+    let report = ledger.apply_scan_page(&mut db.client, "alice", &none, &first, Some("token-1"), 3600, 1).await.unwrap();
+    assert_eq!(report, ScanPageReport { adopted: 1, ..Default::default() });
+    assert_eq!(db.owner_token("alice").await.as_deref(), Some("token-1"));
+    assert!(ledger.claim_scan_targets(&mut db.client, 10, 60).await.unwrap().is_empty(), "the next page waits for its delay");
+
+    db.owners_due().await;
+    let targets = ledger.claim_scan_targets(&mut db.client, 10, 60).await.unwrap();
+    assert_eq!(targets[0].continuation_token.as_deref(), Some("token-1"), "the next scan continues where the last one stopped");
+
+    let snapshot = ledger.snapshot_owner_versions(&db.client, "alice").await.unwrap();
+    let second = [("00000000-0000-4000-8000-000000000002".to_owned(), 6)];
+    ledger.apply_scan_page(&mut db.client, "alice", &snapshot, &second, None, 3600, 1).await.unwrap();
+    assert_eq!(db.owner_token("alice").await, None, "a finished listing starts over next time");
+    let (finished, due_in_secs): (bool, f64) = db
+        .client
+        .query_one(
+            &format!(
+                "SELECT last_scanned_at IS NOT NULL AND lease_until IS NULL, EXTRACT(EPOCH FROM next_scan_at-clock_timestamp())::float8 FROM {}.aip_object_owners",
+                db.schema
+            ),
+            &[],
+        )
+        .await
+        .map(|row| (row.get(0), row.get(1)))
+        .unwrap();
+    assert!(finished && due_in_secs > 3000.0, "rescan is one interval away, not due now: {due_in_secs}");
+    assert!(ledger.claim_scan_targets(&mut db.client, 10, 60).await.unwrap().is_empty());
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap(), Usage { bytes: 11, objects: 2 });
+}
+
+#[tokio::test]
+async fn a_scan_never_bumps_the_version_of_a_row_that_already_matches() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100, 10);
+    // PENDING put: a claimed reconcile of it must still be able to resolve after a listing saw a smaller or equal object.
+    ledger.reserve_put(&mut db.client, "alice", "pending", 90, 600).await.unwrap();
+    db.expire_all().await;
+    let due = ledger.claim_due(&mut db.client, 10, 60).await.unwrap().pop().unwrap();
+    let before = ledger.snapshot_owner_versions(&db.client, "alice").await.unwrap();
+    let report = ledger.apply_scan_page(&mut db.client, "alice", &before, &[("pending".into(), 3)], None, 3600, 1).await.unwrap();
+    assert_eq!(report, ScanPageReport { unchanged: 1, ..Default::default() });
+    assert!(ledger.resolve(&mut db.client, &due, Outcome::Stored(90)).await.unwrap(), "the listing must not invalidate the claimed due row");
+
+    // DELETING: same.
+    ledger.adopt_object(&mut db.client, "alice", "deleting", 10).await.unwrap();
+    ledger.delete_signed(&mut db.client, "alice", "deleting", 600).await.unwrap();
+    db.expire_all().await;
+    let due = ledger.claim_due(&mut db.client, 10, 60).await.unwrap().pop().unwrap();
+    let before = ledger.snapshot_owner_versions(&db.client, "alice").await.unwrap();
+    ledger.apply_scan_page(&mut db.client, "alice", &before, &[("deleting".into(), 10)], None, 3600, 1).await.unwrap();
+    assert!(ledger.resolve(&mut db.client, &due, Outcome::Absent).await.unwrap());
+
+    // COMPLETE with the same size: untouched, and a different size is corrected.
+    ledger.adopt_object(&mut db.client, "alice", "stored", 4).await.unwrap();
+    let version = db.row("alice", "stored").await.unwrap().2;
+    let before = ledger.snapshot_owner_versions(&db.client, "alice").await.unwrap();
+    let report = ledger.apply_scan_page(&mut db.client, "alice", &before, &[("stored".into(), 4)], None, 3600, 1).await.unwrap();
+    assert_eq!(report, ScanPageReport { unchanged: 1, ..Default::default() });
+    assert_eq!(db.row("alice", "stored").await.unwrap().2, version, "an identical observation writes nothing");
+    let report = ledger.apply_scan_page(&mut db.client, "alice", &before, &[("stored".into(), 5)], None, 3600, 1).await.unwrap();
+    assert_eq!(report, ScanPageReport { adopted: 1, ..Default::default() });
+    assert_eq!(db.row("alice", "stored").await.unwrap(), ("COMPLETE".into(), 5, version + 1));
+}
+
+#[tokio::test]
+async fn a_stale_listing_cannot_resurrect_an_object_the_reconciler_just_deleted() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100, 10);
+    ledger.adopt_object(&mut db.client, "alice", "gone", 10).await.unwrap();
+    ledger.delete_signed(&mut db.client, "alice", "gone", 600).await.unwrap();
+    // t0: the scan snapshots the ledger and asks the store, which still lists the object.
+    let before = ledger.snapshot_owner_versions(&db.client, "alice").await.unwrap();
+    assert_eq!(before["gone"].0, State::Deleting);
+    // The reconciler sees HEAD 404 and releases the row before the scan applies its page at t1.
+    db.expire_all().await;
+    let due = ledger.claim_due(&mut db.client, 10, 60).await.unwrap().pop().unwrap();
+    assert!(ledger.resolve(&mut db.client, &due, Outcome::Absent).await.unwrap());
+    assert_eq!(db.row("alice", "gone").await, None);
+
+    let late = "late-arrival";
+    let report = ledger.apply_scan_page(&mut db.client, "alice", &before, &[("gone".into(), 10), (late.into(), 7)], None, 3600, 1).await.unwrap();
+    assert_eq!(db.row("alice", "gone").await, None, "the deleted object must stay deleted");
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap(), Usage { bytes: 7, objects: 1 });
+    assert_eq!(report, ScanPageReport { adopted: 1, skipped_fenced: 1, ..Default::default() });
+    assert_eq!(db.row("alice", late).await.unwrap().0, "COMPLETE", "an object the ledger never knew is still adopted");
+}
+
+#[tokio::test]
+async fn a_row_changed_after_the_snapshot_is_left_to_its_newer_writer() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100, 10);
+    ledger.reserve_put(&mut db.client, "alice", "x", 5, 600).await.unwrap();
+    let before = ledger.snapshot_owner_versions(&db.client, "alice").await.unwrap();
+    ledger.reserve_put(&mut db.client, "alice", "x", 7, 600).await.unwrap();
+    // A row created after the snapshot is just as unknown to the listing.
+    ledger.reserve_put(&mut db.client, "alice", "y", 2, 600).await.unwrap();
+    let report = ledger.apply_scan_page(&mut db.client, "alice", &before, &[("x".into(), 50), ("y".into(), 50)], None, 3600, 1).await.unwrap();
+    assert_eq!(report, ScanPageReport { skipped_fenced: 2, ..Default::default() });
+    assert_eq!(db.row("alice", "x").await.unwrap().1, 7);
+    assert_eq!(db.row("alice", "y").await.unwrap().1, 2);
+}
+
+#[tokio::test]
+async fn an_active_multipart_upload_is_skipped_without_stopping_the_page() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100, 10);
+    ledger.start_multipart(&mut db.client, "alice", "active", "upload", 600).await.unwrap();
+    ledger.reserve_part(&mut db.client, "alice", "active", "upload", 1, 90, 600).await.unwrap();
+    let before = ledger.snapshot_owner_versions(&db.client, "alice").await.unwrap();
+    let items = [("early".to_owned(), 5), ("active".to_owned(), 1), ("late".to_owned(), 6)];
+    let report = ledger.apply_scan_page(&mut db.client, "alice", &before, &items, Some("next"), 3600, 1).await.unwrap();
+    assert_eq!(report, ScanPageReport { adopted: 2, skipped_multipart: 1, ..Default::default() });
+    assert_eq!(db.row("alice", "early").await.unwrap().1, 5);
+    assert_eq!(db.row("alice", "late").await.unwrap().1, 6);
+    assert_eq!(db.row("alice", "active").await.unwrap(), ("PENDING".into(), 90, 1));
+    assert_eq!(db.part_rows().await, 1);
+    assert_eq!(db.owner_token("alice").await.as_deref(), Some("next"), "the cursor still advances past a skipped key");
+    ledger.require_open_multipart(&mut db.client, "alice", "active", "upload").await.unwrap();
+}
+
+/// Pages a fake store hands out per owner: page `n` of an owner holds `per_page` objects and `Some(token)` unless it is the last.
+struct FakeStore {
+    pages: usize,
+    per_page: usize,
+    calls: Mutex<Vec<(String, Option<String>, u16)>>,
+}
+
+impl FakeStore {
+    fn new(pages: usize, per_page: usize) -> Arc<Self> {
+        Arc::new(Self { pages, per_page, calls: Mutex::new(Vec::new()) })
+    }
+
+    fn page(&self, owner: &str, token: Option<String>, max_keys: u16) -> Result<ListPage, ObjectError> {
+        self.calls.lock().unwrap().push((owner.to_owned(), token.clone(), max_keys));
+        if owner == "broken" {
+            return Err(ObjectError::Http("object store returned 503".into()));
+        }
+        let index: usize = token.as_deref().map(|t| t.trim_start_matches("page-").parse().unwrap()).unwrap_or(0);
+        let items = (0..self.per_page).map(|_| (ObjectKey::generate(), 10)).collect();
+        let next_token = (index + 1 < self.pages).then(|| format!("page-{}", index + 1));
+        Ok(ListPage { items, skipped_keys: 1, next_token })
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.lock().unwrap().len()
+    }
+}
+
+fn policy(max_pages: u16) -> ScanPolicy {
+    ScanPolicy { page_keys: 25, max_pages, lease_secs: 60, rescan_secs: 3600, resume_secs: 30 }
+}
+
+#[tokio::test]
+async fn a_scan_tick_spends_at_most_its_page_budget_and_the_next_tick_continues() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(1000 * MIB, 1000);
+    ledger.register_owner(&mut db.client, "alice").await.unwrap();
+    let store = FakeStore::new(5, 3);
+
+    let first = {
+        let store = store.clone();
+        ledger
+            .scan_tick(&mut db.client, &policy(2), move |target, token, max_keys| {
+                let store = store.clone();
+                async move { store.page(&target.owner, token, max_keys) }
+            })
+            .await
+            .unwrap()
+    };
+    assert_eq!((first.pages, first.owners_completed, first.rows.adopted, first.skipped_keys), (2, 0, 6, 2));
+    assert_eq!(store.call_count(), 2, "the budget is a hard cap on billed list requests");
+    assert_eq!(db.owner_token("alice").await.as_deref(), Some("page-2"));
+    assert!(store.calls.lock().unwrap().iter().all(|(_, _, max_keys)| *max_keys == 25));
+
+    // Not due again until the resume delay has passed.
+    let idle = ledger.scan_tick(&mut db.client, &policy(2), |_, _, _| async { unreachable!("nothing is due") }).await.unwrap();
+    assert_eq!(idle.pages, 0);
+
+    for expected_pages in [2, 1] {
+        db.owners_due().await;
+        let store = store.clone();
+        let tick = ledger
+            .scan_tick(&mut db.client, &policy(2), move |target, token, max_keys| {
+                let store = store.clone();
+                async move { store.page(&target.owner, token, max_keys) }
+            })
+            .await
+            .unwrap();
+        assert_eq!(tick.pages, expected_pages);
+    }
+    assert_eq!(store.call_count(), 5);
+    assert_eq!(store.calls.lock().unwrap()[2].1.as_deref(), Some("page-2"), "the second tick resumed from the stored token, not from the start");
+    assert_eq!(db.owner_token("alice").await, None);
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap().objects, 15);
+}
+
+#[tokio::test]
+async fn a_scan_tick_shares_its_budget_between_owners_and_isolates_a_failing_one() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(1000 * MIB, 1000);
+    for owner in ["alice", "bob", "broken", "carol"] {
+        ledger.register_owner(&mut db.client, owner).await.unwrap();
+    }
+    let store = FakeStore::new(4, 1);
+    let tick = {
+        let store = store.clone();
+        ledger
+            .scan_tick(&mut db.client, &policy(3), move |target, token, max_keys| {
+                let store = store.clone();
+                async move { store.page(&target.owner, token, max_keys) }
+            })
+            .await
+            .unwrap()
+    };
+    assert_eq!(tick.pages, 3, "four owners are due but only three pages are paid for");
+    assert_eq!(store.call_count(), 3);
+    let owners: std::collections::HashSet<String> = store.calls.lock().unwrap().iter().map(|(owner, _, _)| owner.clone()).collect();
+    assert_eq!(owners.len(), 3, "each claimed owner got a page before anyone got a second one");
+    // The owner left unclaimed is picked up next tick; the failing one stays leased even once everything else is due.
+    db.client.batch_execute(&format!("UPDATE {}.aip_object_owners SET next_scan_at=clock_timestamp()-interval '1 second'", db.schema)).await.unwrap();
+    let before = store.call_count();
+    let second = {
+        let store = store.clone();
+        ledger
+            .scan_tick(&mut db.client, &policy(10), move |target, token, max_keys| {
+                let store = store.clone();
+                async move { store.page(&target.owner, token, max_keys) }
+            })
+            .await
+            .unwrap()
+    };
+    let broken_calls = store.calls.lock().unwrap().iter().filter(|(owner, _, _)| owner == "broken").count();
+    assert_eq!(broken_calls, 1, "a failing owner is retried after its lease, not every tick");
+    assert!(second.pages > 0 && store.call_count() > before);
+    assert!(tick.owners_failed + second.owners_failed <= 1);
 }

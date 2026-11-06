@@ -6,13 +6,19 @@
 //! A reservation that is never used expires, is checked against the store, and is released or aborted. The owner
 //! quota therefore bounds bytes that were signed for, not only bytes that were confirmed.
 
+use crate::objects::{ListPage, owner_prefix};
+use std::collections::HashMap;
 use tokio_postgres::{Client, Transaction};
 
 const LEDGER: &str = "aip_object_ledger";
 const PARTS: &str = "aip_object_parts";
+const OWNERS: &str = "aip_object_owners";
+const OWNER_SEED: &str = "aip_object_owner_seed";
 /// Advisory lock namespace for one owner's ledger rows. Distinct from the deployment fence (1095323725),
 /// the job collector (1095323726) and the message quota (1095323727).
 const OWNER_LOCK: i32 = 1_095_323_728;
+/// Serializes the one-time principal-table backfill across service instances.
+const OWNER_SEED_LOCK: i32 = 1_095_323_729;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -85,6 +91,53 @@ pub enum Outcome {
     NotYetStored { hold_secs: u64 },
 }
 
+/// An owner whose bucket prefix is due for a `ListObjectsV2` scan, with the place the previous scan stopped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanTarget {
+    pub owner: String,
+    pub owner_prefix: String,
+    pub continuation_token: Option<String>,
+}
+
+/// What one applied listing page changed. `skipped_*` rows were left exactly as they were.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScanPageReport {
+    /// Rows inserted, or whose size was raised or corrected.
+    pub adopted: usize,
+    /// Rows that already said what the listing says; not written, so their `version` did not move.
+    pub unchanged: usize,
+    /// Keys of an active multipart upload; the upload's own parts decide its size, not a listing.
+    pub skipped_multipart: usize,
+    /// Rows that changed (or disappeared) after the version snapshot the listing was fenced with.
+    pub skipped_fenced: usize,
+}
+
+/// A row as it stood when the listing was requested: `(state, bytes, version)`.
+pub type RowVersions = HashMap<String, (State, i64, i64)>;
+
+/// Bounds of one scan tick. `max_pages` caps the billed list requests across all owners in the tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScanPolicy {
+    pub page_keys: u16,
+    pub max_pages: u16,
+    pub lease_secs: u64,
+    /// Seconds before an owner whose listing finished is scanned again.
+    pub rescan_secs: u64,
+    /// Seconds before an owner whose listing was cut short by the page budget continues.
+    pub resume_secs: u64,
+}
+
+/// Totals of one scan tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScanTickReport {
+    pub pages: usize,
+    pub owners_completed: usize,
+    /// Owners whose list call or page application failed; their lease keeps them quiet until it ends.
+    pub owners_failed: usize,
+    pub skipped_keys: usize,
+    pub rows: ScanPageReport,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Usage {
     pub bytes: u64,
@@ -116,6 +169,14 @@ impl ObjectLedger {
         format!("{}.{PARTS}", self.schema)
     }
 
+    fn owners(&self) -> String {
+        format!("{}.{OWNERS}", self.schema)
+    }
+
+    fn owner_seed(&self) -> String {
+        format!("{}.{OWNER_SEED}", self.schema)
+    }
+
     pub fn ddl(schema: &str) -> Result<String, Error> {
         if !valid_schema(schema) {
             return Err(Error::InvalidSchema);
@@ -129,7 +190,14 @@ impl ObjectLedger {
              ALTER TABLE {schema}.{LEDGER} ADD COLUMN IF NOT EXISTS settling boolean NOT NULL DEFAULT false; \
              CREATE INDEX IF NOT EXISTS aip_object_ledger_due ON {schema}.{LEDGER} (expires_at) WHERE expires_at IS NOT NULL; \
              CREATE TABLE IF NOT EXISTS {schema}.{PARTS} (owner text NOT NULL, object_id text NOT NULL, part_number integer NOT NULL, \
-             bytes bigint NOT NULL CHECK (bytes > 0), PRIMARY KEY(owner,object_id,part_number))"
+             bytes bigint NOT NULL CHECK (bytes > 0), PRIMARY KEY(owner,object_id,part_number)); \
+             CREATE TABLE IF NOT EXISTS {schema}.{OWNERS} (owner text PRIMARY KEY, owner_prefix text NOT NULL UNIQUE CHECK (length(owner_prefix) = 64), \
+             continuation_token text, next_scan_at timestamptz NOT NULL DEFAULT clock_timestamp(), lease_until timestamptz, \
+             last_scanned_at timestamptz, registered_at timestamptz NOT NULL DEFAULT clock_timestamp()); \
+             CREATE INDEX IF NOT EXISTS aip_object_owners_scan_due ON {schema}.{OWNERS} (next_scan_at); \
+             CREATE TABLE IF NOT EXISTS {schema}.{OWNER_SEED} (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), seeded_at timestamptz NOT NULL DEFAULT clock_timestamp()); \
+             INSERT INTO {schema}.{OWNERS} (owner, owner_prefix) SELECT DISTINCT owner, encode(sha256(convert_to(owner,'UTF8')),'hex') FROM {schema}.{LEDGER} \
+             ON CONFLICT DO NOTHING"
         ))
     }
 
@@ -145,6 +213,7 @@ impl ObjectLedger {
 
     async fn reserve_put_in(&self, tx: &Transaction<'_>, owner: &str, object_id: &str, bytes: i64, ttl: f64) -> Result<(), Error> {
         self.lock(tx, owner).await?;
+        self.register_in(tx, owner).await?;
         let existing = tx
             .query_opt(&format!("SELECT kind FROM {} WHERE owner=$1 AND object_id=$2", self.ledger()), &[&owner, &object_id])
             .await?
@@ -175,6 +244,7 @@ impl ObjectLedger {
 
     async fn start_multipart_in(&self, tx: &Transaction<'_>, owner: &str, object_id: &str, upload_id: &str, idle: f64) -> Result<(), Error> {
         self.lock(tx, owner).await?;
+        self.register_in(tx, owner).await?;
         self.check_quota(tx, owner, object_id, 0, true).await?;
         tx.execute(
             &format!(
@@ -420,6 +490,7 @@ impl ObjectLedger {
 
     async fn adopt_object_in(&self, tx: &Transaction<'_>, owner: &str, object_id: &str, bytes: i64) -> Result<(), Error> {
         self.lock(tx, owner).await?;
+        self.register_in(tx, owner).await?;
         let active = tx
             .query_opt(
                 &format!("SELECT 1 FROM {} WHERE owner=$1 AND object_id=$2 AND kind='MULTIPART' AND state='PENDING' FOR UPDATE", self.ledger()),
@@ -440,6 +511,270 @@ impl ObjectLedger {
         )
         .await?;
         Ok(())
+    }
+
+    /// Records `owner` and the bucket prefix its objects live under, so a scan can name the owner of a prefix. The
+    /// prefix is a one-way hash, so this table is the only way back; every ledger write registers its owner, which
+    /// keeps the row after the owner's last ledger row is released. Returns the prefix.
+    pub async fn register_owner(&self, client: &mut Client, owner: &str) -> Result<String, Error> {
+        let tx = client.transaction().await?;
+        let result = async {
+            self.lock(&tx, owner).await?;
+            self.register_in(&tx, owner).await
+        }
+        .await;
+        finish(tx, result).await
+    }
+
+    /// Whether the one-time out-of-band seed from the deployment's active principal table has completed.
+    pub async fn owner_seed_completed(&self, client: &Client) -> Result<bool, Error> {
+        Ok(client.query_one(&format!("SELECT EXISTS (SELECT 1 FROM {} WHERE singleton)", self.owner_seed()), &[]).await?.get(0))
+    }
+
+    /// Registers active principal owners once. The completion row and mappings commit together, and a transaction
+    /// advisory lock prevents replicas from observing a partial seed or performing it twice.
+    pub async fn seed_owners_once(&self, client: &mut Client, owners: &[String]) -> Result<bool, Error> {
+        let owners: Vec<(String, String)> = owners
+            .iter()
+            .map(|owner| owner_prefix(owner).map(|prefix| (owner.clone(), prefix)).map_err(|_| Error::InvalidRequest))
+            .collect::<Result<_, _>>()?;
+        let tx = client.transaction().await?;
+        let result = async {
+            tx.query_one("SELECT pg_advisory_xact_lock($1,hashtext($2))", &[&OWNER_SEED_LOCK, &self.schema]).await?;
+            if self.owner_seed_completed_tx(&tx).await? {
+                return Ok(false);
+            }
+            for (owner, prefix) in &owners {
+                tx.execute(&format!("INSERT INTO {} (owner,owner_prefix) VALUES ($1,$2) ON CONFLICT DO NOTHING", self.owners()), &[owner, prefix])
+                    .await?;
+            }
+            tx.execute(&format!("INSERT INTO {} (singleton) VALUES (true) ON CONFLICT DO NOTHING", self.owner_seed()), &[]).await?;
+            Ok(true)
+        }
+        .await;
+        finish(tx, result).await
+    }
+
+    async fn owner_seed_completed_tx(&self, tx: &Transaction<'_>) -> Result<bool, Error> {
+        Ok(tx.query_one(&format!("SELECT EXISTS (SELECT 1 FROM {} WHERE singleton)", self.owner_seed()), &[]).await?.get(0))
+    }
+
+    async fn register_in(&self, tx: &Transaction<'_>, owner: &str) -> Result<String, Error> {
+        let prefix = owner_prefix(owner).map_err(|_| Error::InvalidRequest)?;
+        tx.execute(&format!("INSERT INTO {} (owner,owner_prefix) VALUES ($1,$2) ON CONFLICT (owner) DO NOTHING", self.owners()), &[&owner, &prefix])
+            .await?;
+        Ok(prefix)
+    }
+
+    /// The owner registered for a bucket prefix, if any.
+    pub async fn owner_for_prefix(&self, client: &Client, owner_prefix: &str) -> Result<Option<String>, Error> {
+        let row = client.query_opt(&format!("SELECT owner FROM {} WHERE owner_prefix=$1", self.owners()), &[&owner_prefix]).await?;
+        Ok(row.map(|row| row.get(0)))
+    }
+
+    /// Takes up to `limit` registered owners whose scan is due and leases them for `lease_secs`, so concurrent instances
+    /// do not list the same prefix, and so a failing owner is retried after the lease rather than every tick.
+    pub async fn claim_scan_targets(&self, client: &mut Client, limit: i64, lease_secs: u64) -> Result<Vec<ScanTarget>, Error> {
+        let lease = checked_secs(lease_secs)?;
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let rows = client
+            .query(
+                &format!(
+                    "UPDATE {0} o SET lease_until=clock_timestamp()+make_interval(secs=>$2) \
+                     FROM (SELECT owner FROM {0} WHERE next_scan_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<=clock_timestamp()) \
+                     ORDER BY next_scan_at LIMIT $1 FOR UPDATE SKIP LOCKED) due \
+                     WHERE o.owner=due.owner RETURNING o.owner,o.owner_prefix,o.continuation_token",
+                    self.owners()
+                ),
+                &[&limit, &lease],
+            )
+            .await?;
+        Ok(rows.into_iter().map(|row| ScanTarget { owner: row.get(0), owner_prefix: row.get(1), continuation_token: row.get(2) }).collect())
+    }
+
+    /// The owner's rows as they are now. Taken before a listing is requested and handed back to `apply_scan_page`, which
+    /// uses it to tell a row the listing could not know about from one it can describe.
+    pub async fn snapshot_owner_versions(&self, client: &Client, owner: &str) -> Result<RowVersions, Error> {
+        let rows = client.query(&format!("SELECT object_id,state,bytes,version FROM {} WHERE owner=$1", self.ledger()), &[&owner]).await?;
+        let mut versions = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let state = State::parse(&row.get::<_, String>(1)).ok_or(Error::InvalidRequest)?;
+            versions.insert(row.get(0), (state, row.get(2), row.get(3)));
+        }
+        Ok(versions)
+    }
+
+    /// One bounded scan tick: claims due owners, lists at most `policy.max_pages` pages across all of them (a page is a
+    /// billed request), applies each page and persists where each owner's listing stopped. Pages are taken round-robin so
+    /// every claimed owner advances before any owner gets a second page. `list` receives the owner, the token to continue
+    /// from and the page size. A failed list call or page leaves that owner leased, so a broken prefix is retried when
+    /// the lease ends instead of on every tick.
+    pub async fn scan_tick<F, Fut>(&self, client: &mut Client, policy: &ScanPolicy, mut list: F) -> Result<ScanTickReport, Error>
+    where
+        F: FnMut(ScanTarget, Option<String>, u16) -> Fut,
+        Fut: std::future::Future<Output = Result<ListPage, crate::objects::Error>>,
+    {
+        struct Cursor {
+            target: ScanTarget,
+            token: Option<String>,
+            before: RowVersions,
+            done: bool,
+        }
+        let mut report = ScanTickReport::default();
+        let targets = self.claim_scan_targets(client, i64::from(policy.max_pages), policy.lease_secs).await?;
+        let mut cursors = Vec::with_capacity(targets.len());
+        for target in targets {
+            // One snapshot per owner and tick, taken before its first list call: every row changed since then is fenced.
+            let before = self.snapshot_owner_versions(client, &target.owner).await?;
+            cursors.push(Cursor { token: target.continuation_token.clone(), target, before, done: false });
+        }
+        let mut budget = usize::from(policy.max_pages);
+        while budget > 0 && cursors.iter().any(|cursor| !cursor.done) {
+            for cursor in cursors.iter_mut().filter(|cursor| !cursor.done) {
+                if budget == 0 {
+                    break;
+                }
+                budget -= 1;
+                report.pages += 1;
+                let Ok(page) = list(cursor.target.clone(), cursor.token.clone(), policy.page_keys).await else {
+                    cursor.done = true;
+                    report.owners_failed += 1;
+                    continue;
+                };
+                let items: Vec<(String, u64)> = page.items.iter().map(|(key, size)| (key.as_str(), *size)).collect();
+                let applied = self
+                    .apply_scan_page(
+                        client,
+                        &cursor.target.owner,
+                        &cursor.before,
+                        &items,
+                        page.next_token.as_deref(),
+                        policy.rescan_secs,
+                        policy.resume_secs,
+                    )
+                    .await;
+                let Ok(applied) = applied else {
+                    cursor.done = true;
+                    report.owners_failed += 1;
+                    continue;
+                };
+                report.skipped_keys += page.skipped_keys;
+                report.rows.adopted += applied.adopted;
+                report.rows.unchanged += applied.unchanged;
+                report.rows.skipped_multipart += applied.skipped_multipart;
+                report.rows.skipped_fenced += applied.skipped_fenced;
+                cursor.token = page.next_token;
+                if cursor.token.is_none() {
+                    cursor.done = true;
+                    report.owners_completed += 1;
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    /// Applies one listing page and the cursor that continues after it, in one transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn apply_scan_page(
+        &self,
+        client: &mut Client,
+        owner: &str,
+        pre_versions: &RowVersions,
+        items: &[(String, u64)],
+        next_token: Option<&str>,
+        rescan_interval_secs: u64,
+        page_delay_secs: u64,
+    ) -> Result<ScanPageReport, Error> {
+        let rescan = checked_secs(rescan_interval_secs)?;
+        let delay = checked_secs(page_delay_secs)?;
+        let tx = client.transaction().await?;
+        let result = self.apply_scan_page_in(&tx, owner, pre_versions, items, next_token, rescan, delay).await;
+        finish(tx, result).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn apply_scan_page_in(
+        &self,
+        tx: &Transaction<'_>,
+        owner: &str,
+        pre_versions: &RowVersions,
+        items: &[(String, u64)],
+        next_token: Option<&str>,
+        rescan: f64,
+        delay: f64,
+    ) -> Result<ScanPageReport, Error> {
+        self.lock(tx, owner).await?;
+        self.register_in(tx, owner).await?;
+        let mut report = ScanPageReport::default();
+        for (object_id, listed) in items {
+            let listed = i64::try_from(*listed).map_err(|_| Error::InvalidRequest)?;
+            let row = tx
+                .query_opt(
+                    &format!("SELECT kind,state,bytes,version FROM {} WHERE owner=$1 AND object_id=$2 FOR UPDATE", self.ledger()),
+                    &[&owner, object_id],
+                )
+                .await?;
+            let Some(row) = row else {
+                // A row the snapshot knew and the ledger no longer has was released after the listing was requested (a
+                // reconciled DELETE, an aborted upload). The listing predates that, so it must not bring the row back.
+                if pre_versions.contains_key(object_id) {
+                    report.skipped_fenced += 1;
+                } else {
+                    tx.execute(
+                        &format!("INSERT INTO {} (owner,object_id,kind,state,bytes) VALUES ($1,$2,'PUT','COMPLETE',$3)", self.ledger()),
+                        &[&owner, object_id, &listed],
+                    )
+                    .await?;
+                    report.adopted += 1;
+                }
+                continue;
+            };
+            let (kind, state, bytes, version): (String, String, i64, i64) = (row.get(0), row.get(1), row.get(2), row.get(3));
+            let state = State::parse(&state).ok_or(Error::InvalidRequest)?;
+            if kind == "MULTIPART" && state == State::Pending {
+                // Its parts decide its size; completion or abort resolves it. One such key must not stop the page.
+                report.skipped_multipart += 1;
+            } else if pre_versions.get(object_id).map(|(_, _, seen)| *seen) != Some(version) {
+                // Created or changed after the snapshot: a newer writer owns it and the listing cannot describe it.
+                report.skipped_fenced += 1;
+            } else if bytes == listed || (state != State::Complete && bytes >= listed) {
+                // Nothing to learn. Writing anyway would move `version` and fail a claimed reconcile of this very row.
+                report.unchanged += 1;
+            } else {
+                let size = if state == State::Complete { listed } else { bytes.max(listed) };
+                tx.execute(
+                    &format!("UPDATE {} SET bytes=$3,version=version+1 WHERE owner=$1 AND object_id=$2", self.ledger()),
+                    &[&owner, object_id, &size],
+                )
+                .await?;
+                report.adopted += 1;
+            }
+        }
+        match next_token {
+            Some(token) => {
+                tx.execute(
+                    &format!(
+                        "UPDATE {} SET continuation_token=$2,next_scan_at=clock_timestamp()+make_interval(secs=>$3),lease_until=NULL WHERE owner=$1",
+                        self.owners()
+                    ),
+                    &[&owner, &token, &delay],
+                )
+                .await?;
+            }
+            None => {
+                tx.execute(
+                    &format!(
+                        "UPDATE {} SET continuation_token=NULL,next_scan_at=clock_timestamp()+make_interval(secs=>$2),last_scanned_at=clock_timestamp(),lease_until=NULL WHERE owner=$1",
+                        self.owners()
+                    ),
+                    &[&owner, &rescan],
+                )
+                .await?;
+            }
+        }
+        Ok(report)
     }
 
     async fn lock(&self, tx: &Transaction<'_>, owner: &str) -> Result<(), Error> {
