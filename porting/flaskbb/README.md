@@ -29,7 +29,7 @@ The two live UI suites (`aip-read.test.mjs`, `features.test.mjs`) also require `
 
 ## Source-order import preflight (G-6)
 
-`seed/post_order_manifest.py` checks the explicit source `Post.id` ↔ public UUID mapping before a future PostOrder import. It emits an offline plan only. The application schema, import executor, writer fence, sequence update and activation remain unfinished; its digest is not migration approval. This initial-import check also supports exact replay before native allocation is enabled.
+`seed/post_order_manifest.py` checks the explicit source `Post.id` ↔ public UUID mapping before a future PostOrder import. It emits an offline plan only. Focused Linux run `42133821900` at `cf90975` verified the additive PostOrder schema upgrade, native publish/replay/denial/legacy allocation fence, and fresh welcome installation using the same server allocator. The historical import executor, source provenance, writer-fenced mapping/sequence apply and source-equivalent projection activation remain unfinished; the offline digest is not migration approval. This initial-import check also supports exact replay before native allocation is enabled.
 
 Pass a JSON object with `manifest` and `snapshot` on stdin:
 

@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/flaskbb-post-order.yml'
       - 'porting/flaskbb/app.aip'
+      - 'porting/flaskbb/seed/install.py'
+      - 'porting/flaskbb/tests/harness.mjs'
       - 'porting/flaskbb/tests/post-order-*.test.mjs'
       - 'porting/flaskbb/seed/*post_order*'
 

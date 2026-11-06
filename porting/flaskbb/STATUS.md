@@ -1,5 +1,13 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-06 PostOrder 활성 schema·native publish·신규 설치·additive migration 검증
+
+전용 [42133821900](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42133821900), 실제 checkout `cf9097577ed2887fddaaadffafb8971393175212`에서 세 실HTTP/PostgreSQL 시험이 통과했다. 활성 앱은 내부 `PostOrder`와 nullable/unique/역참조 검사 `Post.source_order`를 선언한다. 공개 입력·읽기에 순서를 노출하지 않고 `Post.publish`에서 생성·연결·기존 Forum projection을 같은 serializable 트랜잭션으로 처리한다. 같은 키 재전송은 한 번만 할당하고, 비소유자·미매핑 legacy 게시글이 있는 상태의 거부는 allocator와 행을 보존한다.
+
+최초 `b578edc` 실행은 실제 `post_order` 관계 부재로 RED였다. native publish는 `fec861e`에서 GREEN을 확보했고, 별도 설치 회귀 `08ca6d2`는 환영 게시글 mapping 누락으로 RED였다. 교정된 설치 seed는 새 welcome 행에 서버 identity를 사용한다. schema migration은 검토 digest를 요구하며 잘못된 digest를 거부하고, 기존 UUID·내용·사용자 행을 보존하며 기존 게시글의 원 ID를 추측하거나 backfill하지 않는다. 기존 UI 회귀용 신규 synthetic fixture만 명시한 생성 순서로 할당한다.
+
+원본 ID manifest의 실제 provenance/freshness, historical import executor·writer fence·high-water 적용, 마지막 글 후보/trigger/projection의 원본 동등성, 전체 F01–F17은 계속 미완료다. 기존 core PG 7회귀와 offline manifest 21건을 이 증거와 중복 실행하지 않았다.
+
 ## 2026-11-06 G-14 오류 계약·G-15 설정 갱신 Linux GREEN
 
 집중 CI [42131013863](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42131013863)는 실제 checkout `5cb487c358c3b88f982dd5e02c16cb817e26d703`에서 success다. PostgreSQL 즉시·지연 FK × apply/bundle/compose 6거부에서 `WIRE.REFERENCE_CONFLICT`와 효과 롤백·행 보존, 참조가 없는 정상 compose 삭제를 통과했다. commit_classification 18tests와 wire registry/생성 문서 9tests도 통과했다. 실제 HTTP의 바인딩 및 revoke된 principal은 `retry: never`로 확정 거부되며 바인딩·사용자는 보존된다. 바인딩 삭제·retention 동등성 정책은 변경하지 않았으므로 G-14 전체는 open이다.
