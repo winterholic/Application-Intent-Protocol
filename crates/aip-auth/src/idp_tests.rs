@@ -19,6 +19,7 @@ struct Idp {
     hits: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     failing: Arc<AtomicBool>,
+    delayed: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -34,7 +35,8 @@ impl Idp {
         let hits = Arc::new(AtomicUsize::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         let failing = Arc::new(AtomicBool::new(false));
-        let (shared, counter, flag, down) = (jwks.clone(), hits.clone(), stop.clone(), failing.clone());
+        let delayed = Arc::new(AtomicBool::new(false));
+        let (shared, counter, flag, down, slow) = (jwks.clone(), hits.clone(), stop.clone(), failing.clone(), delayed.clone());
         let thread = std::thread::spawn(move || {
             while let Ok((stream, _)) = listener.accept() {
                 if flag.load(Ordering::SeqCst) {
@@ -48,6 +50,9 @@ impl Idp {
                 let Ok(read) = tls.read(&mut request) else { continue };
                 let head = String::from_utf8_lossy(&request[..read]).into_owned();
                 let path = head.split_whitespace().nth(1).unwrap_or("/").to_owned();
+                if path == "/.well-known/openid-configuration" && slow.load(Ordering::SeqCst) {
+                    std::thread::sleep(REMOTE_TIMEOUT + Duration::from_millis(250));
+                }
                 let body = match path.as_str() {
                     "/.well-known/openid-configuration" => json!({
                         "issuer": ISSUER,
@@ -76,7 +81,7 @@ impl Idp {
                 let _ = tls.flush();
             }
         });
-        Self { port, jwks, hits, stop, failing, thread: Some(thread) }
+        Self { port, jwks, hits, stop, failing, delayed, thread: Some(thread) }
     }
 
     fn publish(&self, jwks: String) {
@@ -85,6 +90,10 @@ impl Idp {
 
     fn set_failing(&self, failing: bool) {
         self.failing.store(failing, Ordering::SeqCst);
+    }
+
+    fn set_delayed(&self, delayed: bool) {
+        self.delayed.store(delayed, Ordering::SeqCst);
     }
 
     fn fetches(&self) -> usize {
@@ -181,6 +190,62 @@ async fn discovery_document_yields_the_jwks_url_and_the_issuer_the_service_enfor
     let jwks_url = document["jwks_uri"].as_str().expect("jwks_uri");
     let auth = idp.authenticator(jwks_url).await;
     assert_eq!(auth.verify_token(&a.token()).await.expect("token verifies").subject, "user-1");
+}
+
+#[tokio::test]
+async fn readiness_discovers_exact_issuer_and_validates_the_signing_key_set() {
+    let a = SigningKey::new("readiness-key");
+    let idp = Idp::start(jwks(&[&a]));
+    let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
+    let result = oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.expect("readiness");
+    assert_eq!(result.key_count, 1);
+    assert_eq!(result.algorithms, vec!["RS256".to_owned()]);
+}
+
+#[tokio::test]
+async fn readiness_rejects_an_issuer_mismatch() {
+    let a = SigningKey::new("readiness-key");
+    let idp = Idp::start(jwks(&[&a]));
+    let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
+    assert_eq!(oidc_readiness_with_client("https://issuer.example/", &endpoint, &idp.client()).await, Err(OidcReadinessFailure { stage: "issuer" }));
+}
+
+#[tokio::test]
+async fn readiness_rejects_a_malformed_key_set() {
+    let idp = Idp::start(r#"{"keys":[{"kty":"RSA","kid":"broken","alg":"RS256","use":"sig","n":"!","e":"AQAB"}]}"#.into());
+    let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await, Err(OidcReadinessFailure { stage: "jwks" }));
+}
+
+#[tokio::test]
+async fn readiness_rejects_private_key_material_and_oversized_jwks() {
+    let idp = Idp::start(r#"{"keys":[{"kty":"RSA","kid":"private","alg":"RS256","use":"sig","n":"AQ","e":"AQAB","d":"not-output"}]}"#.into());
+    let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.err().expect("private material rejected").stage, "jwks");
+    idp.publish(" ".repeat(MAX_JWKS_BYTES + 1));
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.err().expect("oversized response rejected").stage, "jwks");
+}
+
+#[tokio::test]
+async fn readiness_rejects_a_jwks_http_error() {
+    let a = SigningKey::new("readiness-key");
+    let idp = Idp::start(jwks(&[&a]));
+    idp.set_failing(true);
+    let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await, Err(OidcReadinessFailure { stage: "jwks" }));
+}
+
+#[tokio::test]
+async fn readiness_times_out_and_rejects_untrusted_tls() {
+    let a = SigningKey::new("readiness-key");
+    let idp = Idp::start(jwks(&[&a]));
+    let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
+    idp.set_delayed(true);
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await, Err(OidcReadinessFailure { stage: "discovery" }));
+    idp.set_delayed(false);
+    let untrusted =
+        reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT).no_proxy().build().expect("untrusted client");
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &untrusted).await, Err(OidcReadinessFailure { stage: "discovery" }));
 }
 
 #[tokio::test]

@@ -21,6 +21,7 @@ const UNKNOWN_KID_REFRESH: Duration = Duration::from_secs(5);
 /// Oldest cached key set that may still verify tokens while the key endpoint is unreachable.
 const MAX_STALE_KEYS: Duration = Duration::from_secs(300);
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_DISCOVERY_BYTES: usize = 64 * 1024;
 const DB_TIMEOUT: Duration = Duration::from_secs(5);
 /// Principal lookups open their own connection. Without a bound, a flood of correctly signed tokens for unknown
 /// subjects (checked before any rate limit) opens one PostgreSQL connection per request until `max_connections`.
@@ -91,6 +92,107 @@ pub enum AuthError {
     Invalid,
     Expired,
     Unavailable,
+}
+
+/// Safe operational metadata returned after a read-only OIDC discovery and JWKS check.
+#[derive(Debug, PartialEq, Eq)]
+pub struct OidcReadiness {
+    pub key_count: usize,
+    pub algorithms: Vec<String>,
+}
+
+/// A bounded, read-only probe for the explicitly configured issuer and optional discovery URL.
+/// Failures expose only a fixed stage name, never a URL, body, key or credential.
+#[derive(Debug, PartialEq, Eq)]
+pub struct OidcReadinessFailure {
+    pub stage: &'static str,
+}
+
+pub async fn oidc_readiness(expected_issuer: &str, discovery_endpoint: Option<&str>) -> Result<OidcReadiness, OidcReadinessFailure> {
+    let issuer = validate_https_url(expected_issuer, "input")?;
+    let discovery_url = match discovery_endpoint {
+        Some(value) => validate_https_url(value, "input")?,
+        None => {
+            let mut base = issuer.clone();
+            let path = base.path().trim_end_matches('/');
+            base.set_path(&format!("{path}/.well-known/openid-configuration"));
+            base
+        }
+    };
+    let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT);
+    if let Some(ca_path) = std::env::var_os("SSL_CERT_FILE").or_else(|| std::env::var_os("AIP_AUTH_CA_PEM")) {
+        if let Ok(bytes) = std::fs::read(ca_path) {
+            if let Ok(certificate) = reqwest::Certificate::from_pem(&bytes) {
+                builder = builder.add_root_certificate(certificate);
+            }
+        }
+    }
+    let http = builder.build().map_err(|_| OidcReadinessFailure { stage: "discovery" })?;
+    oidc_readiness_with_client(expected_issuer, discovery_url.as_str(), &http).await
+}
+
+pub async fn oidc_readiness_with_client(
+    expected_issuer: &str,
+    discovery_endpoint: &str,
+    http: &reqwest::Client,
+) -> Result<OidcReadiness, OidcReadinessFailure> {
+    validate_https_url(expected_issuer, "input")?;
+    let discovery_url = validate_https_url(discovery_endpoint, "input")?;
+    let discovery_bytes = read_bounded_https(&discovery_url, http, MAX_DISCOVERY_BYTES, "discovery").await?;
+    let discovery: Value = serde_json::from_slice(&discovery_bytes).map_err(|_| OidcReadinessFailure { stage: "discovery" })?;
+    let issuer = discovery.get("issuer").and_then(Value::as_str).ok_or(OidcReadinessFailure { stage: "discovery" })?;
+    if issuer != expected_issuer {
+        return Err(OidcReadinessFailure { stage: "issuer" });
+    }
+    let jwks_uri = discovery.get("jwks_uri").and_then(Value::as_str).ok_or(OidcReadinessFailure { stage: "jwks_uri" })?;
+    let jwks_url = validate_https_url(jwks_uri, "jwks_uri")?;
+    let jwks = read_bounded_https(&jwks_url, http, MAX_JWKS_BYTES, "jwks").await?;
+    validate_public_jwks(&jwks)?;
+    let keys = parse_jwks(&jwks).map_err(|_| OidcReadinessFailure { stage: "jwks" })?;
+    Ok(OidcReadiness { key_count: keys.len(), algorithms: vec!["RS256".to_owned()] })
+}
+
+fn validate_public_jwks(bytes: &[u8]) -> Result<(), OidcReadinessFailure> {
+    let document: Value = serde_json::from_slice(bytes).map_err(|_| OidcReadinessFailure { stage: "jwks" })?;
+    let items = document
+        .get("keys")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty() && items.len() <= 32)
+        .ok_or(OidcReadinessFailure { stage: "jwks" })?;
+    const PRIVATE_FIELDS: [&str; 8] = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
+    if items.iter().any(|item| PRIVATE_FIELDS.iter().any(|field| item.get(*field).is_some())) {
+        return Err(OidcReadinessFailure { stage: "jwks" });
+    }
+    Ok(())
+}
+
+fn validate_https_url(value: &str, stage: &'static str) -> Result<reqwest::Url, OidcReadinessFailure> {
+    let url = reqwest::Url::parse(value).map_err(|_| OidcReadinessFailure { stage })?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(OidcReadinessFailure { stage });
+    }
+    Ok(url)
+}
+
+async fn read_bounded_https(url: &reqwest::Url, http: &reqwest::Client, limit: usize, stage: &'static str) -> Result<Vec<u8>, OidcReadinessFailure> {
+    let mut response = http.get(url.clone()).send().await.map_err(|_| OidcReadinessFailure { stage })?;
+    if !response.status().is_success() || response.content_length().is_some_and(|size| size > limit as u64) {
+        return Err(OidcReadinessFailure { stage });
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| OidcReadinessFailure { stage })? {
+        if body.len().saturating_add(chunk.len()) > limit {
+            return Err(OidcReadinessFailure { stage });
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
