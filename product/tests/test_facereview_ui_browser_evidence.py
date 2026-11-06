@@ -1253,6 +1253,7 @@ class BrowserEvidenceTests(unittest.TestCase):
 
     def test_admin_request_evidence_keeps_only_schema_names(self):
         self.assertEqual(admin_request_evidence("/read", {"query": {"aggregate": "User.totalCount", "input": {}, "filter": [{"field": "name", "op": "like", "value": "secret"}]}}), {"aggregate": "User.totalCount"})
+        self.assertEqual(admin_request_evidence("/read", {"query": {"aggregate": "Video.totalCount", "filter": [{"field": "category", "op": "eq", "value": "animal"}]}}), {"aggregate": "Video.totalCount", "category": "animal"})
         self.assertEqual(admin_request_evidence("/read", {"query": {"read": "VideoRequest", "select": ["id"], "filter": [{"field": "id", "op": "eq", "value": "v"}]}}), {"read": "VideoRequest"})
         self.assertEqual(admin_request_evidence("/extension", {"extension": "User.systemStatus", "input": {}}), {"extension": "User.systemStatus"})
         self.assertEqual(admin_request_evidence("/jobs/enqueue", {"operation": "approveVideoRequest", "key": "k", "input": {"youtube_title": "private title"}}), {"operation": "approveVideoRequest"})

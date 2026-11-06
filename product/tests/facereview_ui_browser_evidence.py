@@ -1041,6 +1041,12 @@ def admin_request_evidence(path: str, body: Any) -> dict[str, object]:
             aggregate_input = query.get("input")
             if isinstance(aggregate_input, dict) and query.get("aggregate") == "Video.categoryViews":
                 result["category"] = _schema_name(aggregate_input.get("category"))
+            elif query.get("aggregate") == "Video.totalCount" and isinstance(query.get("filter"), list):
+                for item in query["filter"]:
+                    if (isinstance(item, dict) and item.get("field") == "category"
+                            and item.get("op") == "eq"):
+                        result["category"] = _schema_name(item.get("value"))
+                        break
             elif isinstance(aggregate_input, dict) and query.get("aggregate") == "User.signupCount":
                 for key in ("from", "to"):
                     value = aggregate_input.get(key)

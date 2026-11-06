@@ -418,6 +418,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         "etc",
     ];
     let mut expected_category_views = serde_json::Map::new();
+    let mut expected_category_video_counts = serde_json::Map::new();
     for category in genres {
         let value: u64 = cell(&mut setup, &format!("SELECT COALESCE(SUM(view_count),0) FROM video WHERE is_deleted=0 AND category='{category}'"))
             .await
@@ -425,6 +426,9 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
             .parse()
             .unwrap();
         expected_category_views.insert(category.to_owned(), json!(value));
+        let count: u64 =
+            cell(&mut setup, &format!("SELECT COUNT(*) FROM video WHERE is_deleted=0 AND category='{category}'")).await.unwrap().parse().unwrap();
+        expected_category_video_counts.insert(category.to_owned(), json!(count));
     }
     let week_points = expected_signup_buckets["7d"].as_array().unwrap();
     let dashboard_expected = json!({
@@ -442,6 +446,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
             "dominant_emotion_video_counts": [],
         },
         "category_views": expected_category_views,
+        "category_video_counts": expected_category_video_counts,
     });
     let metric_cohort_before = cell(&mut setup, "SELECT SHA2(GROUP_CONCAT(CONCAT_WS('|',user_id,DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),role,is_deleted) ORDER BY user_id SEPARATOR '\n'),256) FROM user WHERE user_id LIKE '88888888-%'")
         .await.expect("cohort fingerprint");

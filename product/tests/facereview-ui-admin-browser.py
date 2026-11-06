@@ -104,6 +104,7 @@ def main() -> int:
     expected_trends = json.loads(os.environ["AIP_FACEREVIEW_EXPECTED_SIGNUP_BUCKETS"])
     dashboard_expected = json.loads(os.environ["AIP_FACEREVIEW_EXPECTED_DASHBOARD"])
     dashboard_aggregates: dict[str, list[int]] = {}
+    dashboard_category_video_counts: dict[str, int] = {}
     dashboard_category_views: dict[str, int] = {}
     dashboard_extensions: dict[str, object] = {}
     fixture_points = expected_trends["7d"]
@@ -217,7 +218,9 @@ def main() -> int:
                     if row.get("aggregate") and row.get("aggregate") != "User.signupCount":
                         count = aggregate_count(envelope)
                         if count is not None:
-                            if row.get("aggregate") == "Video.categoryViews" and isinstance(row.get("category"), str):
+                            if row.get("aggregate") == "Video.totalCount" and isinstance(row.get("category"), str):
+                                dashboard_category_video_counts[str(row["category"])] = count
+                            elif row.get("aggregate") == "Video.categoryViews" and isinstance(row.get("category"), str):
                                 dashboard_category_views[str(row["category"])] = count
                             else:
                                 dashboard_aggregates.setdefault(str(row["aggregate"]), []).append(count)
@@ -394,6 +397,7 @@ def main() -> int:
                 checks["dashboard_business_metrics"] = {
                     "expected": dashboard_expected,
                     "actual_aggregates": dashboard_aggregates,
+                    "actual_category_video_counts": dashboard_category_video_counts,
                     "actual_category_views": dashboard_category_views,
                     "actual_extensions": dashboard_extensions,
                 }
@@ -403,10 +407,14 @@ def main() -> int:
                     raise RuntimeError("dashboard request pipeline differs from direct MySQL fixture query")
                 if dashboard_extensions.get("Video.contentHealth") != dashboard_expected.get("content_health"):
                     raise RuntimeError("dashboard content health differs from the isolated Mongo fixture oracle")
-                if dashboard_category_views != dashboard_expected.get("category_views"):
-                    raise RuntimeError("dashboard per-category view counts differ from direct MySQL fixture queries")
-                if len(dashboard_category_views) != 16:
-                    raise RuntimeError(f"dashboard requested {len(dashboard_category_views)} of 16 genre totals")
+                if dashboard_category_video_counts != dashboard_expected.get("category_video_counts"):
+                    raise RuntimeError("dashboard per-category visible-video counts differ from direct MySQL fixture queries")
+                visible_categories = {category for category, count in dashboard_category_video_counts.items() if count > 0}
+                expected_visible_views = {category: count for category, count in dashboard_expected["category_views"].items() if category in visible_categories}
+                if dashboard_category_views != expected_visible_views:
+                    raise RuntimeError("dashboard visible per-category view counts differ from direct MySQL fixture queries")
+                if len(dashboard_category_video_counts) != 16:
+                    raise RuntimeError(f"dashboard requested {len(dashboard_category_video_counts)} of 16 genre visibility totals")
                 expect(page.locator(".kpi-stat", has_text="주간 활성 시청자").locator(".kpi-stat__value")).to_have_text(str(dashboard_expected["weekly_active_users"]))
                 expect(page.locator(".kpi-stat", has_text="오늘 신규가입").locator(".kpi-stat__value")).to_have_text(str(dashboard_expected["today_signups"]))
                 expect(page.locator(".kpi-stat", has_text="영상요청 대기").locator(".kpi-stat__value")).to_have_text(str(dashboard_expected["video_request_pipeline"]["pending_count"]))
