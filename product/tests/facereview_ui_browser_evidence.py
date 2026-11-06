@@ -24,6 +24,30 @@ def wait_for_api_completion(page, started, finished, pending, failures, timeout_
         page.wait_for_timeout(50)
 
 
+def api_completion_diagnostics(started, finished, pending, failures, request_phases):
+    """Describe unfinished requests without URLs, identifiers, bodies or errors."""
+    phases = {"startup", "login", "tutorial_steps", "tutorial_action", "reload_main",
+              "new_email_branch", "existing_email_branch", "signup"}
+    unresolved = []
+    for request in started - finished:
+        try:
+            path = urlsplit(request.url).path
+        except (AttributeError, ValueError):
+            path = "other"
+        method = getattr(request, "method", None)
+        phase = request_phases.get(request)
+        unresolved.append({
+            "path": path if path in SAFE_AUTH_PATHS | {"/auth/signup"} else "other",
+            "method": method if method in {"GET", "POST", "PATCH", "DELETE"} else "other",
+            "started_phase": phase if phase in phases else "other",
+            "response_pending": request in pending,
+        })
+    unresolved.sort(key=lambda row: (row["path"], row["method"], row["started_phase"], row["response_pending"]))
+    return {"requests": len(started), "finished": len(finished), "failed": len(failures),
+            "unfinished": len(started - finished), "unresolved": unresolved[:50],
+            "unresolved_truncated": len(unresolved) > 50}
+
+
 LIST_EXTENSIONS = {
     "Video.homeSearch",
     "Video.homeVideoAll",

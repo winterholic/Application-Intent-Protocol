@@ -21,6 +21,7 @@ from playwright.sync_api import expect, sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
     body_failure_reason,
+    api_completion_diagnostics,
     wait_for_api_completion,
     member_signup_evidence,
     member_tutorial_evidence,
@@ -55,6 +56,7 @@ def main() -> int:
     rows = []
     pending = {}
     started = set()
+    request_phases = {}
     finished = set()
     failures = []
     errors = []
@@ -68,6 +70,11 @@ def main() -> int:
     page = None
     status = 1
     api_port = urlsplit(args.api).port
+
+    def capture_start(request):
+        if urlsplit(request.url).port == api_port:
+            started.add(request)
+            request_phases[request] = stage
 
     def capture(response):
         if urlsplit(response.url).port != api_port:
@@ -134,7 +141,7 @@ def main() -> int:
                 page = browser.new_page(viewport={"width": 1280, "height": 900})
                 page.set_default_timeout(20000)
                 page.on("pageerror", lambda error: errors.append(type(error).__name__))
-                page.on("request", lambda request: started.add(request) if urlsplit(request.url).port == api_port else None)
+                page.on("request", capture_start)
                 page.on("response", capture)
                 page.on("requestfinished", capture_body)
                 page.on("requestfailed", lambda request: failures.append({"path": urlsplit(request.url).path}) if urlsplit(request.url).port == api_port else None)
@@ -251,7 +258,7 @@ def main() -> int:
                 stage = "completed"
                 status = 0
             except Exception as error:
-                failure_type = safe_browser_failure_type(type(error).__name__)
+                failure_type = safe_browser_failure_type(error)
                 failure_line = next((frame.lineno for frame in reversed(traceback.extract_tb(error.__traceback__)) if Path(frame.filename).resolve() == Path(__file__).resolve()), None)
                 if page is not None:
                     failure_path = urlsplit(page.url).path
@@ -264,7 +271,7 @@ def main() -> int:
             finally:
                 browser.close()
     except Exception as error:
-        failure_type = safe_browser_failure_type(type(error).__name__)
+        failure_type = safe_browser_failure_type(error)
         failure_line = next((frame.lineno for frame in reversed(traceback.extract_tb(error.__traceback__)) if Path(frame.filename).resolve() == Path(__file__).resolve()), None)
         status = 1
     finally:
@@ -277,8 +284,7 @@ def main() -> int:
                 server.wait(timeout=5)
         report = {"ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3", "journey_stage": stage,
                   "member_signup" if args.phase == "signup" else "member_tutorial": evidence, "ui": ui, "api_requests": rows, "failure_type": failure_type, "failure_line": failure_line, "failure_path": failure_path,
-                  "page_error_count": len(errors), "api_lifecycle": {"requests": len(started), "finished": len(finished),
-                  "failed": len(failures), "unfinished": len(started - finished)}, "screenshots": screenshots,
+                  "page_error_count": len(errors), "api_lifecycle": api_completion_diagnostics(started, finished, pending, failures, request_phases), "screenshots": screenshots,
                   "credentials_recorded": False, "browser_api_mocks": False}
         (output / f"{args.phase}-browser-result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         print(json.dumps({"journey": args.phase, "stage": stage, "status": status}))

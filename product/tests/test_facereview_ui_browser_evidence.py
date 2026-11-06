@@ -40,6 +40,41 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_pending_api_diagnostics_keep_only_allowlisted_paths_and_phases(self):
+        from product.tests import facereview_ui_browser_evidence as evidence_module
+
+        class Request:
+            def __init__(self, url, method):
+                self.url, self.method = url, method
+
+        missing = Request('http://api.test/extension?secret=private-fixture', 'POST')
+        body = Request('http://api.test/read', 'POST')
+        other = Request('http://api.test/private-fixture', 'private-fixture')
+        done = Request('http://api.test/auth/login', 'POST')
+        result = evidence_module.api_completion_diagnostics(
+            {missing, body, other, done}, {done}, {body: object()}, [],
+            {missing: 'tutorial_action', body: 'reload_main', other: 'private-fixture'})
+        self.assertEqual([result[k] for k in ('requests', 'finished', 'failed', 'unfinished')], [4, 1, 0, 3])
+        self.assertEqual(result['unresolved'], [
+            {'path': '/extension', 'method': 'POST', 'started_phase': 'tutorial_action', 'response_pending': False},
+            {'path': '/read', 'method': 'POST', 'started_phase': 'reload_main', 'response_pending': True},
+            {'path': 'other', 'method': 'other', 'started_phase': 'other', 'response_pending': False}])
+        self.assertNotIn('private-fixture', json.dumps(result))
+
+    def test_live_account_journeys_classify_the_actual_exception_without_private_text(self):
+        error = TimeoutError("private fixture detail must not enter safe evidence")
+        for journey in ('account', 'email', 'password', 'withdraw'):
+            source = Path(__file__).with_name(f'facereview-ui-{journey}-browser.py')
+            calls = [node for node in ast.walk(ast.parse(source.read_text()))
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                     and node.func.id == 'safe_browser_failure_type']
+            self.assertEqual(len(calls), 2, f'{journey}: both exception handlers must be checked')
+            for call in calls:
+                with self.subTest(journey=journey, line=call.lineno):
+                    classified = eval(compile(ast.Expression(call), str(source), 'eval'),
+                                      {'safe_browser_failure_type': safe_browser_failure_type, 'error': error})
+                    self.assertEqual(classified, 'TimeoutError')
+
     def test_api_completion_waits_for_requests_without_responses_after_cached_idle(self):
         started, finished = {'old', 'new'}, {'old'}
         pending, failures = {}, []
