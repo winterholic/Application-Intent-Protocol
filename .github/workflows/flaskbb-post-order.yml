@@ -10,6 +10,7 @@ on:
       - 'porting/flaskbb/tests/harness.mjs'
       - 'porting/flaskbb/tests/post-order-*.test.mjs'
       - 'porting/flaskbb/seed/*post_order*'
+      - 'porting/flaskbb/tests/test_post_order_import.py'
 
 permissions:
   contents: read
@@ -56,5 +57,7 @@ jobs:
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
       - name: Build the product CLI
         run: cargo build -p aip-cli --locked
+      - name: Verify import approval and SQL emission
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s porting/flaskbb/tests -p test_post_order_import.py -v
       - name: Verify active FlaskBB native ordering and the legacy allocation fence
-        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs
+        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs
