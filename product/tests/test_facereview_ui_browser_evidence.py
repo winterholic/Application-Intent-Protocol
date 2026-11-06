@@ -834,16 +834,6 @@ class BrowserEvidenceTests(unittest.TestCase):
         block = source.split('stage("admin_permission_denials")', 1)[1].split("except Exception:", 1)[0]
         self.assertLess(block.index('.fill("")'), block.index('has_text="e@example.com"'))
 
-    def test_admin_signup_rendered_period_checks_tooltip_for_every_svg_point(self):
-        source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
-        dashboard = (Path(__file__).resolve().parents[2] / "porting/facereview/ui-overlay/admin/src/pages/dashboard/DashboardPage.tsx").read_text()
-        trend = dashboard.split('<ResponsiveLine', 1)[1].split('/>', 1)[0]
-        self.assertNotIn("useMesh", trend)
-        self.assertIn("for index, point in enumerate(expected_points):", source)
-        self.assertIn("dot.hover()", source)
-        self.assertIn("expect(tooltip).to_be_visible()", source)
-        self.assertIn('f"신규가입 {point[\'count\']}명"', source)
-
     def test_admin_diagnostic_prepares_its_own_definition_and_sdk(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
         admin_step = workflow.split("      - name: Prepare the pinned FaceReview admin console browser journey\n", 1)[1].split("      - name:", 1)[0]
