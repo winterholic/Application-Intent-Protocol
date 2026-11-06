@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-06 Topic delete 조건부 projection·hidden 후보 검증
+
+집중 [42154597803](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42154597803), 실제 checkout `92a301628ecf561f7b66f86a5b5489930dd6ffc2`에서 컴파일러 4건·생성 문서 21건·선택 대상 PostgreSQL 1건·앱 HTTP/PG 23건이 통과했다. Topic.delete는 Forum 포인터가 없거나 삭제 Topic의 마지막 글을 가리킬 때만 재계산한다. 후보는 actor의 hidden Post 조회 권한을 따르며 hidden Topic 자체를 추가로 제외하지 않는다. 이미 현재 포인터가 최대 날짜 후보 집합에 있으면 projection을 보존한다. 동시각 후보의 특정 UUID 승자는 원본이 정하지 않으므로 후보 집합과 선택 행의 모든 projection 필드 일치로 검증했다. non-current·hidden-topic·hidden-post·member-hidden-topic·member-hidden-post·empty-pointer·same-pointer·only·tie 9경계에 인가 거부·재전송·무관 행 보존을 포함한다. 수정 전 7경계 중 4건은 실제 semantic RED였다.
+
+historical import fixture가 게시 Topic의 필수 날짜를 빠뜨려 main `5f39903`의 집중 실행 `42153402305`에서 실패했다. 정상 날짜를 seed에 추가한 뒤 위 92 실행에서 import를 포함한 전체 묶음이 통과했으며 제품 날짜 검사는 유지했다. 중간 881 후보의 `DEF.THIS_IN_EXISTS`는 허용된 내부 필드 표현으로 교정했다. 기존 tombstone 저장 정책과 원본 물리 삭제·retention 차이는 유지하며, Post.hide/unhide/delete의 전체 source projection 동등성·원본 관계 조회의 미정 순서·F01–F17 전체 완료를 주장하지 않는다.
+
 ## 2026-11-06 Topic hide 및 main 전체 회귀 검증
 
 집중 [42141043631](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42141043631), 실제 checkout `a695d40ed32be986f395288ffce7c21b44f6977f`에서 컴파일러 4건, 생성 참조 문서 21건, PostgreSQL 선택 대상 1건, 앱 HTTP/PG 13건이 통과했다. Topic.hide의 top/non-top/only/null-self/null-other 5경계는 수정 전 실제 RED에서 GREEN으로 바뀌었다. 숨기기 전 Topic 순서와 내부 PostOrder를 사용하고, 최신이 아닌 Topic을 숨길 때 Forum 전체 projection을 보존하며, 첫 글의 숨김 메타데이터를 같은 트랜잭션에서 맞춘다. UUID나 다른 namespace의 참조 크기 비교는 거부한다. 마지막 test-only 교정은 새 비교 fixture의 필수 actor 선언과 정확한 타입 오류 단언이다.
