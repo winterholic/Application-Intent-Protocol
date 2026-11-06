@@ -54,6 +54,14 @@ LIST_EXTENSIONS = {
     "Video.homeCategory",
     "Video.homePersonalized",
 }
+# These requests use other response shapes. Keep request naming separate from
+# the existing list-response summaries so metadata cannot imply list coverage.
+MEMBER_READ_EXTENSIONS = LIST_EXTENSIONS | {
+    "Video.watchDetail",
+    "User.myRecentVideos",
+    "Video.watchRecommended",
+    "Video.homeBookmark",
+}
 EMOTIONS = {"all", "happy", "sad", "neutral", "surprise", "angry"}
 READ_FIELDS = {
     "Video": {"id", "youtube_url", "title", "channel_name", "category", "duration", "view_count", "is_deleted"},
@@ -844,7 +852,7 @@ def extension_request_evidence(body: Any) -> dict[str, object]:
     if not isinstance(body, dict):
         return {}
     name = body.get("extension", body.get("name"))
-    if name not in LIST_EXTENSIONS:
+    if not isinstance(name, str) or name not in MEMBER_READ_EXTENSIONS:
         return {}
     inputs = body.get("input")
     if not isinstance(inputs, dict):

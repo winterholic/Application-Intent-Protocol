@@ -40,6 +40,29 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_member_read_names_cover_detail_recent_related_and_bookmark_without_values(self):
+        for name in ('Video.watchDetail', 'User.myRecentVideos',
+                     'Video.watchRecommended', 'Video.homeBookmark'):
+            with self.subTest(extension=name):
+                body = {'extension': name, 'input': {
+                    'video_id': 'private-fixture', 'user': 'private-user',
+                    'page': 1, 'emotion': 'all', 'token': 'private-token'},
+                    'token': 'private-token'}
+                self.assertEqual(extension_request_evidence(body),
+                                 {'extension': name, 'page': 1, 'emotion': 'all'})
+                self.assertNotIn('private-', json.dumps(extension_request_evidence(body)))
+
+    def test_unknown_or_malformed_member_extension_names_are_not_recorded(self):
+        for name in ('private-fixture', 'Video.homeBookmark.private', None, 1, True, [], {}):
+            with self.subTest(extension=name):
+                self.assertEqual(extension_request_evidence({'extension': name}), {})
+
+    def test_new_member_request_names_do_not_claim_the_list_response_shape(self):
+        for name in ('Video.watchDetail', 'User.myRecentVideos',
+                     'Video.watchRecommended', 'Video.homeBookmark'):
+            self.assertEqual(extension_response_evidence(
+                name, {'ok': True, 'output': {'videos': '[]'}}, VIDEO_ID), {})
+
     def test_pending_api_diagnostics_keep_only_allowlisted_paths_and_phases(self):
         from product.tests import facereview_ui_browser_evidence as evidence_module
 
