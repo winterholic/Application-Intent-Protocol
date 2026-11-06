@@ -392,7 +392,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
     .parse()
     .unwrap();
     let expected_pending_count: u64 = cell(&mut setup, "SELECT COUNT(*) FROM video_request WHERE status='PENDING'").await.unwrap().parse().unwrap();
-    let expected_avg_minutes: Option<String> = setup
+    let expected_avg_minutes: Option<Option<String>> = setup
         .query_first(
             "SELECT CAST(ROUND(AVG(TIMESTAMPDIFF(MINUTE, created_at, updated_at)), 1) AS CHAR) FROM video_request \
          WHERE status IN ('ACCEPTED','REJECTED') AND updated_at >= UTC_TIMESTAMP() - INTERVAL 30 DAY",
@@ -434,7 +434,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         "today_signups": week_points.last().unwrap()["count"],
         "video_request_pipeline": {
             "pending_count": expected_pending_count,
-            "avg_processing_minutes": expected_avg_minutes.map(|v| v.parse::<f64>().unwrap()),
+            "avg_processing_minutes": expected_avg_minutes.flatten().map(|v| v.parse::<f64>().unwrap()),
         },
         "content_health": {
             "avg_completion_rate": 0.0,
