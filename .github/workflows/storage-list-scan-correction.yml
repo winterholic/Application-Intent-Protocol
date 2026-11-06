@@ -1,6 +1,8 @@
 name: Storage list-scan correction evidence
 
 on:
+  push:
+    branches: [rescue/ops-20261106]
   workflow_dispatch:
 
 permissions:
