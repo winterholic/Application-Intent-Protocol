@@ -54,6 +54,14 @@ LIST_EXTENSIONS = {
     "Video.homeCategory",
     "Video.homePersonalized",
 }
+# These requests use other response shapes. Keep request naming separate from
+# the existing list-response summaries so metadata cannot imply list coverage.
+MEMBER_READ_EXTENSIONS = LIST_EXTENSIONS | {
+    "Video.watchDetail",
+    "User.myRecentVideos",
+    "Video.watchRecommended",
+    "Video.homeBookmark",
+}
 EMOTIONS = {"all", "happy", "sad", "neutral", "surprise", "angry"}
 READ_FIELDS = {
     "Video": {"id", "youtube_url", "title", "channel_name", "category", "duration", "view_count", "is_deleted"},
@@ -839,12 +847,43 @@ def member_search_evidence(requests: list[dict[str, object]], empty: bool, rende
             "verified": bool(accepted and matches and rendered is True)}
 
 
+def bookmark_listing_request_matches(body: Any) -> bool:
+    if not isinstance(body, dict) or body.get('extension') != 'Video.homeBookmark':
+        return False
+    inputs = body.get('input')
+    return (isinstance(inputs, dict) and set(inputs) == {'page', 'size', 'emotion'}
+            and type(inputs.get('page')) is int and inputs['page'] == 1
+            and type(inputs.get('size')) is int and inputs['size'] == 20
+            and inputs.get('emotion') == 'all')
+
+
+def bookmark_listing_response_evidence(payload: Any, fixture_video_id: str) -> dict[str, object]:
+    output = payload.get('output') if isinstance(payload, dict) else None
+    videos = _list(output.get('videos')) if isinstance(output, dict) else None
+    return {'response_list_length': len(videos) if videos is not None else None,
+            'contains_fixture_video': _contains_video(videos or [], fixture_video_id)}
+
+
+def bookmark_listing_evidence(api_rows: list[dict[str, object]], empty: bool, rendered: bool) -> dict[str, object]:
+    rows = [row for row in api_rows if row.get('path') == '/extension'
+            and (row.get('extension_request') or {}).get('extension') == 'Video.homeBookmark']
+    accepted = (len(rows) == 1 and type(rows[0].get('status')) is int and rows[0]['status'] == 200
+                and all(rows[0].get(key) is True for key in
+                        ('body_captured', 'ok', 'bookmark_listing_input_matches', 'contract_matches_runtime')))
+    matches = (len(rows) == 1 and type(rows[0].get('response_list_length')) is int
+               and rows[0]['response_list_length'] == (0 if empty else 1)
+               and rows[0].get('contains_fixture_video') is (not empty))
+    return {'response_count': len(rows), 'expected_empty': empty, 'server_accepted': bool(accepted),
+            'response_matches_fixture': matches, 'render_matches': rendered,
+            'verified': bool(accepted and matches and rendered is True)}
+
+
 def extension_request_evidence(body: Any) -> dict[str, object]:
     """Return only the allowlisted extension name and page/emotion inputs."""
     if not isinstance(body, dict):
         return {}
     name = body.get("extension", body.get("name"))
-    if name not in LIST_EXTENSIONS:
+    if not isinstance(name, str) or name not in MEMBER_READ_EXTENSIONS:
         return {}
     inputs = body.get("input")
     if not isinstance(inputs, dict):
