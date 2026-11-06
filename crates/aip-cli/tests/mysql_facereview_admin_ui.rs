@@ -442,7 +442,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         "category_views": expected_category_views,
     });
     let metric_cohort_before = cell(&mut setup, "SELECT SHA2(GROUP_CONCAT(CONCAT_WS('|',user_id,DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),role,is_deleted) ORDER BY user_id SEPARATOR '\n'),256) FROM user WHERE user_id LIKE '88888888-%'")
-        .await.unwrap().expect("cohort fingerprint");
+        .await.expect("cohort fingerprint");
     let evidence_dir = Path::new(&std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("run-owned browser evidence directory"));
     std::fs::create_dir_all(evidence_dir).unwrap();
     let source_sha = std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local-unset".to_owned());
@@ -822,7 +822,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         "reissuing the SUPER_ADMIN's access token left the account as it was"
     );
     let metric_cohort_after = cell(&mut setup, "SELECT SHA2(GROUP_CONCAT(CONCAT_WS('|',user_id,DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),role,is_deleted) ORDER BY user_id SEPARATOR '\n'),256) FROM user WHERE user_id LIKE '88888888-%'")
-        .await.unwrap().expect("cohort fingerprint after UI");
+        .await.expect("cohort fingerprint after UI");
     assert_eq!(metric_cohort_after, metric_cohort_before, "unrelated larger dashboard cohort was preserved by all console writes");
     assert_eq!(cell(&mut setup, "SELECT COUNT(*) FROM user WHERE user_id LIKE '88888888-%'").await.as_deref(), Some("36"));
     assert_eq!(direct_signup_trends(&mut setup).await, expected_signup_buckets, "dashboard fixture signup rows stayed unchanged");
