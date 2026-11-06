@@ -13,6 +13,7 @@ use aip_execution::{
     write_sealer::StoreSealer,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{path::PathBuf, sync::Arc};
 use tokio_postgres::Client;
 
@@ -30,7 +31,7 @@ impl std::fmt::Display for Error {
             Self::InvalidConfig(msg) => write!(f, "설정 오류: {msg}"),
             Self::Crypto(msg) => write!(f, "암호화 오류: {msg}"),
             Self::Database(msg) => write!(f, "데이터베이스 오류: {msg}"),
-            Self::OperationalGateClosed => write!(f, "운영 rekey 차단: 전수 인벤토리 검증이 제품 경로에 연결되지 않음"),
+            Self::OperationalGateClosed => write!(f, "운영 rekey 차단: 전수 인벤토리 증명은 연결됐지만 operational rekey gate가 닫혀 있음"),
         }
     }
 }
@@ -135,6 +136,13 @@ impl KekConfig {
     }
 }
 
+/// A declaration-derived, PostgreSQL-checked inventory. Construction is private to this module so
+/// callers cannot mark an arbitrary target slice as complete.
+pub struct VerifiedRekeyInventory {
+    pub scope: Scope,
+    pub targets: Vec<RekeyTarget>,
+}
+
 /// Binds `StoreSealer` and `StoreOpener` for a deployment schema using the loaded provider.
 pub fn bind_sealer_and_opener(store: DekStore, provider: LocalProvider, budget_client: Client) -> (StoreSealer, StoreOpener) {
     let provider = Arc::new(provider);
@@ -143,8 +151,7 @@ pub fn bind_sealer_and_opener(store: DekStore, provider: LocalProvider, budget_c
     (sealer, opener)
 }
 
-/// Whether authoritative deployment-schema inventory has been verified.
-/// This remains closed until the definition metadata equivalence engine is integrated.
+/// Operational rekey and activation remain closed after inventory-proof implementation.
 pub(crate) fn rekey_operational_inventory_verified(_schema: &str, _options: &RekeyOptions) -> bool {
     false
 }
@@ -155,10 +162,12 @@ pub(crate) fn rekey_operational_inventory_verified(_schema: &str, _options: &Rek
 pub struct RekeyOptions {
     pub scope_kind: String,
     pub scope_id: String,
+    /// For `ref` scope, the declared resource referenced by the encrypted fields.
+    #[serde(default)]
+    pub scope_resource: Option<String>,
     pub holder_id: String,
     pub targets: Vec<RekeyTargetSpec>,
-    /// Explicit assertion/proof of full inventory coverage across the scope.
-    /// Partial rekeying must never retire the scope's readable DEK.
+    /// Legacy caller assertion retained for wire compatibility; it is never used as proof.
     #[serde(default)]
     pub inventory_complete: bool,
 }
@@ -174,7 +183,8 @@ pub struct RekeyTargetSpec {
 }
 
 impl RekeyOptions {
-    /// Validates rekey parameters before any database connections or locks are acquired.
+    /// Validates the caller's selector syntax. Completeness is established only by
+    /// [`verify_rekey_inventory`] against deployment facts and PostgreSQL metadata.
     pub fn validate(&self) -> Result<Scope, Error> {
         if self.holder_id.trim().is_empty() {
             return Err(Error::InvalidConfig("holder_id 누락".into()));
@@ -194,6 +204,9 @@ impl RekeyOptions {
         }
         let scope = match self.scope_kind.as_str() {
             "service" => {
+                if self.scope_resource.is_some() {
+                    return Err(Error::InvalidConfig("service scope에는 scope_resource를 지정할 수 없음".into()));
+                }
                 if !self.scope_id.is_empty() && self.scope_id != "global" {
                     return Err(Error::InvalidConfig("service scope_id는 비어 있거나 'global'이어야 함".into()));
                 }
@@ -203,28 +216,188 @@ impl RekeyOptions {
                 if self.scope_id.trim().is_empty() {
                     return Err(Error::InvalidConfig("ref scope_id 누락".into()));
                 }
-                Scope::reference(&self.targets[0].resource, &self.scope_id).map_err(|e| Error::InvalidConfig(format!("ref scope 오류: {e:?}")))?
+                let target = self
+                    .scope_resource
+                    .as_deref()
+                    .filter(|target| !target.trim().is_empty())
+                    .ok_or_else(|| Error::InvalidConfig("ref scope의 선언 대상 scope_resource 누락".into()))?;
+                Scope::reference(target, &self.scope_id).map_err(|e| Error::InvalidConfig(format!("ref scope 오류: {e:?}")))?
             }
             "owner" => {
-                if self.scope_id.trim().is_empty() {
-                    return Err(Error::InvalidConfig("owner scope_id 누락".into()));
-                }
-                Scope::owner(&self.targets[0].resource, &self.scope_id).map_err(|e| Error::InvalidConfig(format!("owner scope 오류: {e:?}")))?
+                return Err(Error::InvalidConfig("owner scope rekey 인벤토리는 현재 지원하지 않음".into()));
             }
             _ => return Err(Error::InvalidConfig(format!("알 수 없는 scope_kind: {}", self.scope_kind))),
         };
         Ok(scope)
     }
+}
 
-    /// Verifies that the targets represent a verified complete inventory before allowing rekey retirement.
-    pub fn assert_complete_inventory(&self) -> Result<(), Error> {
-        if !self.inventory_complete {
-            return Err(Error::InvalidConfig(
-                "신뢰할 수 있는 전체 대상 인벤토리 보증(inventory_complete) 누락: 부분 재암호화 후 DEK 전체 폐기를 방지하기 위해 거부함".into(),
-            ));
-        }
-        Ok(())
+/// Derives every encrypted target for the selected declaration scope from the deployment's
+/// persisted normalized facts, then proves the exact target mapping against PostgreSQL catalogs.
+/// Caller targets are compared as an assertion and can neither add nor omit inventory entries.
+pub async fn verify_rekey_inventory(db: &Client, schema: &str, options: &RekeyOptions) -> Result<VerifiedRekeyInventory, Error> {
+    let requested_scope = options.validate()?;
+    aip_migrate::configure_schema(schema).map_err(|_| Error::InvalidConfig("deployment schema 이름이 유효하지 않음".into()))?;
+    let meta_table = format!("\"{schema}\".\"aip_migrate_meta\"");
+    let row = db
+        .query_opt(&format!("SELECT facts, facts_digest FROM {meta_table} WHERE singleton IS TRUE"), &[])
+        .await
+        .map_err(|_| Error::Database(format!("deployment metadata {schema}.aip_migrate_meta 조회 실패")))?
+        .ok_or_else(|| Error::Database(format!("deployment metadata {schema}.aip_migrate_meta 누락")))?;
+    let facts: Value = row.try_get(0).map_err(|_| Error::Database("deployment facts 형식 오류".into()))?;
+    let recorded_digest: String = row.try_get(1).map_err(|_| Error::Database("deployment facts digest 누락".into()))?;
+    if spike_v1_fixture::digest(&facts) != recorded_digest {
+        return Err(Error::Database("deployment facts digest 불일치".into()));
     }
+
+    let declared = aip_migrate::adopt::encrypted_columns(schema, &facts).map_err(|error| {
+        Error::InvalidConfig(format!("정의 metadata encrypted inventory 오류: {}", error["message"].as_str().unwrap_or("잘못된 정의")))
+    })?;
+    let selected = match options.scope_kind.as_str() {
+        "service" => declared.into_iter().filter(|column| matches!(&column.scope, aip_migrate::adopt::ScopeSpec::Service)).collect::<Vec<_>>(),
+        "ref" => {
+            let scope_resource = options.scope_resource.as_deref().expect("validated ref scope_resource");
+            declared
+                .into_iter()
+                .filter(|column| matches!(&column.scope, aip_migrate::adopt::ScopeSpec::Ref { target, .. } if target == scope_resource))
+                .collect::<Vec<_>>()
+        }
+        _ => unreachable!("validate rejects unsupported scope kinds"),
+    };
+    if selected.is_empty() {
+        return Err(Error::InvalidConfig("선택한 scope의 선언 encrypted field inventory가 비어 있음".into()));
+    }
+
+    let mut derived = Vec::with_capacity(selected.len());
+    for column in &selected {
+        let (table_schema, table) = column.table.split_once('.').ok_or_else(|| Error::InvalidConfig("선언 table 식별자 오류".into()))?;
+        if table_schema != schema {
+            return Err(Error::InvalidConfig("선언 encrypted table의 schema 불일치".into()));
+        }
+        let id_type = column.id_kind;
+        require_pg_column(db, schema, table, "id", id_type, true, &format!("{}.id", column.resource)).await?;
+        let field_type = facts["resources"][&column.resource]["fields"][&column.field]["ty"]
+            .as_str()
+            .ok_or_else(|| Error::InvalidConfig(format!("{}.{} 선언 타입 누락", column.resource, column.field)))?;
+        require_pg_column(
+            db,
+            schema,
+            table,
+            &column.column,
+            "text",
+            !field_type.ends_with('?'),
+            &format!("{}.{} encrypted", column.resource, column.field),
+        )
+        .await?;
+
+        let scope = match &column.scope {
+            aip_migrate::adopt::ScopeSpec::Service => {
+                if options.scope_kind != "service" {
+                    return Err(Error::InvalidConfig("caller scope와 선언 service scope 불일치".into()));
+                }
+                Scope::service()
+            }
+            aip_migrate::adopt::ScopeSpec::Ref { target, column: scope_column } => {
+                if options.scope_kind != "ref" || options.scope_resource.as_deref() != Some(target.as_str()) {
+                    return Err(Error::InvalidConfig(format!("caller scope와 선언 ref scope 불일치: {target}")));
+                }
+                let target_id_type = facts["resources"][target]["idKind"].as_str().unwrap_or("bigint");
+                let target_pg_type = if target_id_type == "uuid" { "uuid" } else { "int8" };
+                require_pg_column(db, schema, table, scope_column, target_pg_type, true, &format!("{}.{} scope", column.resource, target)).await?;
+                require_pg_reference(db, schema, table, scope_column, &spike_v2_read::sqlgen::snake(target)).await?;
+                Scope::reference(target, &options.scope_id).map_err(|error| Error::InvalidConfig(format!("선언 ref scope 오류: {error:?}")))?
+            }
+        };
+        derived.push(RekeyTarget::new(&table, &column.column, "id", &column.resource, &column.field, scope));
+    }
+    derived.sort_by(|a, b| (&a.table, &a.column, &a.resource, &a.field).cmp(&(&b.table, &b.column, &b.resource, &b.field)));
+    let mut actual = options.targets.clone();
+    actual.sort_by(|a, b| (&a.table, &a.column, &a.resource, &a.field).cmp(&(&b.table, &b.column, &b.resource, &b.field)));
+    if actual.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(Error::InvalidConfig("caller rekey target inventory contains duplicate target".into()));
+    }
+    let expected = derived
+        .iter()
+        .map(|target| RekeyTargetSpec {
+            table: target.table.clone(),
+            column: target.column.clone(),
+            id_column: target.id_column.clone(),
+            resource: target.resource.clone(),
+            field: target.field.clone(),
+        })
+        .collect::<Vec<_>>();
+    if actual != expected {
+        let missing = expected
+            .iter()
+            .filter(|target| !actual.contains(target))
+            .map(|target| format!("{}.{}", target.resource, target.field))
+            .collect::<Vec<_>>();
+        let unexpected = actual
+            .iter()
+            .filter(|target| !expected.contains(target))
+            .map(|target| format!("{}.{}", target.resource, target.field))
+            .collect::<Vec<_>>();
+        return Err(Error::InvalidConfig(format!("caller target inventory와 선언 inventory 불일치: missing={missing:?}, unexpected={unexpected:?}")));
+    }
+    Ok(VerifiedRekeyInventory { scope: requested_scope, targets: derived })
+}
+
+async fn require_pg_column(
+    db: &Client,
+    schema: &str,
+    table: &str,
+    column: &str,
+    expected_type: &str,
+    expected_not_null: bool,
+    label: &str,
+) -> Result<(), Error> {
+    let row = db
+        .query_opt(
+            "SELECT t.typname, a.attnotnull FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid \
+         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_type t ON t.oid=a.atttypid \
+         WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p') AND a.attname=$3 AND a.attnum>0 AND NOT a.attisdropped",
+            &[&schema, &table, &column],
+        )
+        .await
+        .map_err(|_| Error::Database(format!("PostgreSQL metadata {label} 조회 실패")))?;
+    let Some(row) = row else {
+        return Err(Error::Database(format!("PostgreSQL metadata encrypted column 누락: {label} ({schema}.{table}.{column})")));
+    };
+    let actual_type: String = row.try_get(0).map_err(|_| Error::Database(format!("PostgreSQL metadata {label} type 오류")))?;
+    let actual_not_null: bool = row.try_get(1).map_err(|_| Error::Database(format!("PostgreSQL metadata {label} nullability 오류")))?;
+    if actual_type != expected_type || actual_not_null != expected_not_null {
+        return Err(Error::Database(format!(
+            "PostgreSQL metadata {label} 불일치: type={actual_type}, not_null={actual_not_null}, expected_type={expected_type}, expected_not_null={expected_not_null}"
+        )));
+    }
+    Ok(())
+}
+
+async fn require_pg_reference(db: &Client, schema: &str, table: &str, column: &str, target_table: &str) -> Result<(), Error> {
+    let exists: bool = db
+        .query_one(
+            "SELECT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_constraint c
+           JOIN pg_catalog.pg_class source ON source.oid=c.conrelid
+           JOIN pg_catalog.pg_namespace source_ns ON source_ns.oid=source.relnamespace
+           JOIN pg_catalog.pg_attribute source_col ON source_col.attrelid=source.oid AND source_col.attnum=c.conkey[1]
+           JOIN pg_catalog.pg_class target ON target.oid=c.confrelid
+           JOIN pg_catalog.pg_namespace target_ns ON target_ns.oid=target.relnamespace
+           JOIN pg_catalog.pg_attribute target_col ON target_col.attrelid=target.oid AND target_col.attnum=c.confkey[1]
+           WHERE c.contype='f' AND source_ns.nspname=$1 AND source.relname=$2 AND source_col.attname=$3
+             AND target_ns.nspname=$1 AND target.relname=$4 AND target_col.attname='id'
+             AND array_length(c.conkey,1)=1 AND array_length(c.confkey,1)=1
+         )",
+            &[&schema, &table, &column, &target_table],
+        )
+        .await
+        .map_err(|_| Error::Database(format!("PostgreSQL scope FK metadata {}.{}.{column} 조회 실패", schema, table)))?
+        .try_get(0)
+        .map_err(|_| Error::Database(format!("PostgreSQL scope FK metadata {}.{}.{column} 형식 오류", schema, table)))?;
+    if !exists {
+        return Err(Error::Database(format!("PostgreSQL scope FK 불일치: {}.{}.{column} must reference {target_table}.id", schema, table)));
+    }
+    Ok(())
 }
 
 /// Executes durable rekey cycle for the given scope and targets.
@@ -235,9 +408,8 @@ pub async fn execute_rekey(
     kek_config: &KekConfig,
     options: &RekeyOptions,
 ) -> Result<Vec<RekeyReport>, Error> {
-    // Validate caller-supplied structure and completeness before the operational fence.
-    let scope = options.validate()?;
-    options.assert_complete_inventory()?;
+    // Verify declaration-derived inventory against PostgreSQL before the still-closed gate.
+    let inventory = verify_rekey_inventory(db, schema, options).await?;
 
     // This public API is a second enforcement boundary; the CLI fence alone is insufficient.
     if !rekey_operational_inventory_verified(schema, options) {
@@ -248,10 +420,7 @@ pub async fn execute_rekey(
     kek_config.validate()?;
     let provider = kek_config.load_provider()?;
 
-    let targets: Vec<RekeyTarget> =
-        options.targets.iter().map(|t| RekeyTarget::new(&t.table, &t.column, &t.id_column, &t.resource, &t.field, scope.clone())).collect();
-
-    rekey_scope(db, budget, &store, &scope, &targets, &options.holder_id, &provider)
+    rekey_scope(db, budget, &store, &inventory.scope, &inventory.targets, &options.holder_id, &provider)
         .await
         .map_err(|e| Error::Database(format!("rekey 실행 실패: {e:?}")))
 }
