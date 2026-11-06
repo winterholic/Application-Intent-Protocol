@@ -139,7 +139,7 @@ class UiHostTests(unittest.TestCase):
                          ["Topic", "Post", "Post.publish", "TopicFirstPost", "Topic.publish"])
         self.assertTrue(all(operation["values"]["username"] == "member" for operation in workflow[:2]))
 
-    def test_topic_reply_uses_aip_atomic_create_publish_and_bump(self):
+    def test_topic_reply_uses_atomic_publish_without_redundant_bump(self):
         client_api = Mock()
         client_api.session.return_value = {"actorId": "6"}
         client_api.read.side_effect = [
@@ -164,7 +164,7 @@ class UiHostTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         workflow = client_api.bundle.call_args.args[0]
         self.assertEqual([operation.get("create") or operation.get("apply") for operation in workflow],
-                         ["Post", "Post.publish", "Topic.bump"])
+                         ["Post", "Post.publish"])
         self.assertEqual(workflow[0]["values"]["username"], "member")
         self.assertEqual(workflow[0]["values"]["topic"], "topic-1")
 

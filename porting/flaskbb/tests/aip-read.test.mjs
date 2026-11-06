@@ -236,7 +236,6 @@ test('AIP server enforces forum group visibility and unique link relations with 
     const replyWorkflow = {atomic: [
       {create: 'Post', values: {id: replyId, topic: topicId, forum: '2', user: '2', username: 'member-fixture', content: 'Reply body', hidden: false, published: false, version: 0, deleted: false}},
       {apply: 'Post.publish', target: {ids: [replyId]}},
-      {apply: 'Topic.bump', target: {ids: [topicId]}},
     ]};
     const reply = await member.bundle(replyWorkflow, {key: `reply-${replyId}`});
     assert.equal(reply.ok, true, JSON.stringify(reply));
