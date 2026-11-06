@@ -808,6 +808,10 @@ class BrowserEvidenceTests(unittest.TestCase):
         fixture_step = workflow.split("      - name: Start native driver fixtures\n", 1)[1].split("      - name:", 1)[0]
         self.assertIn('if [[ "${{ inputs.admin_metrics_diagnostic }}" == "true" ]]; then\n            stores+=(redis)', fixture_step)
 
+    def test_admin_browser_checks_are_initialized_before_negative_control(self):
+        source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
+        self.assertLess(source.index("checks: dict[str, object] = {}"), source.index('checks["signup_checker_negative_control"]'))
+
     def test_admin_diagnostic_prepares_its_own_definition_and_sdk(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
         admin_step = workflow.split("      - name: Prepare the pinned FaceReview admin console browser journey\n", 1)[1].split("      - name:", 1)[0]

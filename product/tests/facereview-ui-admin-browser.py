@@ -94,6 +94,7 @@ def main() -> int:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    checks: dict[str, object] = {}
     requests: list[dict[str, object]] = []
     rest_fallback: list[str] = []
     pending_bodies: dict[object, tuple[object, dict[str, object]]] = {}
@@ -145,7 +146,6 @@ def main() -> int:
         return result
     page_errors: list[dict[str, str]] = []
     state: dict[str, object] = {"stage": "startup", "host_metrics_null": None}
-    checks: dict[str, object] = {}
     failure_type = None
     browser = None
 
