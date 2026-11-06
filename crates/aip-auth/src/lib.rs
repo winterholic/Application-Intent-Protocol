@@ -109,9 +109,9 @@ pub struct OidcReadinessFailure {
 }
 
 pub async fn oidc_readiness(expected_issuer: &str, discovery_endpoint: Option<&str>) -> Result<OidcReadiness, OidcReadinessFailure> {
-    let issuer = validate_https_url(expected_issuer, "input").map_err(|stage| OidcReadinessFailure { stage })?;
+    let issuer = validate_https_url(expected_issuer, "input")?;
     let discovery_url = match discovery_endpoint {
-        Some(value) => validate_https_url(value, "input").map_err(|stage| OidcReadinessFailure { stage })?,
+        Some(value) => validate_https_url(value, "input")?,
         None => {
             let mut base = issuer.clone();
             let path = base.path().trim_end_matches('/');

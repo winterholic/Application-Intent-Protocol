@@ -199,7 +199,7 @@ async fn readiness_discovers_exact_issuer_and_validates_the_signing_key_set() {
     let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
     let result = oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.expect("readiness");
     assert_eq!(result.key_count, 1);
-    assert_eq!(result.algorithms, vec!["RS256"]);
+    assert_eq!(result.algorithms, vec!["RS256".to_owned()]);
 }
 
 #[tokio::test]
