@@ -129,6 +129,11 @@ def build(schema, admin_username, admin_email, welcome):
         out.append(insert(schema, "post", ["id", "topic_id", "forum_id", "user_id", "username", "content", "date_created", "hidden",
                                             "published", "version", "deleted"],
                           [[post, topic, 1, 1, admin_username, "Have fun with your new FlaskBB Forum!", "now()", False, True, 0, False]]).replace("'now()'", "now()"))
+        # This is a new installation, not a historical-ID import. Let the same
+        # server identity used by live publish allocate the welcome post order.
+        out.append(insert(schema, "post_order", ["post_id"], [[post]]))
+        out.append(f'UPDATE "{schema}"."post" SET source_order_id = '
+                   f'(SELECT id FROM "{schema}"."post_order" WHERE post_id = {literal(post)}) WHERE id = {literal(post)};')
         out.append(insert(schema, "topic_first_post", ["id", "topic_id", "post_id"], [[1, topic, post]]))
         out.append(f'UPDATE "{schema}"."forum" SET last_post_id = {literal(post)}, last_post_user_id = 1, '
                    f'last_post_title = \'Welcome!\', last_post_username = {literal(admin_username)}, last_post_created = now() WHERE id = 1;')
