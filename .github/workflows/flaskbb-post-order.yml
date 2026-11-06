@@ -2,7 +2,7 @@ name: FlaskBB PostOrder
 
 on:
   push:
-    branches: [main, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106]
+    branches: [main, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106, verify/flaskbb-orm-oracle-20261107]
     paths:
       - '.github/workflows/flaskbb-post-order.yml'
       - 'porting/flaskbb/app.aip'
@@ -20,6 +20,7 @@ on:
       - 'spikes/spike-v3-write/tests/latest_effect_match.rs'
       - 'porting/flaskbb/seed/*post_order*'
       - 'porting/flaskbb/tests/test_post_order_import.py'
+      - 'porting/flaskbb/tests/test_post_oracle_gap.py'
 
 permissions:
   contents: read
@@ -66,6 +67,35 @@ jobs:
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
           python3 -m venv "$RUNNER_TEMP/flaskbb-ui"
           "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
+      - name: Run pinned FlaskBB ORM against an isolated PostgreSQL schema
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.8'
+      - name: Install pinned FlaskBB ORM dependencies and run PostgreSQL regressions
+        run: |
+          python3 -m venv "$RUNNER_TEMP/flaskbb-upstream"
+          cd porting/flaskbb/upstream
+          "$RUNNER_TEMP/flaskbb-upstream/bin/pip" install --no-cache-dir -r requirements.txt "psycopg2-binary==2.9.9"
+          cd "$GITHUB_WORKSPACE"
+          psql "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA flaskbb_orm_oracle'
+          FLASKBB_ORACLE_DATABASE_URI='postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle' \
+            PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/porting/flaskbb/upstream" \
+            "$RUNNER_TEMP/flaskbb-upstream/bin/python" -m unittest porting.flaskbb.tests.test_post_oracle_gap -v
+          for mutant in date-sort topic-filter; do
+            case "$mutant" in
+              date-sort) test_name=test_wrong_date_sort_negative_control; expected='negative control: date sort must be rejected' ;;
+              topic-filter) test_name=test_wrong_visibility_filter_negative_control; expected='negative control: Topic visibility filter must be rejected' ;;
+            esac
+            if FLASKBB_ORACLE_NEGATIVE_CONTROL="$mutant" FLASKBB_ORACLE_DATABASE_URI='postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle' PYTHONPATH="$GITHUB_WORKSPACE/porting/flaskbb/upstream" "$RUNNER_TEMP/flaskbb-upstream/bin/python" -m unittest "porting.flaskbb.tests.test_post_oracle_gap.PostOracleGap.$test_name" > "$RUNNER_TEMP/$mutant.log" 2>&1; then
+              echo "negative control unexpectedly passed: $mutant"
+              exit 1
+            fi
+            grep -F "$expected" "$RUNNER_TEMP/$mutant.log"
+            echo "NEGATIVE_CONTROL $mutant rejected as expected"
+          done
+      - name: Remove the isolated FlaskBB ORM schema
+        if: ${{ always() }}
+        run: psql "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA IF EXISTS flaskbb_orm_oracle CASCADE'
       - name: Build the product CLI
         id: product-build
         run: cargo build -p aip-cli --locked
