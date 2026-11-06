@@ -186,8 +186,10 @@ async fn cell(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, sql: &str
 }
 
 async fn direct_signup_trends(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn) -> Value {
-    let rows: Vec<(String, u64)> =
-        conn.query("SELECT DATE_FORMAT(created_at, '%Y-%m-%d'), COUNT(*) FROM user GROUP BY DATE(created_at)").await.unwrap();
+    let rows: Vec<(String, u64)> = conn
+        .query("SELECT signup_date, COUNT(*) FROM (SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS signup_date FROM user) AS signup_days GROUP BY signup_date")
+        .await
+        .unwrap();
     let mut daily = std::collections::BTreeMap::new();
     for (date, count) in rows {
         daily.insert(NaiveDate::parse_from_str(&date, "%Y-%m-%d").unwrap(), count);
