@@ -86,6 +86,7 @@ export AIP_MINIO_SECRET_KEY=aip-test-secret-please-rotate
 export AIP_MINIO_CA_PEM="$task_dir/ca.pem"
 
 cd "$repo_root"
+cargo test -p aip-execution --test object_ledger --locked -- --nocapture
 cargo test -p aip-execution --test cloud_storage minio_https_actual_object_and_multipart_contract --locked -- --ignored --nocapture
 
 # Per-owner quota and expired-upload cleanup through the real server (needs the dedicated test PostgreSQL, see VALIDATION.md).
