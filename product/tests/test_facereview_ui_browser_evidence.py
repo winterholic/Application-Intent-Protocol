@@ -803,6 +803,11 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertGreaterEqual(script.count('if [[ "$mode" == run-ci || "$mode" == run-ci-member || "$mode" == run-ci-admin ]]; then'), 2)
         self.assertIn('scripts/verify-mysql-worker-e2e.sh run-ci', script)
 
+    def test_admin_metrics_diagnostic_starts_the_configured_redis_fixture(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
+        fixture_step = workflow.split("      - name: Start native driver fixtures\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn('if [[ "${{ inputs.admin_metrics_diagnostic }}" == "true" ]]; then\n            stores+=(redis)', fixture_step)
+
     def test_profile_browser_trace_init_script_executes_instead_of_only_declaring_arrow(self):
         source = Path(__file__).with_name("facereview-ui-profile-browser.py").read_text()
         tree = ast.parse(source)

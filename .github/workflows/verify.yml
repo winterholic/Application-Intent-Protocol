@@ -123,7 +123,9 @@ jobs:
         run: |
           # Focused FaceReview diagnostics skip the broad gate but still receive run-owned native stores.
           stores=(mongo)
-          if [[ "${{ inputs.member_ui_diagnostic }}" != "true" && "${{ inputs.admin_metrics_diagnostic }}" != "true" ]]; then
+          if [[ "${{ inputs.admin_metrics_diagnostic }}" == "true" ]]; then
+            stores+=(redis)
+          elif [[ "${{ inputs.member_ui_diagnostic }}" != "true" ]]; then
             stores+=(mongo-uuid redis)
           fi
           docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 "${stores[@]}"
