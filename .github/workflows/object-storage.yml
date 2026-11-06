@@ -34,12 +34,13 @@ jobs:
     env:
       AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
       AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
-      AIP_STORAGE_EVIDENCE_DIR: ${{ runner.temp }}/storage-list-scan-evidence
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - name: Initialize storage verification evidence
+        env:
+          AIP_STORAGE_EVIDENCE_DIR: ${{ runner.temp }}/storage-list-scan-evidence
         run: |
           mkdir -p "$AIP_STORAGE_EVIDENCE_DIR"
           printf '{"checks":[]}\n' > "$AIP_STORAGE_EVIDENCE_DIR/results.json"
@@ -68,6 +69,8 @@ jobs:
           python3 -m unittest product.tests.google_storage_provider_test
       - name: Verify ListScan correction and collect exact evidence
         shell: bash
+        env:
+          AIP_STORAGE_EVIDENCE_DIR: ${{ runner.temp }}/storage-list-scan-evidence
         run: |
           set +e
           python3 scripts/run-storage-check.py --dir "$AIP_STORAGE_EVIDENCE_DIR" --label format -- rustfmt --edition 2021 --check spikes/spike-v6-transport/src/object_transport.rs spikes/spike-v6-transport/tests/object_ledger_s3.rs crates/aip-execution/tests/object_ledger_scan_minio.rs
