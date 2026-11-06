@@ -40,6 +40,52 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_admin_dashboard_metric_evidence_is_a_point_in_time_snapshot(self):
+        from product.tests.facereview_ui_browser_evidence import admin_dashboard_metrics_snapshot
+
+        expected = {"category_video_counts": {"cook": 1}}
+        aggregates = {"User.totalCount": [42]}
+        videos = {"cook": 1}
+        views = {"cook": 5}
+        extensions = {"VideoRequest.pipeline": {"pending_count": 2}}
+        snapshot = admin_dashboard_metrics_snapshot(expected, aggregates, videos, views, extensions)
+
+        videos["cook"] = 0
+        videos["vlog"] = 1
+        views["cook"] = 0
+        aggregates["User.totalCount"].append(43)
+        extensions["VideoRequest.pipeline"]["pending_count"] = 0
+        self.assertEqual(snapshot["actual_category_video_counts"], {"cook": 1})
+        self.assertEqual(snapshot["actual_category_views"], {"cook": 5})
+        self.assertEqual(snapshot["actual_aggregates"], {"User.totalCount": [42]})
+        self.assertEqual(snapshot["actual_extensions"], {"VideoRequest.pipeline": {"pending_count": 2}})
+
+    def test_admin_signup_trend_evidence_checks_every_bucket_and_names_wrong_date(self):
+        from product.tests.facereview_ui_browser_evidence import admin_signup_svg_evidence, admin_signup_trend_evidence
+
+        expected = [{"date": "2026-11-01", "count": 3}, {"date": "2026-11-02", "count": 0}]
+        self.assertEqual(admin_signup_trend_evidence("7d", expected, expected), {
+            "period": "7d", "expected_buckets": 2, "actual_buckets": 2,
+            "expected_total": 3, "actual_total": 3, "expected_points": expected, "actual_points": expected,
+            "verified": True, "mismatches": [],
+        })
+        changed = [{"date": "2026-11-01", "count": 2}, {"date": "2026-11-02", "count": 1}]
+        result = admin_signup_trend_evidence("7d", changed, expected)
+        self.assertFalse(result["verified"])
+        self.assertEqual(result["mismatches"], [
+            {"index": 0, "expected": {"date": "2026-11-01", "count": 3}, "actual": {"date": "2026-11-01", "count": 2}},
+            {"index": 1, "expected": {"date": "2026-11-02", "count": 0}, "actual": {"date": "2026-11-02", "count": 1}},
+        ])
+
+        expected_render = [{"date": "2026-11-01", "count": 2}, {"date": "2026-11-02", "count": 0}]
+        rendered = [{"x": 10, "y": 0}, {"x": 20, "y": 100}]
+        ticks = [{"value": 0, "y": 100}, {"value": 2, "y": 0}]
+        self.assertTrue(admin_signup_svg_evidence("7d", rendered, ticks, expected_render)["verified"])
+        swapped_render = [{"x": 10, "y": 100}, {"x": 20, "y": 0}]
+        negative = admin_signup_svg_evidence("7d", swapped_render, ticks, expected_render)
+        self.assertFalse(negative["verified"])
+        self.assertEqual([m["index"] for m in negative["mismatches"]], [0, 1])
+
     def test_recommend_form_request_requires_member_and_exact_deduplicated_fixture(self):
         from product.tests import facereview_ui_browser_evidence as evidence
         member_recommend_request_matches = getattr(evidence, 'member_recommend_request_matches', None)
@@ -627,7 +673,7 @@ class BrowserEvidenceTests(unittest.TestCase):
                 self.assertFalse(member_logout_evidence([row], {**cleared, key: False})["verified"])
         self.assertFalse(member_logout_evidence([row], {})["verified"])
 
-    def test_workflow_uses_full_e2e_unless_member_diagnostic_is_explicit(self):
+    def test_workflow_uses_only_the_selected_admin_or_member_diagnostic(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
         step = workflow.split("      - name: Verify real HTTP to Node and Python workers to MySQL\n", 1)[1].split("      - name:", 1)[0]
         run = step.split("        run:", 1)[1].strip("\n")
@@ -635,10 +681,11 @@ class BrowserEvidenceTests(unittest.TestCase):
             command = "\n".join(line.removeprefix("          ") for line in run.splitlines()[1:])
         else:
             command = run.strip()
-        for value, expected in [("", "run-ci"), ("false", "run-ci"), ("true", "run-ci-member")]:
-            with self.subTest(member_ui_diagnostic=value):
+        for member, admin, expected in [("", "", "run-ci"), ("false", "false", "run-ci"),
+                                        ("true", "false", "run-ci-member"), ("false", "true", "run-ci-admin")]:
+            with self.subTest(member_ui_diagnostic=member, admin_metrics_diagnostic=admin):
                 # Execute the workflow's actual shell branch without starting its database fixtures.
-                shell = 'bash() { printf "%s\\n" "$2"; };\n' + command.replace("${{ inputs.member_ui_diagnostic }}", value)
+                shell = 'bash() { printf "%s\\n" "$2"; };\n' + command.replace("${{ inputs.member_ui_diagnostic }}", member).replace("${{ inputs.admin_metrics_diagnostic }}", admin)
                 result = subprocess.run(["bash", "-eu", "-c", shell], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), expected)
@@ -776,14 +823,48 @@ class BrowserEvidenceTests(unittest.TestCase):
         workflow = (repo / ".github/workflows/verify.yml").read_text()
         script = (repo / "scripts/verify-mysql-worker-e2e.sh").read_text()
         self.assertIn("scripts/verify-mysql-worker-e2e.sh run-ci-member", workflow)
-        self.assertIn("run | run-ci | run-ci-member | down", script)
+        self.assertIn("run | run-ci | run-ci-member | run-ci-admin | down", script)
         self.assertLess(script.index('AIP_VERIFY_FAILURE_FILE="$AIP_E2E_FAILURE_FILE"'),
                         script.index('source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-safe-locator.sh"'))
         # Scope/failure behavior is executed by test_facereview_e2e_suites; here
         # retain only the shell/workflow wiring contract after extracting it.
         self.assertIn('python3 "$repo/scripts/facereview-e2e-suites.py" "$mode"', script)
-        self.assertGreaterEqual(script.count('if [[ "$mode" == run-ci || "$mode" == run-ci-member ]]; then'), 2)
+        self.assertGreaterEqual(script.count('if [[ "$mode" == run-ci || "$mode" == run-ci-member || "$mode" == run-ci-admin ]]; then'), 2)
         self.assertIn('scripts/verify-mysql-worker-e2e.sh run-ci', script)
+
+    def test_admin_metrics_diagnostic_starts_the_configured_redis_fixture(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
+        fixture_step = workflow.split("      - name: Start native driver fixtures\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn('if [[ "${{ inputs.admin_metrics_diagnostic }}" == "true" ]]; then\n            stores+=(redis)', fixture_step)
+
+    def test_admin_browser_checks_are_initialized_before_negative_control(self):
+        source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
+        self.assertLess(source.index("checks: dict[str, object] = {}"), source.index('checks["signup_checker_negative_control"]'))
+
+    def test_admin_trend_rendered_svg_points_use_axis_ticks_and_save_period_screenshot(self):
+        source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
+        self.assertIn("admin_signup_svg_evidence(period, svg_data[\"points\"], svg_data[\"ticks\"], expected_points)", source)
+        self.assertIn('checks["signup_trend_rendered_svg"] = trend_render_results', source)
+        screenshot = source.index('page.screenshot(path=str(output / f"admin-dashboard-signup-')
+        evidence = source.index("render_result = admin_signup_svg_evidence")
+        self.assertLess(evidence, screenshot)
+
+    def test_admin_permission_denial_rows_are_checked_after_clearing_member_filter(self):
+        source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
+        block = source.split('stage("admin_permission_denials")', 1)[1].split("except Exception:", 1)[0]
+        self.assertLess(block.index('.fill("")'), block.index('has_text="e@example.com"'))
+
+    def test_admin_diagnostic_prepares_its_own_definition_and_sdk(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
+        admin_step = workflow.split("      - name: Prepare the pinned FaceReview admin console browser journey\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn('definition="$RUNNER_TEMP/aip-facereview-admin.aip"', admin_step)
+        self.assertIn('echo "AIP_FACEREVIEW_DEFINITION_FILE=$definition" >> "$GITHUB_ENV"', admin_step)
+        self.assertIn('node product/tools/build-sdk.mjs --out "$sdk"', admin_step)
+        self.assertIn('npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"', admin_step)
+        self.assertIn('apply-admin-ui-overlay.sh "$admin" "$definition"', admin_step)
+        self.assertIn('python3 -m venv "$RUNNER_TEMP/aip-browser"', admin_step)
+        self.assertIn('"$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0', admin_step)
+        self.assertIn('"$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium', admin_step)
 
     def test_profile_browser_trace_init_script_executes_instead_of_only_declaring_arrow(self):
         source = Path(__file__).with_name("facereview-ui-profile-browser.py").read_text()
@@ -1197,6 +1278,7 @@ class BrowserEvidenceTests(unittest.TestCase):
 
     def test_admin_request_evidence_keeps_only_schema_names(self):
         self.assertEqual(admin_request_evidence("/read", {"query": {"aggregate": "User.totalCount", "input": {}, "filter": [{"field": "name", "op": "like", "value": "secret"}]}}), {"aggregate": "User.totalCount"})
+        self.assertEqual(admin_request_evidence("/read", {"query": {"aggregate": "Video.totalCount", "filter": [{"field": "category", "op": "eq", "value": "animal"}]}}), {"aggregate": "Video.totalCount", "category": "animal"})
         self.assertEqual(admin_request_evidence("/read", {"query": {"read": "VideoRequest", "select": ["id"], "filter": [{"field": "id", "op": "eq", "value": "v"}]}}), {"read": "VideoRequest"})
         self.assertEqual(admin_request_evidence("/extension", {"extension": "User.systemStatus", "input": {}}), {"extension": "User.systemStatus"})
         self.assertEqual(admin_request_evidence("/jobs/enqueue", {"operation": "approveVideoRequest", "key": "k", "input": {"youtube_title": "private title"}}), {"operation": "approveVideoRequest"})

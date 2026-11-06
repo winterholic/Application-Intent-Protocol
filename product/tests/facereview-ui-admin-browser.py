@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import traceback
+from datetime import date, timedelta
 from urllib.parse import urlsplit
 import urllib.request
 
@@ -27,6 +28,9 @@ from playwright.sync_api import expect, sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (  # noqa: E402
+    admin_signup_svg_evidence,
+    admin_signup_trend_evidence,
+    admin_dashboard_metrics_snapshot,
     admin_request_evidence,
     aggregate_count,
     body_failure_reason,
@@ -36,11 +40,10 @@ from product.tests.facereview_ui_browser_evidence import (  # noqa: E402
 )
 
 UI_REVISION = "ab0386c878a5ba5c7c079a262b987c10d211d22d"
-# The console's signup-trend periods with the sum of the buckets each must show. The ages of the seeded accounts live in
-# crates/aip-cli/tests/mysql_facereview_admin_ui.rs (today, 3 days, 15 days, 60 days, 200 days, 800 days ago), so the sums grow by one per period.
+# The expected date/count buckets come from direct fixture-table queries in the Rust integration test and are passed separately from API output.
 # 7d is last: the dashboard's own first load asks for it twice at once (the SDK shares one in-flight request per identical query), so only a
 # click made on a quiet page shows every bucket of that window as a request of its own.
-SIGNUP_PERIODS = [("최근 30일", 3), ("최근 3달", 4), ("최근 1년", 5), ("최근 3년", 6), ("최근 7일", 2)]
+SIGNUP_PERIODS = [("최근 30일", "30d"), ("최근 3달", "3m"), ("최근 1년", "1y"), ("최근 3년", "3y"), ("최근 7일", "7d")]
 APPROVED_URL = "reqvideo001"
 REJECTED_URL = "reqvideo002"
 MEMBER_ID = "77777777-7777-4777-8777-777777777777"
@@ -52,7 +55,6 @@ APPROVED_CHANNEL = "표본 채널"
 APPROVED_DURATION = "321"
 APPROVED_CATEGORY = "vlog"
 REJECT_REASON = "중복 영상입니다"
-SEED_USERS = ["앨리스", "밥", "캐롤", "데이브", "에린", "일반 표본회원"]
 AIP_PATHS = {"/read", "/apply", "/extension", "/session", "/jobs/enqueue", "/jobs/status", "/jobs/result",
              "/auth/login", "/auth/reissue", "/auth/logout"}
 
@@ -94,14 +96,59 @@ def main() -> int:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    checks: dict[str, object] = {}
     requests: list[dict[str, object]] = []
     rest_fallback: list[str] = []
     pending_bodies: dict[object, tuple[object, dict[str, object]]] = {}
     # A signup count is a number of seeded accounts, never a credential; it stays out of the report and is only compared in this script.
     signup_counts: dict[int, int | None] = {}
+    expected_trends = json.loads(os.environ["AIP_FACEREVIEW_EXPECTED_SIGNUP_BUCKETS"])
+    dashboard_expected = json.loads(os.environ["AIP_FACEREVIEW_EXPECTED_DASHBOARD"])
+    dashboard_aggregates: dict[str, list[int]] = {}
+    dashboard_category_video_counts: dict[str, int] = {}
+    dashboard_category_views: dict[str, int] = {}
+    dashboard_extensions: dict[str, object] = {}
+    fixture_points = expected_trends["7d"]
+    negative_control = None
+    for left in range(len(fixture_points)):
+        right = next((idx for idx in range(left + 1, len(fixture_points)) if fixture_points[idx]["count"] != fixture_points[left]["count"]), None)
+        if right is not None:
+            mutated = [dict(point) for point in fixture_points]
+            mutated[left]["count"], mutated[right]["count"] = mutated[right]["count"], mutated[left]["count"]
+            negative_control = admin_signup_trend_evidence("7d", mutated, fixture_points)
+            if negative_control["verified"] or len(negative_control["mismatches"]) != 2:
+                raise RuntimeError("admin signup checker failed to reject a two-bucket swap that preserves the period total")
+            break
+    if negative_control is None:
+        raise RuntimeError("the deterministic 7d fixture lacks two distinct bucket counts for the negative control")
+    checks["signup_checker_negative_control"] = {
+        "mutation": "swapped two 7d counts while preserving the sum",
+        "rejected": True,
+        "diagnosed_mismatches": negative_control["mismatches"],
+    }
+
+    def expected_signup_ranges(period: str) -> list[tuple[str, str]]:
+        days = {"7d": 7, "30d": 30, "3m": 90, "1y": 365, "3y": 1095}[period]
+        today = date.today()
+        start = today - timedelta(days=days - 1)
+        if period in {"7d", "30d"}:
+            return [(str(start + timedelta(days=i)), str(start + timedelta(days=i + 1))) for i in range(days)]
+        if period == "3m":
+            cursor = start - timedelta(days=start.weekday())
+            result = []
+            while cursor <= today:
+                result.append((str(max(cursor, start)), str(min(cursor + timedelta(days=7), today + timedelta(days=1)))))
+                cursor += timedelta(days=7)
+            return result
+        cursor = start.replace(day=1)
+        result = []
+        while cursor <= today:
+            next_month = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+            result.append((str(max(cursor, start)), str(min(next_month, today + timedelta(days=1)))))
+            cursor = next_month
+        return result
     page_errors: list[dict[str, str]] = []
     state: dict[str, object] = {"stage": "startup", "host_metrics_null": None}
-    checks: dict[str, object] = {}
     failure_type = None
     browser = None
 
@@ -169,6 +216,20 @@ def main() -> int:
                         row["code"] = code
                     if row.get("aggregate") == "User.signupCount":
                         signup_counts[id(row)] = aggregate_count(envelope)
+                    if row.get("aggregate") and row.get("aggregate") != "User.signupCount":
+                        count = aggregate_count(envelope)
+                        if count is not None:
+                            if row.get("aggregate") == "Video.totalCount" and isinstance(row.get("category"), str):
+                                dashboard_category_video_counts[str(row["category"])] = count
+                            elif row.get("aggregate") == "Video.categoryViews" and isinstance(row.get("category"), str):
+                                dashboard_category_views[str(row["category"])] = count
+                            else:
+                                dashboard_aggregates.setdefault(str(row["aggregate"]), []).append(count)
+                    if row.get("extension") in {"Video.contentHealth", "VideoRequest.pipeline"}:
+                        try:
+                            dashboard_extensions[str(row["extension"])] = json.loads(envelope["output"]["body"])
+                        except (KeyError, TypeError, ValueError):
+                            dashboard_extensions[str(row["extension"])] = None
                     if row.get("extension") == "User.systemStatus" and isinstance(envelope.get("output"), dict):
                         try:
                             host = json.loads(envelope["output"]["body"])["server"]
@@ -274,7 +335,9 @@ def main() -> int:
                 # buckets; the chart draws one point per bucket and the buckets' counts add up to the seeded accounts inside the window.
                 stage("signup_trend_periods")
                 period_sums: dict[str, int] = {}
-                for label, expected_sum in SIGNUP_PERIODS:
+                trend_results: dict[str, object] = {}
+                trend_render_results: dict[str, object] = {}
+                for label, period in SIGNUP_PERIODS:
                     mark = len(requests)
                     button = page.get_by_role("button", name=label, exact=True)
                     button.click()
@@ -293,15 +356,69 @@ def main() -> int:
                     page.wait_for_timeout(1500)
                     settled_idle()
                     asked = [row for row in requests[mark:] if row.get("aggregate") == "User.signupCount"]
+                    expected_points = expected_trends[period]
+                    asked.sort(key=lambda row: str(row.get("aggregate_from", "")))
                     counts = [signup_counts.get(id(row)) for row in asked]
                     if not asked or any(count is None for count in counts):
                         raise RuntimeError(f"{label}: the trend buckets were not all answered with a count (asked {len(asked)}, answered {sum(count is not None for count in counts)})")
-                    period_sums[label] = sum(counts)
-                    if period_sums[label] != expected_sum:
-                        raise RuntimeError(f"{label}: the buckets add up to {period_sums[label]} accounts over {len(asked)} buckets {counts}, not the {expected_sum} seeded in the window")
-                    expect(page.locator(".chart-panel svg circle")).to_have_count(len(asked))
+                    expected_ranges = expected_signup_ranges(period)
+                    actual_ranges = [(str(row.get("aggregate_from", ""))[:10], str(row.get("aggregate_to", ""))[:10]) for row in asked]
+                    if actual_ranges != expected_ranges:
+                        raise RuntimeError(f"{label}: API date boundaries differ: expected {expected_ranges}, got {actual_ranges}")
+                    actual_points = [{"date": expected_points[index]["date"], "count": count} for index, count in enumerate(counts)]
+                    result = admin_signup_trend_evidence(period, actual_points, expected_points)
+                    trend_results[period] = result
+                    if not result["verified"]:
+                        raise RuntimeError(f"{label}: fixture/API bucket mismatch {json.dumps(result, ensure_ascii=False)}")
+                    period_sums[label] = result["actual_total"]
+                    chart_svg = page.locator(".chart-panel").first.locator("svg").first
+                    expect(chart_svg.locator("circle")).to_have_count(len(asked))
+                    svg_data = chart_svg.evaluate("""svg => {
+                      const points = Array.from(svg.querySelectorAll('circle')).map((circle) => {
+                        const rect = circle.getBoundingClientRect();
+                        return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2};
+                      });
+                      const ticks = Array.from(svg.querySelectorAll('text')).map((text) => {
+                        const value = Number(text.textContent?.trim());
+                        const rect = text.getBoundingClientRect();
+                        return Number.isFinite(value) && rect.width > 0 && rect.height > 0
+                          ? {value, y: rect.y + rect.height / 2}
+                          : null;
+                      }).filter(Boolean);
+                      return {points, ticks};
+                    }""")
+                    render_result = admin_signup_svg_evidence(period, svg_data["points"], svg_data["ticks"], expected_points)
+                    trend_render_results[period] = render_result
+                    if not render_result["verified"]:
+                        raise RuntimeError(f"{label}: rendered SVG point values differ from the DB fixture {json.dumps(render_result, ensure_ascii=False)}")
                     page.screenshot(path=str(output / f"admin-dashboard-signup-{label}.png".replace(" ", "-")), full_page=True)
+                checks["signup_trend_periods"] = trend_results
+                checks["signup_trend_rendered_svg"] = trend_render_results
                 checks["signup_trend_period_sums"] = period_sums
+                checks["dashboard_business_metrics"] = admin_dashboard_metrics_snapshot(
+                    dashboard_expected, dashboard_aggregates, dashboard_category_video_counts, dashboard_category_views, dashboard_extensions
+                )
+                if dashboard_expected.get("weekly_active_users") not in dashboard_aggregates.get("User.weeklyActive", []):
+                    raise RuntimeError("dashboard weekly active count differs from direct MySQL fixture query")
+                if dashboard_extensions.get("VideoRequest.pipeline") != dashboard_expected.get("video_request_pipeline"):
+                    raise RuntimeError("dashboard request pipeline differs from direct MySQL fixture query")
+                if dashboard_extensions.get("Video.contentHealth") != dashboard_expected.get("content_health"):
+                    raise RuntimeError("dashboard content health differs from the isolated Mongo fixture oracle")
+                if dashboard_category_video_counts != dashboard_expected.get("category_video_counts"):
+                    raise RuntimeError("dashboard per-category visible-video counts differ from direct MySQL fixture queries")
+                visible_categories = {category for category, count in dashboard_category_video_counts.items() if count > 0}
+                expected_visible_views = {category: count for category, count in dashboard_expected["category_views"].items() if category in visible_categories}
+                if dashboard_category_views != expected_visible_views:
+                    raise RuntimeError("dashboard visible per-category view counts differ from direct MySQL fixture queries")
+                if len(dashboard_category_video_counts) != 16:
+                    raise RuntimeError(f"dashboard requested {len(dashboard_category_video_counts)} of 16 genre visibility totals")
+                expect(page.locator(".kpi-stat", has_text="주간 활성 시청자").locator(".kpi-stat__value")).to_have_text(str(dashboard_expected["weekly_active_users"]))
+                expect(page.locator(".kpi-stat", has_text="오늘 신규가입").locator(".kpi-stat__value")).to_have_text(str(dashboard_expected["today_signups"]))
+                expect(page.locator(".kpi-stat", has_text="영상요청 대기").locator(".kpi-stat__value")).to_have_text(str(dashboard_expected["video_request_pipeline"]["pending_count"]))
+                expected_completion = f"{dashboard_expected['content_health']['avg_completion_rate'] * 100:.1f}%"
+                expect(page.locator(".kpi-stat", has_text="평균 완주율").locator(".kpi-stat__value")).to_have_text(expected_completion)
+                expect(page.get_by_role("heading", name="카테고리별 조회수")).to_be_visible()
+                expect(page.locator(".chart-panel__legend-value")).to_have_text(["0%"] * 5)
 
                 # 4. Users: the list, its total and a keyword search.
                 stage("users")
@@ -309,21 +426,21 @@ def main() -> int:
                 if str(checks["dashboard"]).startswith("rendered"):
                     page.get_by_role("link", name="회원 관리").click()
                 expect(page.get_by_role("heading", name="회원 관리")).to_be_visible()
-                for name in SEED_USERS:
-                    expect(page.locator("tr", has_text=name).first).to_be_visible()
-                expect(page.get_by_text("전체 6건")).to_be_visible()
+                expect(page.get_by_text(f"전체 {dashboard_expected['user_total']}건")).to_be_visible()
                 page.get_by_placeholder("이름 또는 이메일 검색").fill("밥")
                 expect(page.get_by_text("전체 1건")).to_be_visible()
                 expect(page.locator("tbody tr")).to_have_count(1)
                 settled_idle()
                 page.get_by_placeholder("이름 또는 이메일 검색").fill("")
-                expect(page.get_by_text("전체 6건")).to_be_visible()
+                expect(page.get_by_text(f"전체 {dashboard_expected['user_total']}건")).to_be_visible()
                 settled_idle()
                 page.screenshot(path=str(output / "admin-users.png"), full_page=True)
-                checks["users_total"] = 6
+                checks["users_total"] = dashboard_expected["user_total"]
 
                 # SUPER_ADMIN can promote a GENERAL member to ADMIN through the actual console SDK.
                 stage("users_write")
+                page.get_by_placeholder("이름 또는 이메일 검색").fill("legacy@example.com")
+                settled_idle()
                 promoted_member = page.locator("tr", has_text="legacy@example.com")
                 promoted_member.get_by_role("button", name="ADMIN 지정", exact=True).click()
                 expect(page.get_by_text("권한을 변경했습니다.")).to_be_visible()
@@ -333,6 +450,8 @@ def main() -> int:
 
                 # The same SUPER_ADMIN returns a seeded ADMIN to GENERAL with the original's "ADMIN 해제" button.
                 stage("users_demote")
+                page.get_by_placeholder("이름 또는 이메일 검색").fill(ALICE_EMAIL)
+                settled_idle()
                 demoted_admin = page.locator("tr", has_text=ALICE_EMAIL)
                 expect(demoted_admin.get_by_text("ADMIN", exact=True)).to_be_visible()
                 with page.expect_response(lambda response: urlsplit(response.url).path == "/apply") as demotion:
@@ -500,6 +619,9 @@ def main() -> int:
                 # The original shows the role buttons to a SUPER_ADMIN only.
                 expect(page.get_by_role("button", name=re.compile(r"^ADMIN (지정|해제)$"))).to_have_count(0)
                 checks["admin_sees_no_role_buttons"] = True
+                page.get_by_role("link", name="회원 관리").click()
+                page.get_by_placeholder("이름 또는 이메일 검색").fill("d@example.com")
+                settled_idle()
                 general_row = page.locator("tr", has_text="d@example.com")
                 general_row.get_by_role("button", name="비활성화", exact=True).click()
                 page.locator(".confirm-modal__panel").get_by_role("button", name="비활성화", exact=True).click()
@@ -527,7 +649,14 @@ def main() -> int:
                 checks["admin_permission_denials"] = denied
                 if any(code != "WIRE.FORBIDDEN" for code in denied.values()):
                     raise RuntimeError("an ADMIN changed role or deactivated a protected role through the generated SDK")
+                member_search = page.get_by_placeholder("이름 또는 이메일 검색")
+                member_search.fill("")
+                settled_idle()
+                member_search.fill("e@example.com")
+                settled_idle()
                 expect(page.locator("tr", has_text="e@example.com").get_by_text("ADMIN", exact=True)).to_be_visible()
+                member_search.fill("c@example.com")
+                settled_idle()
                 expect(page.locator("tr", has_text="c@example.com").get_by_text("SUPER_ADMIN", exact=True)).to_be_visible()
                 page.screenshot(path=str(output / "admin-admin-permission-denials.png"), full_page=True)
                 settled_idle()
@@ -582,6 +711,9 @@ def main() -> int:
             raise RuntimeError("the admin dashboard did not render")
         report = {
             "ui_revision": UI_REVISION,
+            "source_sha": os.environ.get("AIP_FACEREVIEW_SOURCE_SHA", "local-unset"),
+            "verification_command": os.environ.get("AIP_FACEREVIEW_VERIFY_COMMAND", "local-unset"),
+            "exit_code": 0,
             "phase": "admin",
             "checks": checks,
             "api_requests": requests,
@@ -599,6 +731,9 @@ def main() -> int:
         failure_type = safe_browser_failure_type(error)
         report = {
             "ui_revision": UI_REVISION,
+            "source_sha": os.environ.get("AIP_FACEREVIEW_SOURCE_SHA", "local-unset"),
+            "verification_command": os.environ.get("AIP_FACEREVIEW_VERIFY_COMMAND", "local-unset"),
+            "exit_code": 1,
             "phase": "admin",
             "checks": checks,
             "api_requests": requests,

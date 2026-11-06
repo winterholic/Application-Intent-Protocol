@@ -3,6 +3,7 @@
 #
 #   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh run-ci   # GitHub Ubuntu full suite
 #   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh run-ci-member # member UI diagnostic only
+#   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh run-ci-admin  # original + React admin diagnostics
 #   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh run      # Linux builder container
 #   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh down     # remove this tag's objects
 #
@@ -39,7 +40,7 @@ fi
 
 mode="${1:-run}"
 case "$mode" in
-  run | run-ci | run-ci-member | down) ;;
+  run | run-ci | run-ci-member | run-ci-admin | down) ;;
   *) echo "usage: $0 [run|run-ci|run-ci-member|down]" >&2; aip_verify_stage "mode validation"; aip_verify_fail 2 'case mode validation' ;;
 esac
 
@@ -119,7 +120,7 @@ for i in "${!names[@]}"; do
     aip_verify_fail 2 'Docker fixture name collision validation'
   fi
 done
-if [[ "$mode" == run-ci || "$mode" == run-ci-member ]]; then
+if [[ "$mode" == run-ci || "$mode" == run-ci-member || "$mode" == run-ci-admin ]]; then
   [[ "$(uname -s)" == Linux ]] || { echo "ERROR: run-ci needs the Linux runner that already provides Bubblewrap" >&2; aip_verify_stage "run-ci operating-system preflight"; aip_verify_fail 2 'uname -s == Linux'; }
   for tool in cargo bwrap node python3 docker; do
     command -v "$tool" >/dev/null || { echo "ERROR: run-ci needs '$tool' on PATH (see the verify.yml runner preparation)" >&2; aip_verify_stage "run-ci tool preflight: $tool"; aip_verify_fail 2 'command -v "$tool"'; }
@@ -151,7 +152,7 @@ write_owner_marker() { # <container port>
     -e "CREATE TABLE aip_e2e_owner (marker VARCHAR(128) NOT NULL PRIMARY KEY); INSERT INTO aip_e2e_owner (marker) VALUES ('$fixture_marker')"
 }
 
-if [[ "$mode" == run-ci || "$mode" == run-ci-member ]]; then
+if [[ "$mode" == run-ci || "$mode" == run-ci-member || "$mode" == run-ci-admin ]]; then
   aip_verify_stage "start run-owned MySQL fixture"
   echo "=== Starting run-owned MySQL 8.4 ($mysql_name, 127.0.0.1:$AIP_E2E_MYSQL_PORT) ==="
   docker run -d --name "$mysql_name" "${labels[@]}" -e MYSQL_ROOT_PASSWORD="$password" -e MYSQL_DATABASE="$database" \

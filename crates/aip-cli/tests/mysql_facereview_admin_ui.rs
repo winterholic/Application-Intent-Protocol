@@ -14,6 +14,7 @@
 //! Run with `-- --ignored` after `scripts/mysql-live-fixture.sh up` (or the run-owned fixtures of the Verify workflow).
 use aip_migrate::mysql_driver::{MysqlDriver, mysql_async::prelude::Queryable};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, Utc};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -62,7 +63,11 @@ const ERIN: &str = "55555555-5555-4555-8555-555555555555";
 const MEMBER: &str = "77777777-7777-4777-8777-777777777777";
 const APPROVED_REQUEST: &str = "ffffffff-0000-4000-8000-000000000001";
 const REJECTED_REQUEST: &str = "ffffffff-0000-4000-8000-000000000002";
-const USER_COUNT: u64 = 6;
+const USER_COUNT: u64 = 42;
+const METRIC_AGES_DAYS: [i64; 36] = [
+    0, 0, 1, 3, 6, 6, 7, 13, 28, 29, 29, 29, 30, 30, 31, 60, 88, 89, 89, 90, 91, 179, 180, 364, 364, 365, 366, 729, 730, 1093, 1094, 1094, 1095,
+    1096, 1200, 1500,
+];
 // Short enough to let a login expire during the journey, long enough that the login and dashboard load finish inside it.
 const REISSUE_ACCESS_TTL_SECS: u32 = 20;
 
@@ -180,6 +185,58 @@ async fn cell(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, sql: &str
     conn.query_first::<Option<String>, _>(sql).await.unwrap().flatten()
 }
 
+async fn direct_signup_trends(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn) -> Value {
+    let rows: Vec<(String, u64)> = conn
+        .query("SELECT signup_date, COUNT(*) FROM (SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS signup_date FROM user) AS signup_days GROUP BY signup_date")
+        .await
+        .unwrap();
+    let mut daily = std::collections::BTreeMap::new();
+    for (date, count) in rows {
+        daily.insert(NaiveDate::parse_from_str(&date, "%Y-%m-%d").unwrap(), count);
+    }
+    let today = Utc::now().date_naive();
+    let mut result = serde_json::Map::new();
+    for (period, days, granularity) in [("7d", 7_i64, "day"), ("30d", 30, "day"), ("3m", 90, "week"), ("1y", 365, "month"), ("3y", 1095, "month")] {
+        let start = today - ChronoDuration::days(days - 1);
+        let mut points = Vec::new();
+        match granularity {
+            "day" => {
+                for offset in 0..days {
+                    let date = start + ChronoDuration::days(offset);
+                    points.push(json!({"date": date.to_string(), "count": daily.get(&date).copied().unwrap_or(0)}));
+                }
+            }
+            "week" => {
+                let mut cursor = start - ChronoDuration::days(i64::from(start.weekday().num_days_from_monday()));
+                while cursor <= today {
+                    let low = cursor.max(start);
+                    let high = (cursor + ChronoDuration::days(7)).min(today + ChronoDuration::days(1));
+                    let count: u64 = daily.range(low..high).map(|(_, count)| count).sum();
+                    points.push(json!({"date": cursor.to_string(), "count": count}));
+                    cursor += ChronoDuration::days(7);
+                }
+            }
+            _ => {
+                let mut cursor = start.with_day(1).unwrap();
+                while cursor <= today {
+                    let next = if cursor.month() == 12 {
+                        cursor.with_year(cursor.year() + 1).unwrap().with_month(1).unwrap()
+                    } else {
+                        cursor.with_month(cursor.month() + 1).unwrap()
+                    };
+                    let low = cursor.max(start);
+                    let high = next.min(today + ChronoDuration::days(1));
+                    let count: u64 = daily.range(low..high).map(|(_, count)| count).sum();
+                    points.push(json!({"date": cursor.to_string(), "count": count}));
+                    cursor = next;
+                }
+            }
+        }
+        result.insert(period.to_owned(), json!(points));
+    }
+    Value::Object(result)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "live: needs a dedicated MySQL 8.4 (AIP_TEST_MYSQL_URL), MongoDB (AIP_TEST_MONGO_URL) and a worker sandbox; the browser journey also needs AIP_FACEREVIEW_ADMIN_UI_DIR; run with -- --ignored"]
 async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers_own_policy() {
@@ -225,6 +282,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
 
     let admin = MysqlDriver::connect(&admin_url).await.expect("admin connection");
     let mut setup = admin.pool().get_conn().await.unwrap();
+    setup.query_drop("SET time_zone = '+00:00'").await.expect("pin fixture session to UTC");
     for schema in [META, SOURCE] {
         setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
     }
@@ -255,9 +313,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         )
         .await
         .unwrap();
-    // The dashboard's signup trend is read per period, so the seeded accounts get fixed ages relative to now (the journey asserts the sum of
-    // each period: 7d 2, 30d 3, 3m 4, 1y 5, 3y 6; the member inserted above is today). Alice starts as an ADMIN: the console's "ADMIN 해제"
-    // is the SUPER_ADMIN's ADMIN to GENERAL change, and the database shows both ends of it.
+    // The original six console users retain their workflow roles; these dates also keep the write journey's targets discoverable.
     for (user, days) in [(ALICE, 3), (BOB, 15), (CAROL, 60), (DAVE, 200), (ERIN, 800)] {
         setup
             .exec_drop(
@@ -267,6 +323,47 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
             .await
             .unwrap();
     }
+    // A separate 36-row cohort exercises every rolling-window boundary, including midnight and 23:59:59 on an included day.
+    // It spans roles and active/deactivated states because the original counts every account for signup trends.
+    for (index, age_days) in METRIC_AGES_DAYS.iter().enumerate() {
+        let role = if index % 13 == 0 {
+            "SUPER_ADMIN"
+        } else if index % 11 == 0 {
+            "ADMIN"
+        } else {
+            "GENERAL"
+        };
+        let is_deleted = i8::from(index % 3 == 0);
+        let second_of_day = if index == 10 { 86_399_i64 } else { 0_i64 };
+        let user_id = format!("88888888-0000-4000-8000-{index:012}");
+        setup
+            .exec_drop(
+                "INSERT INTO user (user_id, email, password, name, role, is_tutorial_done, is_verify_email_done, is_deleted, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, 1, 1, ?, DATE_SUB(UTC_DATE(), INTERVAL ? DAY) + INTERVAL ? SECOND, UTC_TIMESTAMP())",
+                (
+                    user_id,
+                    format!("dashboard-fixture-{index}@example.test"),
+                    member_hash,
+                    format!("지표 표본 {index}"),
+                    role,
+                    is_deleted,
+                    age_days,
+                    second_of_day,
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    let expected_signup_buckets = direct_signup_trends(&mut setup).await;
+    for (period, expected_total) in [("7d", 8_u64), ("30d", 15), ("3m", 23), ("1y", 30), ("3y", 38)] {
+        let total: u64 = expected_signup_buckets[period].as_array().unwrap().iter().map(|p| p["count"].as_u64().unwrap()).sum();
+        assert_eq!(total, expected_total, "the independent database fixture rows define {period}");
+    }
+    assert_eq!(cell(&mut setup, "SELECT COUNT(*) FROM user").await.as_deref(), Some("42"));
+    assert_eq!(cell(&mut setup, "SELECT COUNT(*) FROM user WHERE user_id LIKE '88888888-%' AND is_deleted=1").await.as_deref(), Some("12"));
+    assert_eq!(cell(&mut setup, "SELECT COUNT(*) FROM user WHERE user_id LIKE '88888888-%' AND is_deleted=0").await.as_deref(), Some("24"));
+    assert_eq!(cell(&mut setup, "SELECT COUNT(*) FROM user WHERE user_id LIKE '88888888-%' AND role='ADMIN'").await.as_deref(), Some("3"));
+    assert_eq!(cell(&mut setup, "SELECT COUNT(*) FROM user WHERE user_id LIKE '88888888-%' AND role='SUPER_ADMIN'").await.as_deref(), Some("3"));
     setup.exec_drop("UPDATE user SET role = 'ADMIN' WHERE user_id = ?", (ALICE,)).await.unwrap();
     assert_eq!(
         cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{ALICE}'")).await.as_deref(),
@@ -282,6 +379,93 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         )
         .await
         .unwrap();
+
+    // Independent expectations for the whole business dashboard. Every value is read from the isolated SQL fixture; Mongo health is empty by
+    // design here and is asserted as the original's documented zero/empty result. No expectation is copied from a product response.
+    let expected_user_total: u64 = cell(&mut setup, "SELECT COUNT(*) FROM user").await.unwrap().parse().unwrap();
+    let expected_weekly_active_users: u64 = cell(
+        &mut setup,
+        "SELECT COUNT(DISTINCT user_id) FROM video_view_log WHERE user_id IS NOT NULL AND created_at >= UTC_TIMESTAMP() - INTERVAL 7 DAY",
+    )
+    .await
+    .unwrap()
+    .parse()
+    .unwrap();
+    let expected_pending_count: u64 = cell(&mut setup, "SELECT COUNT(*) FROM video_request WHERE status='PENDING'").await.unwrap().parse().unwrap();
+    let expected_avg_minutes: Option<Option<String>> = setup
+        .query_first(
+            "SELECT CAST(ROUND(AVG(TIMESTAMPDIFF(MINUTE, created_at, updated_at)), 1) AS CHAR) FROM video_request \
+         WHERE status IN ('ACCEPTED','REJECTED') AND updated_at >= UTC_TIMESTAMP() - INTERVAL 30 DAY",
+        )
+        .await
+        .unwrap();
+    let genres = [
+        "drama",
+        "eating",
+        "travel",
+        "cook",
+        "show",
+        "information",
+        "game",
+        "sports",
+        "music",
+        "animal",
+        "beauty",
+        "comedy",
+        "horror",
+        "exercise",
+        "vlog",
+        "etc",
+    ];
+    let mut expected_category_views = serde_json::Map::new();
+    let mut expected_category_video_counts = serde_json::Map::new();
+    for category in genres {
+        let value: u64 = cell(&mut setup, &format!("SELECT COALESCE(SUM(view_count),0) FROM video WHERE is_deleted=0 AND category='{category}'"))
+            .await
+            .unwrap()
+            .parse()
+            .unwrap();
+        expected_category_views.insert(category.to_owned(), json!(value));
+        let count: u64 =
+            cell(&mut setup, &format!("SELECT COUNT(*) FROM video WHERE is_deleted=0 AND category='{category}'")).await.unwrap().parse().unwrap();
+        expected_category_video_counts.insert(category.to_owned(), json!(count));
+    }
+    let week_points = expected_signup_buckets["7d"].as_array().unwrap();
+    let dashboard_expected = json!({
+        "user_total": expected_user_total,
+        "metric_fixture": {"cohort_count":36,"active_count":24,"inactive_count":12,"admin_count":3,"super_admin_count":3},
+        "weekly_active_users": expected_weekly_active_users,
+        "today_signups": week_points.last().unwrap()["count"],
+        "video_request_pipeline": {
+            "pending_count": expected_pending_count,
+            "avg_processing_minutes": expected_avg_minutes.flatten().map(|v| v.parse::<f64>().unwrap()),
+        },
+        "content_health": {
+            "avg_completion_rate": 0.0,
+            "emotion_distribution": {"neutral":0.0,"happy":0.0,"surprise":0.0,"sad":0.0,"angry":0.0},
+            "dominant_emotion_video_counts": [],
+        },
+        "category_views": expected_category_views,
+        "category_video_counts": expected_category_video_counts,
+    });
+    let metric_cohort_before = cell(&mut setup, "SELECT SHA2(GROUP_CONCAT(CONCAT_WS('|',user_id,DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),role,is_deleted) ORDER BY user_id SEPARATOR '\n'),256) FROM user WHERE user_id LIKE '88888888-%'")
+        .await.expect("cohort fingerprint");
+    let evidence_dir_path = std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("run-owned browser evidence directory");
+    let evidence_dir = Path::new(&evidence_dir_path);
+    std::fs::create_dir_all(evidence_dir).unwrap();
+    let source_sha = std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local-unset".to_owned());
+    let verify_command = "cargo test --locked -p aip-cli --features mysql --test mysql_facereview_admin_ui -- --ignored --exact facereview_admin_console_runs_through_the_generated_sdk_and_the_servers_own_policy --nocapture --test-threads=1";
+    std::fs::write(
+        evidence_dir.join("admin-metrics-db-result.json"),
+        json!({
+            "source_sha": source_sha, "verification_command": verify_command, "exit_code": null,
+            "fixture_setup": "passed", "api_ui_comparison": "pending", "db_fixture": dashboard_expected,
+            "signup_buckets": expected_signup_buckets, "database_preservation": "pending",
+        })
+        .to_string()
+            + "\n",
+    )
+    .unwrap();
 
     setup.query_drop("DROP USER IF EXISTS 'aip_t_aui_rt'@'%'").await.unwrap();
     setup.query_drop("CREATE USER 'aip_t_aui_rt'@'%' IDENTIFIED BY 'runtime_test_only'").await.unwrap();
@@ -370,7 +554,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         let reply = post(&address, "/read", Some(&admin_token), &fingerprint, &json!({"query": query})).await;
         assert_eq!(reply["ok"], true, "the administrator is answered {name}: {reply}");
         if *name == "User.totalCount" {
-            assert_eq!(reply["rows"][0], json!(USER_COUNT), "the administrator counts the fixture's six members: {reply}");
+            assert_eq!(reply["rows"][0], json!(USER_COUNT), "the administrator counts 42 fixture accounts: {reply}");
         }
     }
     for extension in extension_names {
@@ -498,6 +682,10 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         .env("AIP_FACEREVIEW_SECONDARY_ADMIN_EMAIL", "b@example.com")
         .env("AIP_FACEREVIEW_SECONDARY_ADMIN_PASSWORD", admin_password)
         .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", &fingerprint)
+        .env("AIP_FACEREVIEW_EXPECTED_SIGNUP_BUCKETS", expected_signup_buckets.to_string())
+        .env("AIP_FACEREVIEW_EXPECTED_DASHBOARD", dashboard_expected.to_string())
+        .env("AIP_FACEREVIEW_SOURCE_SHA", std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local-unset".to_owned()))
+        .env("AIP_FACEREVIEW_VERIFY_COMMAND", "cargo test --locked -p aip-cli --features mysql --test mysql_facereview_admin_ui -- --ignored --exact facereview_admin_console_runs_through_the_generated_sdk_and_the_servers_own_policy --nocapture --test-threads=1")
         .env("AIP_FACEREVIEW_UI_PORT", &ui_port)
         .env("AIP_FACEREVIEW_REDIS_CONFIGURED", if redis_url.is_some() { "1" } else { "0" })
         .output()
@@ -510,6 +698,10 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         String::from_utf8_lossy(&journey.stderr)
     );
     print!("{}", String::from_utf8_lossy(&journey.stdout));
+    println!(
+        "admin metrics direct database oracle: {}",
+        json!({"source_sha": std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local-unset".to_owned()), "user_count": expected_user_total, "signup_buckets": expected_signup_buckets, "business_stats": dashboard_expected})
+    );
 
     // --- what the console did, read back from the stores it wrote to. ---
     assert_eq!(
@@ -637,6 +829,23 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         Some("SUPER_ADMIN|0"),
         "reissuing the SUPER_ADMIN's access token left the account as it was"
     );
+    let metric_cohort_after = cell(&mut setup, "SELECT SHA2(GROUP_CONCAT(CONCAT_WS('|',user_id,DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),role,is_deleted) ORDER BY user_id SEPARATOR '\n'),256) FROM user WHERE user_id LIKE '88888888-%'")
+        .await.expect("cohort fingerprint after UI");
+    assert_eq!(metric_cohort_after, metric_cohort_before, "unrelated larger dashboard cohort was preserved by all console writes");
+    assert_eq!(cell(&mut setup, "SELECT COUNT(*) FROM user WHERE user_id LIKE '88888888-%'").await.as_deref(), Some("36"));
+    assert_eq!(direct_signup_trends(&mut setup).await, expected_signup_buckets, "dashboard fixture signup rows stayed unchanged");
+    std::fs::write(
+        evidence_dir.join("admin-metrics-db-result.json"),
+        json!({
+            "source_sha": source_sha, "verification_command": verify_command, "exit_code": 0,
+            "fixture_setup": "passed", "api_ui_comparison": "passed", "db_fixture": dashboard_expected,
+            "signup_buckets": expected_signup_buckets, "database_preservation": "passed",
+            "metric_cohort_fingerprint_before": metric_cohort_before, "metric_cohort_fingerprint_after": metric_cohort_after,
+        })
+        .to_string()
+            + "\n",
+    )
+    .unwrap();
     println!(
         "React admin console journey: SUPER_ADMIN login, dashboard, users/requests/videos/comments lists, the five console writes and the approval job (MySQL video + 2 Mongo documents), non-admin login refused"
     );

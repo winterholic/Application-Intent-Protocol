@@ -5,6 +5,7 @@ import json
 import math
 import re
 import time
+from copy import deepcopy
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -1030,13 +1031,30 @@ def _schema_name(value: Any) -> str:
     return value if isinstance(value, str) and _SAFE_SCHEMA_NAME.match(value) else "unrecognized"
 
 
-def admin_request_evidence(path: str, body: Any) -> dict[str, str]:
+def admin_request_evidence(path: str, body: Any) -> dict[str, object]:
     """Names only for the admin console: the resource, aggregate, extension, operation or transition a request names. Never a value."""
     if not isinstance(body, dict):
         return {}
     if path == "/read" and isinstance(body.get("query"), dict):
         query = body["query"]
-        return {"aggregate": _schema_name(query.get("aggregate"))} if "aggregate" in query else {"read": _schema_name(query.get("read"))}
+        if "aggregate" in query:
+            result: dict[str, object] = {"aggregate": _schema_name(query.get("aggregate"))}
+            aggregate_input = query.get("input")
+            if isinstance(aggregate_input, dict) and query.get("aggregate") == "Video.categoryViews":
+                result["category"] = _schema_name(aggregate_input.get("category"))
+            elif query.get("aggregate") == "Video.totalCount" and isinstance(query.get("filter"), list):
+                for item in query["filter"]:
+                    if (isinstance(item, dict) and item.get("field") == "category"
+                            and item.get("op") == "eq"):
+                        result["category"] = _schema_name(item.get("value"))
+                        break
+            elif isinstance(aggregate_input, dict) and query.get("aggregate") == "User.signupCount":
+                for key in ("from", "to"):
+                    value = aggregate_input.get(key)
+                    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z", value):
+                        result[f"aggregate_{key}"] = value
+            return result
+        return {"read": _schema_name(query.get("read"))}
     if path == "/extension":
         return {"extension": _schema_name(body.get("extension"))}
     if path == "/jobs/enqueue":
@@ -1057,6 +1075,108 @@ def aggregate_count(envelope: Any) -> int | None:
         return None
     value = rows[0]
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def admin_signup_trend_evidence(period: str, actual: Any, expected: Any) -> dict[str, object]:
+    """Compare every dashboard signup bucket with fixture-derived date/count pairs."""
+    def normalize(value: Any) -> list[dict[str, object]] | None:
+        if not isinstance(value, list):
+            return None
+        points = []
+        for row in value:
+            if (not isinstance(row, dict) or not isinstance(row.get("date"), str)
+                    or not isinstance(row.get("count"), int) or isinstance(row.get("count"), bool)):
+                return None
+            points.append({"date": row["date"], "count": row["count"]})
+        return points
+
+    actual_points, expected_points = normalize(actual), normalize(expected)
+    mismatches = []
+    if actual_points is None or expected_points is None:
+        mismatches.append({"index": None, "expected": "date/count point list", "actual": "invalid shape"})
+        actual_points = actual_points or []
+        expected_points = expected_points or []
+    for index in range(max(len(actual_points), len(expected_points))):
+        got = actual_points[index] if index < len(actual_points) else None
+        want = expected_points[index] if index < len(expected_points) else None
+        if got != want:
+            mismatches.append({"index": index, "expected": want, "actual": got})
+    actual_total = sum(point["count"] for point in actual_points)
+    expected_total = sum(point["count"] for point in expected_points)
+    return {
+        "period": period,
+        "expected_buckets": len(expected_points),
+        "actual_buckets": len(actual_points),
+        "expected_total": expected_total,
+        "actual_total": actual_total,
+        "expected_points": expected_points,
+        "actual_points": actual_points,
+        "verified": not mismatches and len(actual_points) == len(expected_points),
+        "mismatches": mismatches,
+    }
+
+
+def admin_signup_svg_evidence(period: str, rendered_points: Any, axis_ticks: Any, expected: Any) -> dict[str, object]:
+    """Recover values from rendered SVG point coordinates and labeled y-axis ticks."""
+    expected_points = expected if isinstance(expected, list) else []
+    mismatches: list[dict[str, object]] = []
+    valid = (
+        isinstance(rendered_points, list)
+        and isinstance(axis_ticks, list)
+        and len(rendered_points) == len(expected_points)
+        and len(axis_ticks) >= 2
+        and all(isinstance(point, dict) and isinstance(point.get("x"), (int, float)) and isinstance(point.get("y"), (int, float)) for point in rendered_points)
+        and all(isinstance(tick, dict) and isinstance(tick.get("value"), (int, float)) and isinstance(tick.get("y"), (int, float)) for tick in axis_ticks)
+    )
+    if valid:
+        valid = all(
+            isinstance(point, dict) and isinstance(point.get("date"), str)
+            and isinstance(point.get("count"), int) and not isinstance(point.get("count"), bool)
+            for point in expected_points
+        )
+    if valid:
+        low = min(axis_ticks, key=lambda tick: tick["value"])
+        high = max(axis_ticks, key=lambda tick: tick["value"])
+        valid = high["value"] > low["value"] and high["y"] != low["y"]
+    actual_points: list[dict[str, object]] = []
+    if valid:
+        previous_x = None
+        for index, (point, wanted) in enumerate(zip(rendered_points, expected_points)):
+            x, y = float(point["x"]), float(point["y"])
+            estimated = (low["value"] + (low["y"] - y) * (high["value"] - low["value"]) / (low["y"] - high["y"]))
+            actual_count = int(round(estimated))
+            actual = {"date": wanted["date"], "count": actual_count}
+            actual_points.append(actual)
+            if (previous_x is not None and x <= previous_x) or abs(estimated - wanted["count"]) > 0.35:
+                mismatches.append({"index": index, "expected": wanted, "actual": actual, "estimated_count": round(estimated, 4), "x_order_valid": previous_x is None or x > previous_x})
+            previous_x = x
+    else:
+        mismatches.append({"index": None, "expected": "ordered rendered points and at least two distinct labeled y-axis ticks", "actual": "invalid SVG chart evidence"})
+    actual_total = sum(point["count"] for point in actual_points)
+    expected_total = sum(point.get("count", 0) for point in expected_points if isinstance(point, dict) and isinstance(point.get("count"), int))
+    return {
+        "period": period,
+        "expected_buckets": len(expected_points),
+        "rendered_buckets": len(actual_points),
+        "expected_total": expected_total,
+        "rendered_total": actual_total,
+        "expected_points": expected_points,
+        "rendered_points": actual_points,
+        "verified": valid and not mismatches and len(actual_points) == len(expected_points),
+        "mismatches": mismatches,
+    }
+
+
+def admin_dashboard_metrics_snapshot(expected: Any, aggregates: dict[str, list[int]], category_video_counts: dict[str, int],
+                                     category_views: dict[str, int], extensions: dict[str, object]) -> dict[str, object]:
+    """Freeze dashboard values at comparison time so later UI writes cannot rewrite the evidence."""
+    return {
+        "expected": deepcopy(expected),
+        "actual_aggregates": deepcopy(aggregates),
+        "actual_category_video_counts": deepcopy(category_video_counts),
+        "actual_category_views": deepcopy(category_views),
+        "actual_extensions": deepcopy(extensions),
+    }
 
 
 def safe_page_error_name(error: Any) -> str:

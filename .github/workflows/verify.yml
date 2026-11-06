@@ -11,6 +11,11 @@ on:
         required: true
         type: boolean
         default: false
+      admin_metrics_diagnostic:
+        description: Run only the pinned FaceReview original-admin and React admin UI/DB journeys
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -107,24 +112,25 @@ jobs:
             echo "$sandbox_bin" >> "$GITHUB_PATH"
           fi
       - name: Verify Linux worker isolation boundaries
-        if: ${{ !inputs.member_ui_diagnostic }}
+        if: ${{ !inputs.member_ui_diagnostic && !inputs.admin_metrics_diagnostic }}
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
       - name: Verify worker teardown leaves no descendant processes
-        if: ${{ !inputs.member_ui_diagnostic }}
+        if: ${{ !inputs.member_ui_diagnostic && !inputs.admin_metrics_diagnostic }}
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib cleanup_tests --locked --target-dir target
       - name: Start native driver fixtures
         id: native-fixtures
         shell: bash
         run: |
-          # The member suite also reads MongoDB. Its diagnostic skips the broad
-          # gate, but must still receive its real fixture.
+          # Focused FaceReview diagnostics skip the broad gate but still receive run-owned native stores.
           stores=(mongo)
-          if [[ "${{ inputs.member_ui_diagnostic }}" != "true" ]]; then
+          if [[ "${{ inputs.admin_metrics_diagnostic }}" == "true" ]]; then
+            stores+=(redis)
+          elif [[ "${{ inputs.member_ui_diagnostic }}" != "true" ]]; then
             stores+=(mongo-uuid redis)
           fi
           docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 "${stores[@]}"
       - name: Verify compiler, runtime, product, worker, transport and SDK
-        if: ${{ !inputs.member_ui_diagnostic }}
+        if: ${{ !inputs.member_ui_diagnostic && !inputs.admin_metrics_diagnostic }}
         env:
           AIP_VERIFY_FAILURE_FILE: ${{ runner.temp }}/aip-facereview-browser/verify-failure.txt
           AIP_VERIFY_CLIPPY_OUTPUT_DIR: ${{ runner.temp }}/aip-verify-clippy
@@ -143,7 +149,7 @@ jobs:
           df -h "$GITHUB_WORKSPACE"
           if [[ -d target ]]; then du -sh target; fi
       - name: Build AIP CLI for the focused UI diagnostic
-        if: ${{ inputs.member_ui_diagnostic }}
+        if: ${{ inputs.member_ui_diagnostic || inputs.admin_metrics_diagnostic }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -151,6 +157,7 @@ jobs:
           aip_verify_stage "focused AIP CLI build"
           cargo build -p aip-cli --locked
       - name: Prepare the pinned FaceReview React browser journey
+        if: ${{ !inputs.admin_metrics_diagnostic }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -185,19 +192,32 @@ jobs:
           aip_verify_stage "prepare pinned FaceReview admin console browser journey"
           set -euo pipefail
           admin="$RUNNER_TEMP/aip-facereview-admin-ui"
+          sdk="$RUNNER_TEMP/aip-facereview-admin-sdk"
+          definition="$RUNNER_TEMP/aip-facereview-admin.aip"
+          mkdir -p "$RUNNER_TEMP/aip-facereview-browser"
+          cat product/tests/fixtures/facereview-mysql/facereview.aip > "$definition"
+          printf '\n' >> "$definition"
+          cat product/tests/fixtures/facereview-auth/operations.aip >> "$definition"
+          echo "AIP_FACEREVIEW_DEFINITION_FILE=$definition" >> "$GITHUB_ENV"
+          echo "AIP_FACEREVIEW_DEFINITION_SHA256=$(sha256sum "$definition" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
           pinned=ab0386c878a5ba5c7c079a262b987c10d211d22d
+          node product/tools/build-sdk.mjs --out "$sdk"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"
           git clone --quiet --filter=blob:none --no-checkout --depth=1 \
             https://github.com/winterholic/new-facereview-admin-front.git "$admin"
           git -C "$admin" fetch --quiet --depth=1 origin "$pinned"
           git -C "$admin" checkout --quiet --detach "$pinned"
           test "$(git -C "$admin" rev-parse HEAD)" = "$pinned"
-          AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-admin-ui-overlay.sh "$admin" "$AIP_FACEREVIEW_DEFINITION_FILE"
+          AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-admin-ui-overlay.sh "$admin" "$definition"
           cd "$admin"
           npm ci --ignore-scripts --no-audit --no-fund
           npm install --ignore-scripts --no-audit --no-fund "$RUNNER_TEMP/aip-sdk-0.1.0.tgz"
           # The pinned admin UI's own build (tsc -b && vite build) against the generated binding and the installed SDK.
           npx tsc -b
           VITE_AIP_URL=http://127.0.0.1:1 npx vite build
+          python3 -m venv "$RUNNER_TEMP/aip-browser"
+          "$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0
+          "$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium
       - name: Verify real HTTP to Node and Python workers to MySQL
         env:
           AIP_E2E_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -209,7 +229,9 @@ jobs:
           AIP_E2E_FAILURE_FILE: ${{ runner.temp }}/aip-facereview-browser/verify-failure.txt
         shell: bash
         run: |
-          if [[ "${{ inputs.member_ui_diagnostic }}" == "true" ]]; then
+          if [[ "${{ inputs.admin_metrics_diagnostic }}" == "true" ]]; then
+            bash scripts/verify-mysql-worker-e2e.sh run-ci-admin
+          elif [[ "${{ inputs.member_ui_diagnostic }}" == "true" ]]; then
             bash scripts/verify-mysql-worker-e2e.sh run-ci-member
           else
             bash scripts/verify-mysql-worker-e2e.sh run-ci
