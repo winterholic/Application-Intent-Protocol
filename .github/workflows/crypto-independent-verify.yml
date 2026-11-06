@@ -1,0 +1,110 @@
+name: Independent crypto candidate verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crypto-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Verify candidate, compile, format, lint, and exercise all independent checks
+        run: |
+          set -euo pipefail
+          failures=0
+          record_failure() { echo "FAILED: $1"; failures=$((failures + 1)); }
+          run_check() {
+            label="$1"
+            shift
+            echo "===== $label ====="
+            if "$@"; then
+              echo "PASS: $label"
+            else
+              result=$?
+              echo "FAIL: $label (exit $result)"
+              failures=$((failures + 1))
+            fi
+          }
+          run_check 'candidate base and product source are pinned' bash -euc '
+            test "$(git merge-base HEAD 429f3774581b08c9f76818dca2609f4087c4c009)" = 429f3774581b08c9f76818dca2609f4087c4c009
+            git diff --exit-code 429f3774581b08c9f76818dca2609f4087c4c009 -- crates/aip-service/src/encryption_runtime.rs crates/aip-service/src/lib.rs crates/aip-execution/src/rekey.rs
+          '
+          run_check 'format' cargo fmt --all -- --check
+          run_check 'locked compile' cargo check --locked -p aip-service -p aip-execution
+          run_check 'service runtime Rust tests' cargo test --locked -p aip-service --test encryption_runtime_test
+          run_check 'execution sealer/opener Rust tests' cargo test --locked -p aip-execution --test encryption_sealer_opener
+          run_check 'clippy' cargo clippy --locked --all-targets -p aip-service -p aip-execution -p aip-cli -- -D warnings
+          cli_ready=0
+          if cargo build --locked -p aip-cli; then
+            echo 'PASS: locked CLI build'
+            cli_ready=1
+          else
+            result=$?
+            echo "FAIL: locked CLI build (exit $result)"
+            failures=$((failures + 1))
+          fi
+          if (( cli_ready )); then
+            python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          base = {
+              "schema": "aip_crypto_cli_verify",
+              "auth": {"issuer": "https://auth.example.invalid", "audience": "aip", "jwks": {"kind": "file", "path": "/unused/test-jwks.json"}},
+          }
+          (root / "config-no-encryption.json").write_text(json.dumps(base))
+          with_encryption = dict(base)
+          with_encryption["encryption"] = {"kind": "spec", "spec": "k1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=", "active": "k1"}
+          (root / "config-encryption.json").write_text(json.dumps(with_encryption))
+          (root / "options-empty.json").write_text(json.dumps({"scope_kind":"service", "scope_id":"global", "holder_id":"ci", "targets":[]}))
+          (root / "options-invalid-scope.json").write_text(json.dumps({"scope_kind":"invalid", "scope_id":"global", "holder_id":"ci", "targets":[{"table":"cells", "column":"value", "id_column":"id", "resource":"Secret", "field":"value"}]}))
+          PY
+          expect_failure() {
+            expected="$1"
+            shift
+            output="$RUNNER_TEMP/crypto-cli-output"
+            if target/debug/aip service rekey "$@" >"$output" 2>&1; then
+              echo "unexpected successful CLI invocation; expected $expected"
+              exit 1
+            fi
+            if ! grep -q "$expected" "$output"; then
+              echo "expected CLI rejection $expected was absent"
+              cat "$output"
+              exit 1
+            fi
+          }
+            expect_failure ENCRYPTION_CONFIG_REQUIRED --config "$RUNNER_TEMP/config-no-encryption.json" --options "$RUNNER_TEMP/options-empty.json"
+            expect_failure '목록이 비어' --config "$RUNNER_TEMP/config-encryption.json" --options "$RUNNER_TEMP/options-empty.json"
+            expect_failure '알 수 없는 scope_kind' --config "$RUNNER_TEMP/config-encryption.json" --options "$RUNNER_TEMP/options-invalid-scope.json"
+            echo 'PASS: actual service Config deserialization and Command::Rekey parsing/rejections'
+          else
+            echo 'BLOCKED: CLI runtime checks because locked CLI build failed'
+            failures=$((failures + 1))
+          fi
+          if (( failures > 0 )); then
+            echo "Focused crypto verification failed in $failures independent check(s)"
+            exit 1
+          fi
