@@ -137,3 +137,65 @@ for (const mode of ['top','non-top','only','null-self','null-other']) {
     } finally { await fx.stop(); }
   });
 }
+
+// Topic.delete (upstream forum/models.py 699-715) calls Forum.update_last_post
+// only for a missing pointer or the deleted Topic's last Post. The latter query
+// has a viewer-dependent Post filter (HideableQuery); an admin sees hidden
+// Posts and a hidden Topic does not remove its Posts from the join. Its date
+// order has no tie-break, so the tie case accepts either source-valid winner.
+for (const mode of ['non-current','hidden-topic','hidden-post','empty-pointer','same-pointer','only','tie']) {
+  test(`Topic delete ${mode}: conditional Forum projection and source candidate set`, {timeout:90000}, async () => {
+    const topic=id(60), first=id(61), last=id(62), otherTopic=id(70), other=id(71), fallbackTopic=id(80), fallback=id(81);
+    const fx=await startFixture({actors:{admin:3,carol:6}, seed(sql,q,schema) {
+      base(sql,q,schema);
+      sql(`INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden)
+        VALUES('${topic}',1,'Deleted Topic',2,'topic-owner','2000-01-01','2025-01-01',false,false,0,true,false,false),
+        ('${otherTopic}',1,'Replacement Topic',NULL,'topic-author','2000-01-01','2040-01-01',false,false,0,true,${mode==='only'},${mode==='hidden-topic'}),
+        ('${fallbackTopic}',1,'Fallback Topic',3,'fallback-topic-author','2000-01-01','2001-01-01',false,false,0,true,${mode==='only'},false);
+        INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted)
+        VALUES('${first}','${topic}',1,2,'first-author','first','2000-01-01',false,true,0,false),
+        ('${last}','${topic}',1,2,'reply-author','last','2025-01-01',false,true,0,false),
+        ('${other}','${otherTopic}',1,NULL,'replacement-post-author','other','2030-01-01',${mode==='hidden-post'},true,0,${mode==='only'}),
+        ('${fallback}','${fallbackTopic}',1,3,'fallback-post-author','fallback','${mode==='tie'?'2030-01-01':'2020-01-01'}',false,true,0,${mode==='only'});
+        INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topic}','${first}');
+        UPDATE ${q}.topic SET last_post_id='${mode==='same-pointer'?other:last}' WHERE id='${topic}';
+        UPDATE ${q}.topic SET last_post_id='${other}' WHERE id='${otherTopic}';
+        UPDATE ${q}.topic SET last_post_id='${fallback}' WHERE id='${fallbackTopic}';
+        UPDATE ${q}.forum SET last_post_id=${mode==='empty-pointer'?'NULL':`'${mode==='non-current'||mode==='same-pointer'?other:last}'`},last_post_user_id=2,
+          last_post_title='sentinel-title',last_post_username='sentinel-name',last_post_created='1990-01-01' WHERE id=1;`);
+      seedNativePostOrders(sql,q,[first,other,last,fallback]);
+    }});
+    const {q,sql}=fx;
+    const forum=()=>sql(`SELECT jsonb_build_array(last_post_id,last_post_user_id,last_post_title,last_post_username,last_post_created)::text FROM ${q}.forum WHERE id=1`);
+    try {
+      const before=forum();
+      const allPosts=sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p`);
+      const otherTopics=sql(`SELECT jsonb_agg(to_jsonb(t) ORDER BY id)::text FROM ${q}.topic t WHERE id!='${topic}'`);
+      const denied=await fx.client('carol').bundle({atomic:[{apply:'Topic.delete',target:{ids:[topic]}}]}, {key:`topic-delete-denied-${mode}`});
+      assert.equal(denied.ok,false);
+      assert.equal(forum(),before);
+      assert.equal(sql(`SELECT deleted FROM ${q}.topic WHERE id='${topic}'`),'f');
+      const result=await fx.client('admin').bundle({atomic:[{apply:'Topic.delete',target:{ids:[topic]}}]}, {key:`topic-delete-${mode}`});
+      assert.equal(result.ok,true,JSON.stringify(result));
+      if(mode==='non-current'||mode==='same-pointer') assert.equal(forum(),before,'source preserves all projection fields when no new last Post is selected');
+      else if(mode==='only') assert.deepEqual(JSON.parse(forum()),[null,null,null,null,null]);
+      else {
+        const selected=JSON.parse(forum());
+        assert.ok((mode==='tie'?[other,fallback]:[other]).includes(selected[0]),'winner belongs to the upstream maximal-date candidate set');
+        assert.equal(sql(`SELECT f.last_post_user_id IS NOT DISTINCT FROM p.user_id
+          AND f.last_post_title IS NOT DISTINCT FROM t.title
+          AND f.last_post_username IS NOT DISTINCT FROM p.username
+          AND f.last_post_created IS NOT DISTINCT FROM p.date_created
+          FROM ${q}.forum f JOIN ${q}.post p ON p.id=f.last_post_id JOIN ${q}.topic t ON t.id=p.topic_id WHERE f.id=1`),'t');
+      }
+      assert.equal(sql(`SELECT deleted FROM ${q}.topic WHERE id='${topic}'`),'t');
+      // This suite verifies projection parity under the existing tombstone
+      // policy. It deliberately does not claim upstream physical retention.
+      assert.equal(sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p`),allPosts);
+      assert.equal(sql(`SELECT jsonb_agg(to_jsonb(t) ORDER BY id)::text FROM ${q}.topic t WHERE id!='${topic}'`),otherTopics);
+      const applied=forum();
+      assert.equal((await fx.client('admin').bundle({atomic:[{apply:'Topic.delete',target:{ids:[topic]}}]}, {key:`topic-delete-${mode}`})).ok,true);
+      assert.equal(forum(),applied);
+    } finally { await fx.stop(); }
+  });
+}
