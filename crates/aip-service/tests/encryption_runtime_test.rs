@@ -413,6 +413,99 @@ async fn metadata_inventory_rejects_missing_physical_column_and_wrong_scope_fore
 }
 
 #[tokio::test]
+async fn metadata_inventory_rejects_nonunique_rekey_ids() {
+    let (db, schema, options) = inventory_fixture(false, false).await;
+    db.batch_execute(&format!(
+        "ALTER TABLE {schema}.secret DROP CONSTRAINT secret_pkey;
+         ALTER TABLE {schema}.secret ALTER COLUMN id SET NOT NULL;
+         INSERT INTO {schema}.secret(id, team_id, value, backup) VALUES (7, 42, 'cipher-a', 'backup-a'), (7, 42, 'cipher-b', 'backup-b');"
+    ))
+    .await
+    .expect("create duplicate IDs in a table without a uniqueness constraint");
+    let error = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options)
+        .await
+        .expect_err("rekey IDs must be unique because paging uses the ID cursor");
+    assert!(matches!(error, Error::Database(message) if message.contains("id") && message.contains("unique")));
+    drop_inventory_fixture(&db, &schema).await;
+}
+
+#[tokio::test]
+async fn metadata_inventory_rejects_an_unvalidated_scope_foreign_key() {
+    let (db, schema, options) = inventory_fixture(false, false).await;
+    db.batch_execute(&format!(
+        "ALTER TABLE {schema}.secret DROP CONSTRAINT secret_team_id_fkey;
+         INSERT INTO {schema}.secret(id, team_id, value, backup) VALUES (7, 999, 'cipher', 'backup');
+         ALTER TABLE {schema}.secret ADD CONSTRAINT secret_team_id_fkey FOREIGN KEY(team_id) REFERENCES {schema}.team(id) NOT VALID;"
+    ))
+    .await
+    .expect("create an FK that is enforced for new writes but has not validated existing rows");
+    let error = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options)
+        .await
+        .expect_err("a NOT VALID FK does not prove existing scope rows are valid");
+    assert!(matches!(error, Error::Database(message) if message.contains("scope FK") && message.contains("team_id")));
+    drop_inventory_fixture(&db, &schema).await;
+}
+
+#[tokio::test]
+async fn metadata_inventory_rejects_encrypted_target_ids_without_single_column_primary_key() {
+    let (db, schema, options) = inventory_fixture(false, false).await;
+    db.batch_execute(&format!(
+        "INSERT INTO {schema}.team(id) VALUES (42);
+         ALTER TABLE {schema}.secret DROP CONSTRAINT secret_pkey;
+         INSERT INTO {schema}.secret(id, team_id, value, backup) VALUES
+           (7, 42, 'first', 'first-backup'), (7, 42, 'second', 'second-backup');"
+    ))
+    .await
+    .expect("create duplicate encrypted target IDs after removing the ID primary key");
+    let error = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options)
+        .await
+        .expect_err("encrypted target ID without a single-column primary key must fail");
+    assert!(matches!(error, Error::Database(message) if message.contains("primary key") && message.contains("Secret.id")));
+    drop_inventory_fixture(&db, &schema).await;
+}
+
+#[tokio::test]
+async fn metadata_inventory_rejects_not_valid_scope_fk_with_existing_orphan() {
+    let (db, schema, options) = inventory_fixture(false, false).await;
+    db.batch_execute(&format!(
+        "ALTER TABLE {schema}.secret DROP CONSTRAINT secret_team_id_fkey;
+         INSERT INTO {schema}.secret(id, team_id, value, backup) VALUES (8, 999, 'orphan', 'orphan-backup');
+         ALTER TABLE {schema}.secret ADD CONSTRAINT secret_team_id_fkey
+           FOREIGN KEY (team_id) REFERENCES {schema}.team(id) NOT VALID;"
+    ))
+    .await
+    .expect("install a matching NOT VALID FK after inserting a pre-existing orphan row");
+    let error = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options)
+        .await
+        .expect_err("scope FK with unvalidated existing rows must fail");
+    assert!(matches!(error, Error::Database(message) if message.contains("validated") && message.contains("team_id")));
+    drop_inventory_fixture(&db, &schema).await;
+}
+
+#[tokio::test]
+async fn metadata_inventory_rejects_encrypted_column_type_and_nullability_drift() {
+    let (db, schema, options) = inventory_fixture(false, false).await;
+    db.batch_execute(&format!("ALTER TABLE {schema}.secret ALTER COLUMN value TYPE bigint USING 1::bigint"))
+        .await
+        .expect("change encrypted column type away from the declaration");
+    let wrong_type = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options)
+        .await
+        .expect_err("wrong encrypted column type must fail");
+    assert!(matches!(wrong_type, Error::Database(message) if message.contains("type=int8") && message.contains("expected_type=text")));
+    drop_inventory_fixture(&db, &schema).await;
+
+    let (db, schema, options) = inventory_fixture(false, false).await;
+    db.batch_execute(&format!("ALTER TABLE {schema}.secret ALTER COLUMN backup DROP NOT NULL"))
+        .await
+        .expect("change encrypted column nullability away from the declaration");
+    let wrong_nullability = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options)
+        .await
+        .expect_err("wrong encrypted column nullability must fail");
+    assert!(matches!(wrong_nullability, Error::Database(message) if message.contains("not_null=false") && message.contains("expected_not_null=true")));
+    drop_inventory_fixture(&db, &schema).await;
+}
+
+#[tokio::test]
 async fn metadata_inventory_rejects_an_unrelated_schema() {
     let (db, _schema, options) = inventory_fixture(false, false).await;
     let error = aip_service::encryption_runtime::verify_rekey_inventory(&db, "aip_rekey_wrong_schema", &options)
