@@ -245,7 +245,6 @@ const DashboardPage = (): ReactElement => {
                     pointColor={{ theme: 'background' }}
                     pointBorderWidth={2}
                     pointBorderColor={{ from: 'serieColor' }}
-                    useMesh
                     tooltip={({ point }) => (
                       <div className="chart-panel__tooltip">
                         <strong>

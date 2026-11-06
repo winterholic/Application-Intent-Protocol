@@ -391,6 +391,21 @@ def main() -> int:
                     if not render_result["verified"]:
                         raise RuntimeError(f"{label}: rendered SVG point values differ from the DB fixture {json.dumps(render_result, ensure_ascii=False)}")
                     page.screenshot(path=str(output / f"admin-dashboard-signup-{label}.png".replace(" ", "-")), full_page=True)
+                    for index, point in enumerate(expected_points):
+                        dot = chart_svg.locator("circle").nth(index)
+                        dot.hover()
+                        tooltip = page.locator(".chart-panel__tooltip").first
+                        expect(tooltip).to_be_visible()
+                        expect(tooltip).to_contain_text(f"신규가입 {point['count']}명")
+                        year, month, day = map(int, point["date"].split("-"))
+                        if period in {"1y", "3y"}:
+                            tooltip_date = f"{year}년 {month}월"
+                        elif period == "3m":
+                            tooltip_date = f"{year}년 {month}월 {day}일 주"
+                        else:
+                            tooltip_date = f"{year}년 {month}월 {day}일"
+                        expect(tooltip).to_contain_text(tooltip_date)
+                    checks.setdefault("signup_trend_tooltips", {})[period] = len(expected_points)
                 checks["signup_trend_periods"] = trend_results
                 checks["signup_trend_rendered_svg"] = trend_render_results
                 checks["signup_trend_period_sums"] = period_sums
