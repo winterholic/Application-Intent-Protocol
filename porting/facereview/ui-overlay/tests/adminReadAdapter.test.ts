@@ -17,12 +17,25 @@ function fakeClient(handlers: {
     client: {
       async read(query: Query) { reads.push(query); return { ok: true as const, rows: handlers.read?.(query) ?? [] }; },
       async aggregate(request: { aggregate: string; input?: Query; filter?: unknown[] }) { aggregates.push(request); return handlers.aggregate?.(request) ?? 0; },
-      async extension(name: string) { extensions.push(name); return handlers.extension?.(name) ?? {}; },
+      async extension(name: string) {
+        extensions.push(name);
+        return handlers.extension?.(name) ?? (name === 'User.temporalContext' ? { body: JSON.stringify({ now: '2026-10-23T09:30:00Z' }) } : {});
+      },
     },
   };
 }
 
-const now = () => new Date('2026-10-23T09:30:00Z');
+async function withBrowserClock<T>(browserNow: string, work: () => Promise<T>): Promise<T> {
+  const NativeDate = globalThis.Date;
+  const browserMs = NativeDate.parse(browserNow);
+  class BrowserDate extends NativeDate {
+    constructor(value?: string | number) { super(value === undefined ? browserMs : value); }
+    static now() { return browserMs; }
+  }
+  globalThis.Date = BrowserDate;
+  try { return await work(); }
+  finally { globalThis.Date = NativeDate; }
+}
 
 test('naiveIso turns the server RFC 3339 time into the original naive isoformat the screens parse', () => {
   assert.equal(naiveIso('2026-10-02T03:00:00Z'), '2026-10-02T03:00:00');
@@ -139,7 +152,7 @@ test('comments read the video reference separately so a hidden video keeps its i
 test('signup trend buckets by day, by Monday week and by month with the original start and end clipping', async () => {
   const seen: Array<{ from: string; to: string }> = [];
   const { client } = fakeClient({ aggregate: (request) => { seen.push(request.input as { from: string; to: string }); return seen.length; } });
-  const api = createAdminReadApi(client, { now });
+  const api = createAdminReadApi(client);
 
   const week = await api.getSignupTrend('7d');
   assert.equal(week.data.granularity, 'day');
@@ -169,6 +182,82 @@ test('signup trend buckets by day, by Monday week and by month with the original
   assert.equal(unknown.data.points.length, 7);
 });
 
+test('signup trend uses the server UTC date across a browser clock that is ahead or behind midnight', async () => {
+  const serverNow = '2026-10-23T23:59:59.900123Z';
+  const serverContext = { body: JSON.stringify({ now: serverNow }) };
+  const expected = {
+    firstDay: { from: '2026-10-17T00:00:00Z', to: '2026-10-18T00:00:00Z' },
+    lastDay: { from: '2026-10-23T00:00:00Z', to: '2026-10-24T00:00:00Z' },
+  };
+
+  for (const browserNow of ['2026-10-23T00:00:00.100Z', '2026-10-24T00:00:00.100Z']) {
+    const seen: Array<{ from: string; to: string }> = [];
+    const { client, extensions } = fakeClient({
+      aggregate: (request) => { seen.push(request.input as { from: string; to: string }); return 0; },
+      extension: (name) => name === 'User.temporalContext' ? serverContext : {},
+    });
+    const reply = await withBrowserClock(browserNow, () => createAdminReadApi(client).getSignupTrend('7d'));
+
+    assert.deepEqual(extensions, ['User.temporalContext']);
+    assert.deepEqual(reply.data.points.map((point) => point.date), [
+      '2026-10-17', '2026-10-18', '2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23',
+    ]);
+    assert.deepEqual(seen[0], expected.firstDay);
+    assert.deepEqual(seen.at(-1), expected.lastDay);
+  }
+});
+
+test('all published signup windows use the server UTC boundary and preserve every zero bucket', async () => {
+  const serverNow = '2026-10-23T23:59:59.900123Z';
+  const expected = [
+    { period: '7d', count: 7, first: '2026-10-17', firstFrom: '2026-10-17T00:00:00Z', lastTo: '2026-10-24T00:00:00Z' },
+    { period: '30d', count: 30, first: '2026-09-24', firstFrom: '2026-09-24T00:00:00Z', lastTo: '2026-10-24T00:00:00Z' },
+    { period: '3m', count: 14, first: '2026-07-20', firstFrom: '2026-07-26T00:00:00Z', lastTo: '2026-10-24T00:00:00Z' },
+    { period: '1y', count: 13, first: '2025-10-01', firstFrom: '2025-10-24T00:00:00Z', lastTo: '2026-10-24T00:00:00Z' },
+    { period: '3y', count: 37, first: '2023-10-01', firstFrom: '2023-10-25T00:00:00Z', lastTo: '2026-10-24T00:00:00Z' },
+  ] as const;
+
+  await withBrowserClock('2026-10-24T00:00:00.100Z', async () => {
+    for (const item of expected) {
+      const seen: Array<{ from: string; to: string }> = [];
+      const { client } = fakeClient({
+        aggregate: (request) => { seen.push(request.input as { from: string; to: string }); return null; },
+        extension: (name) => name === 'User.temporalContext' ? { body: JSON.stringify({ now: serverNow }) } : {},
+      });
+      const reply = await createAdminReadApi(client).getSignupTrend(item.period);
+      assert.equal(reply.data.points.length, item.count);
+      assert.equal(reply.data.points[0].date, item.first);
+      assert.ok(reply.data.points.every((point) => point.count === 0), `${item.period} keeps empty server-day buckets`);
+      assert.equal(seen[0].from, item.firstFrom);
+      assert.equal(seen.at(-1)?.to, item.lastTo);
+    }
+  });
+});
+
+test('a missing or malformed server temporal context fails closed instead of falling back to the browser clock', async () => {
+  const { client, aggregates } = fakeClient({ extension: () => ({ body: JSON.stringify({ now: 'not-a-timestamp' }) }) });
+  await assert.rejects(createAdminReadApi(client).getSignupTrend('7d'), { code: 'CLIENT.PROTOCOL_ERROR' });
+  assert.equal(aggregates.length, 0);
+});
+
+test('business stats derives the rolling activity window and computed_at from the server UTC calculation time', async () => {
+  const serverNow = '2026-10-23T23:59:59.900123Z';
+  const { client, aggregates } = fakeClient({
+    aggregate: (request) => request.aggregate === 'User.weeklyActive' ? 5 : 1,
+    extension: (name) => name === 'User.temporalContext'
+      ? { body: JSON.stringify({ now: serverNow }) }
+      : name === 'VideoRequest.pipeline'
+        ? { body: JSON.stringify({ pending_count: 0, avg_processing_minutes: null }) }
+        : { body: JSON.stringify({ avg_completion_rate: 0, emotion_distribution: { neutral: 0, happy: 0, surprise: 0, sad: 0, angry: 0 }, dominant_emotion_video_counts: [] }) },
+  });
+
+  const reply = await withBrowserClock('2026-10-24T00:00:00.100Z', () => createAdminReadApi(client).getBusinessStats());
+  assert.deepEqual(aggregates.find((request) => request.aggregate === 'User.weeklyActive')?.input, { since: '2026-10-16T23:59:59.900123Z' });
+  assert.equal(reply.data.signup_trend[0].date, '2026-10-17');
+  assert.equal(reply.data.signup_trend.at(-1)?.date, '2026-10-23');
+  assert.equal(reply.data.computed_at, '2026-10-23T23:59:59.900123');
+});
+
 test('business stats join the aggregates and the two read extensions; only genres with a visible video get views, most viewed first', async () => {
   const { client, aggregates, extensions } = fakeClient({
     aggregate: (request) => {
@@ -177,13 +266,15 @@ test('business stats join the aggregates and the two read extensions; only genre
       if (request.aggregate === 'Video.categoryViews') return ({ vlog: 90, music: 400 } as Record<string, number>)[(request.input as { category: string }).category] ?? 7;
       return 1;
     },
-    extension: (name) => name === 'VideoRequest.pipeline'
-      ? { body: JSON.stringify({ pending_count: 3, avg_processing_minutes: null }) }
-      : { body: JSON.stringify({ avg_completion_rate: 0.5, emotion_distribution: { neutral: 0.1, happy: 0.2, surprise: 0.3, sad: 0.2, angry: 0.2 }, dominant_emotion_video_counts: [{ emotion: 'happy', video_count: 2 }] }) },
+    extension: (name) => name === 'User.temporalContext'
+      ? { body: JSON.stringify({ now: '2026-10-23T09:30:00Z' }) }
+      : name === 'VideoRequest.pipeline'
+        ? { body: JSON.stringify({ pending_count: 3, avg_processing_minutes: null }) }
+        : { body: JSON.stringify({ avg_completion_rate: 0.5, emotion_distribution: { neutral: 0.1, happy: 0.2, surprise: 0.3, sad: 0.2, angry: 0.2 }, dominant_emotion_video_counts: [{ emotion: 'happy', video_count: 2 }] }) },
   });
-  const reply = await createAdminReadApi(client, { now }).getBusinessStats();
+  const reply = await createAdminReadApi(client).getBusinessStats();
 
-  assert.deepEqual(extensions.sort(), ['Video.contentHealth', 'VideoRequest.pipeline']);
+  assert.deepEqual(extensions.sort(), ['User.temporalContext', 'Video.contentHealth', 'VideoRequest.pipeline']);
   assert.deepEqual(aggregates.find((request) => request.aggregate === 'User.weeklyActive')?.input, { since: '2026-10-16T09:30:00Z' });
   const data = reply.data;
   assert.equal(data.signup_trend.length, 7);

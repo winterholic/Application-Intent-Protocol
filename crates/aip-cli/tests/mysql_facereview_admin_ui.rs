@@ -549,7 +549,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         ("User.weeklyActive", json!({"aggregate": "User.weeklyActive", "input": {"since": "2026-01-01T00:00:00Z"}})),
         ("VideoRequest.pendingCount", json!({"aggregate": "VideoRequest.pendingCount", "input": {}})),
     ];
-    let extension_names = ["User.systemStatus", "Video.contentHealth", "VideoRequest.pipeline"];
+    let extension_names = ["User.systemStatus", "User.temporalContext", "Video.contentHealth", "VideoRequest.pipeline"];
     for (name, query) in &queries {
         let reply = post(&address, "/read", Some(&admin_token), &fingerprint, &json!({"query": query})).await;
         assert_eq!(reply["ok"], true, "the administrator is answered {name}: {reply}");
@@ -579,7 +579,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         }
         let enqueued = post(&address, "/jobs/enqueue", token, &fingerprint, &approval_input).await;
         assert_eq!(enqueued["code"], job_code, "{who} must be refused the approval job: {enqueued}");
-        println!("policy: {who} refused 6 administrator aggregates, 3 administrator extensions and the approval job");
+        println!("policy: {who} refused 6 administrator aggregates, 4 administrator extensions and the approval job");
     }
     // The member's own write works with this envelope (control), and the same envelope cannot raise a role.
     let own_write = post(
