@@ -138,6 +138,7 @@ impl KekConfig {
 
 /// A declaration-derived, PostgreSQL-checked inventory. Construction is private to this module so
 /// callers cannot mark an arbitrary target slice as complete.
+#[derive(Debug)]
 pub struct VerifiedRekeyInventory {
     pub scope: Scope,
     pub targets: Vec<RekeyTarget>,
