@@ -46,6 +46,7 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertTrue(callable(member_recommend_request_matches), 'member_recommend_request_matches is missing')
         body = {'extension': 'VideoRequest.recommend', 'input': {'user': 'member', 'youtube_url_list': '["AipForm0001", "AipForm0002"]'}}
         self.assertTrue(member_recommend_request_matches(body, 'member', ['AipForm0001', 'AipForm0002']))
+        self.assertTrue(member_recommend_request_matches({'key': 'k1', 'request': body}, 'member', ['AipForm0001', 'AipForm0002']))
         for broken in [None, {}, {**body, 'extension': 'Other.recommend'},
                        *[{**body, 'input': {**body['input'], key: value}} for key, value in
                          [('user', 'other'), ('youtube_url_list', 'invalid'), ('youtube_url_list', '[]'),
@@ -56,9 +57,10 @@ class BrowserEvidenceTests(unittest.TestCase):
         from product.tests import facereview_ui_browser_evidence as evidence
         member_recommend_evidence = getattr(evidence, 'member_recommend_evidence', None)
         self.assertTrue(callable(member_recommend_evidence), 'member_recommend_evidence is missing')
-        row = {'path': '/extension', 'recommend_input_matches': True, 'status': 200,
+        row = {'path': '/apply', 'recommend_input_matches': True, 'status': 200,
                'body_captured': True, 'ok': True, 'contract_matches_runtime': True, 'requested_count': 2}
         self.assertTrue(member_recommend_evidence([row], True, True)['verified'])
+        self.assertTrue(member_recommend_evidence([{**row, 'path': '/extension'}], True, True)['verified'])
         refused = {**row, 'ok': False, 'requested_count': None, 'code': 'WIRE.ALREADY_EXISTS'}
         self.assertTrue(member_recommend_evidence([refused], False, True)['verified'])
         for broken in [[], [row, row], [{**row, 'requested_count': True}], [{**row, 'requested_count': 1}],
@@ -66,7 +68,7 @@ class BrowserEvidenceTests(unittest.TestCase):
             self.assertFalse(member_recommend_evidence(broken, True, True)['verified'])
         self.assertFalse(member_recommend_evidence([{**refused, 'code': 'WIRE.INTERNAL'}], False, True)['verified'])
         self.assertFalse(member_recommend_evidence([row], True, False)['verified'])
-        self.assertFalse(member_recommend_evidence([{**row, 'path': '/apply'}], True, True)['verified'])
+        self.assertFalse(member_recommend_evidence([{**row, 'path': '/read'}], True, True)['verified'])
 
     def test_bookmark_listing_summary_requires_exact_request_shape_and_keeps_only_counts(self):
         from product.tests.facereview_ui_browser_evidence import bookmark_listing_request_matches, bookmark_listing_response_evidence

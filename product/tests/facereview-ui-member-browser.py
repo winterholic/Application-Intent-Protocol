@@ -379,6 +379,10 @@ def main() -> int:
                 else:
                     row["comment_target_matches"] = bool(comment_id) and request["target"]["ids"] == [comment_id]
                     row["comment_content_matches"] = comment_action == "delete" or request["values"]["content"] == COMMENT_EDITED
+            if isinstance(payload, dict):
+                req = payload.get('request', payload)
+                if isinstance(req, dict) and req.get('extension') == 'VideoRequest.recommend':
+                    row['recommend_input_matches'] = member_recommend_request_matches(payload, MEMBER_ID, RECOMMEND_VIDEO_IDS)
         if parsed.path == "/extension":
             payload = response.request.post_data_json
             if isinstance(payload, dict) and payload.get('extension') == 'VideoRequest.recommend':

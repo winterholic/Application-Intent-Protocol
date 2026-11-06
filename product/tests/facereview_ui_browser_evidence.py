@@ -96,6 +96,7 @@ SAFE_WIRE_CODES = {
     "WIRE.OUTPUT_INVALID",
     "WIRE.INVALID_STATE",
     "WIRE.MISSING_TARGET",
+    "WIRE.ALREADY_EXISTS",
 }
 
 
@@ -848,6 +849,8 @@ def member_search_evidence(requests: list[dict[str, object]], empty: bool, rende
 
 
 def member_recommend_request_matches(body: Any, member: str, video_ids: list[str]) -> bool:
+    if isinstance(body, dict) and 'request' in body and isinstance(body['request'], dict):
+        body = body['request']
     if not isinstance(body, dict) or body.get('extension') != 'VideoRequest.recommend':
         return False
     inputs = body.get('input')
@@ -860,7 +863,7 @@ def member_recommend_request_matches(body: Any, member: str, video_ids: list[str
 
 
 def member_recommend_evidence(api_rows: list[dict[str, object]], accepted: bool, rendered: bool) -> dict[str, object]:
-    rows = [row for row in api_rows if row.get('path') == '/extension' and 'recommend_input_matches' in row]
+    rows = [row for row in api_rows if row.get('path') in ('/apply', '/extension') and 'recommend_input_matches' in row]
     complete = (len(rows) == 1 and type(rows[0].get('status')) is int and rows[0]['status'] == 200
                 and all(rows[0].get(key) is True for key in
                         ('body_captured', 'recommend_input_matches', 'contract_matches_runtime')))
