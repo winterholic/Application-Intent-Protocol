@@ -815,6 +815,7 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertIn('echo "AIP_FACEREVIEW_DEFINITION_FILE=$definition" >> "$GITHUB_ENV"', admin_step)
         self.assertIn('node product/tools/build-sdk.mjs --out "$sdk"', admin_step)
         self.assertIn('npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"', admin_step)
+        self.assertIn('apply-admin-ui-overlay.sh "$admin" "$definition"', admin_step)
 
     def test_profile_browser_trace_init_script_executes_instead_of_only_declaring_arrow(self):
         source = Path(__file__).with_name("facereview-ui-profile-browser.py").read_text()

@@ -208,7 +208,7 @@ jobs:
           git -C "$admin" fetch --quiet --depth=1 origin "$pinned"
           git -C "$admin" checkout --quiet --detach "$pinned"
           test "$(git -C "$admin" rev-parse HEAD)" = "$pinned"
-          AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-admin-ui-overlay.sh "$admin" "$AIP_FACEREVIEW_DEFINITION_FILE"
+          AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-admin-ui-overlay.sh "$admin" "$definition"
           cd "$admin"
           npm ci --ignore-scripts --no-audit --no-fund
           npm install --ignore-scripts --no-audit --no-fund "$RUNNER_TEMP/aip-sdk-0.1.0.tgz"
