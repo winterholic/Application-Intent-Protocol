@@ -306,6 +306,142 @@ fn rekey_options_complete_inventory_accepted_by_assertions() {
     assert!(options.assert_complete_inventory().is_ok());
 }
 
+const INVENTORY_DEFINITION: &str = r#"
+resource Team { fields { id: Id } }
+resource Secret {
+  fields {
+    id: Id
+    team: Team
+    value: Text encrypted(scope: team)
+    backup: Text encrypted(scope: team)
+  }
+}
+resource SecretVersion {
+  fields {
+    id: Id
+    team: Team
+    encryptedValue: Text encrypted(scope: team)
+  }
+}
+"#;
+
+async fn inventory_fixture(omit_backup: bool, wrong_scope_fk: bool) -> (tokio_postgres::Client, String, RekeyOptions) {
+    use serde_json::Value;
+    let database_url = std::env::var("AIP_TEST_DATABASE_URL").expect("CI-provided isolated test database URL");
+    let (db, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls).await.expect("connect test database");
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let schema = format!("aip_rekey_inv_{}", uuid::Uuid::new_v4().simple());
+    db.batch_execute(&format!("CREATE SCHEMA {schema}")).await.expect("create owned inventory fixture schema");
+    db.batch_execute(&format!(
+        "CREATE TABLE {schema}.aip_migrate_meta (singleton boolean PRIMARY KEY, facts jsonb NOT NULL, facts_digest text NOT NULL);
+         CREATE TABLE {schema}.team (id bigint PRIMARY KEY);
+         CREATE TABLE {schema}.project (id bigint PRIMARY KEY);"
+    ))
+    .await
+    .expect("create inventory metadata and referenced resources");
+
+    let facts = spike_v1_fixture::load_str(INVENTORY_DEFINITION, spike_v1_fixture::Form::A).expect("compile declared encrypted resource metadata").execution;
+    let facts_value: Value = facts.clone();
+    let digest = spike_v1_fixture::digest(&facts_value);
+    db.execute(
+        &format!("INSERT INTO {schema}.aip_migrate_meta(singleton, facts, facts_digest) VALUES (true, $1, $2)"),
+        &[&facts_value, &digest],
+    )
+    .await
+    .expect("persist the declaration facts used by the deployment");
+
+    let secret_scope = if wrong_scope_fk { "project" } else { "team" };
+    let backup = if omit_backup { "" } else { ", backup text" };
+    db.batch_execute(&format!(
+        "CREATE TABLE {schema}.secret (
+           id bigint PRIMARY KEY,
+           team_id bigint NOT NULL REFERENCES {schema}.{secret_scope}(id),
+           value text NOT NULL{backup}
+         );
+         CREATE TABLE {schema}.secret_version (
+           id bigint PRIMARY KEY,
+           team_id bigint NOT NULL REFERENCES {schema}.team(id),
+           encrypted_value text NOT NULL
+         );"
+    ))
+    .await
+    .expect("create physical tables from the encrypted declarations");
+
+    let options = RekeyOptions {
+        scope_kind: "ref".into(),
+        scope_id: "42".into(),
+        holder_id: "inventory-test-worker".into(),
+        targets: vec![
+            RekeyTargetSpec { table: "secret".into(), column: "value".into(), id_column: "id".into(), resource: "Secret".into(), field: "value".into() },
+            RekeyTargetSpec { table: "secret".into(), column: "backup".into(), id_column: "id".into(), resource: "Secret".into(), field: "backup".into() },
+            RekeyTargetSpec {
+                table: "secret_version".into(),
+                column: "encrypted_value".into(),
+                id_column: "id".into(),
+                resource: "SecretVersion".into(),
+                field: "encryptedValue".into(),
+            },
+        ],
+        inventory_complete: true,
+    };
+    (db, schema, options)
+}
+
+#[tokio::test]
+async fn metadata_inventory_accepts_all_declared_columns_across_multiple_resources() {
+    let (db, schema, options) = inventory_fixture(false, false).await;
+    let inventory = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options).await.expect("metadata and PostgreSQL agree");
+    assert_eq!(inventory.targets.len(), 3);
+    assert_eq!(inventory.scope.kind(), "ref:Team");
+    assert_eq!(inventory.scope.id(), "42");
+}
+
+#[tokio::test]
+async fn caller_complete_claim_cannot_hide_a_missing_declared_encrypted_column() {
+    let (db, schema, mut options) = inventory_fixture(false, false).await;
+    options.targets.retain(|target| target.field != "backup");
+    options.inventory_complete = true;
+    let error = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options).await.expect_err("omitted encrypted field must fail");
+    assert!(matches!(error, Error::InvalidConfig(message) if message.contains("backup") && message.contains("missing")));
+}
+
+#[tokio::test]
+async fn metadata_inventory_rejects_duplicate_targets_and_scope_mismatch() {
+    let (db, schema, mut options) = inventory_fixture(false, false).await;
+    options.targets.push(options.targets[0].clone());
+    let duplicate = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options).await.expect_err("duplicate caller target must fail");
+    assert!(matches!(duplicate, Error::InvalidConfig(message) if message.contains("duplicate")));
+
+    let (db, schema, mut options) = inventory_fixture(false, false).await;
+    options.scope_kind = "service".into();
+    options.scope_id = "global".into();
+    let scope = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options).await.expect_err("declared ref scope cannot be asserted as service");
+    assert!(matches!(scope, Error::InvalidConfig(message) if message.contains("scope")));
+}
+
+#[tokio::test]
+async fn metadata_inventory_rejects_missing_physical_column_and_wrong_scope_foreign_key() {
+    let (db, schema, options) = inventory_fixture(true, false).await;
+    let missing_column = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options).await.expect_err("missing PG column must fail");
+    assert!(matches!(missing_column, Error::Database(message) if message.contains("backup")));
+
+    let (db, schema, options) = inventory_fixture(false, true).await;
+    let wrong_fk = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options).await.expect_err("wrong PG scope FK must fail");
+    assert!(matches!(wrong_fk, Error::Database(message) if message.contains("team_id") && message.contains("Team")));
+}
+
+#[tokio::test]
+async fn metadata_inventory_rejects_an_unrelated_schema() {
+    let (db, _schema, options) = inventory_fixture(false, false).await;
+    let error = aip_service::encryption_runtime::verify_rekey_inventory(&db, "aip_rekey_wrong_schema", &options)
+        .await
+        .expect_err("schema without deployment declaration metadata must fail");
+    assert!(matches!(error, Error::Database(message) if message.contains("metadata")));
+}
+
 #[test]
 fn dek_store_accepts_valid_schema_and_rejects_bad_schema() {
     assert!(DekStore::new("aip_valid_schema").is_ok());
