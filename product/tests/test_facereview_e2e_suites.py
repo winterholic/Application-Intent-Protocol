@@ -13,7 +13,7 @@ RUNNER = ROOT / "scripts/facereview-e2e-suites.py"
 
 
 class SuiteRunnerTest(unittest.TestCase):
-    def run_runner(self, fail="", mode="run-ci", missing_test="", env_missing=(), fake_discovery="", zero_tests="", omit_markers=""):
+    def run_runner(self, fail="", mode="run-ci", missing_test="", env_missing=(), fake_discovery="", zero_tests="", omit_markers="", policy_extension_count="4"):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             cargo = root / "cargo"
@@ -35,7 +35,7 @@ else:
     print("test result: ok. 0 passed; 0 failed;" if suite == os.environ.get("ZERO_TESTS") else "test result: ok. 1 passed; 0 failed;")
     if suite != os.environ.get("OMIT_MARKERS"):
         print("member SDK journey: login, one refresh, UI adapter video read, bookmark on/off, comment create/edit/delete, logout")
-        print("policy: member refused 6 administrator aggregates, 3 administrator extensions and the approval job")
+        print(f"policy: member refused 6 administrator aggregates, {os.environ['POLICY_EXTENSION_COUNT']} administrator extensions and the approval job")
         print("React admin console journey: SUPER_ADMIN login")
 ''')
             cargo.chmod(0o755)
@@ -46,6 +46,7 @@ else:
                    "RECEIPT": str(root / "receipt"), "FAIL_SUITE": fail,
                    "MISSING_TEST": missing_test, "AIP_TEST_MONGO_URL": "fixture",
                    "FAKE_DISCOVERY": fake_discovery, "ZERO_TESTS": zero_tests, "OMIT_MARKERS": omit_markers,
+                   "POLICY_EXTENSION_COUNT": policy_extension_count,
                    "AIP_TEST_REDIS_URL": "fixture", "AIP_FACEREVIEW_ADMIN_UI_DIR": "fixture",
                    "SUITE_NAMES": json.dumps({s.binary: s.test for s in module.SUITES if s.name != "scope"})}
             # Auth and scope share a Rust binary, so discovery lists both names.
@@ -120,6 +121,24 @@ else:
         result, summary, _ = self.run_runner(omit_markers="mysql_facereview_admin_ui")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(summary["suites"]["adminui"]["required_markers_present"])
+
+    def test_adminui_policy_marker_requires_four_extension_denials(self):
+        accepted, accepted_summary, _ = self.run_runner(mode="run-ci-admin", policy_extension_count="4")
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertEqual(accepted_summary["suites"]["adminui"]["status"], "passed")
+        print(f"policy marker 4: runner_exit={accepted.returncode}, required_markers_present={accepted_summary['suites']['adminui']['required_markers_present']}")
+
+        stale, stale_summary, _ = self.run_runner(mode="run-ci-admin", policy_extension_count="3")
+        self.assertEqual(stale.returncode, 1)
+        self.assertEqual(stale_summary["suites"]["adminui"]["status"], "failed")
+        self.assertFalse(stale_summary["suites"]["adminui"]["required_markers_present"])
+        print(f"policy marker 3: runner_exit={stale.returncode}, required_markers_present={stale_summary['suites']['adminui']['required_markers_present']}")
+
+        missing, missing_summary, _ = self.run_runner(mode="run-ci-admin", omit_markers="mysql_facereview_admin_ui")
+        self.assertEqual(missing.returncode, 1)
+        self.assertEqual(missing_summary["suites"]["adminui"]["status"], "failed")
+        self.assertFalse(missing_summary["suites"]["adminui"]["required_markers_present"])
+        print(f"policy marker missing: runner_exit={missing.returncode}, required_markers_present={missing_summary['suites']['adminui']['required_markers_present']}")
 
 
 if __name__ == "__main__":

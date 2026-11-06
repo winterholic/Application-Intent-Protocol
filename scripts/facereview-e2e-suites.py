@@ -25,7 +25,7 @@ SUITES = (
     Suite("fill", "mysql_facereview_category_fill_job", "the_category_fill_job_searches_the_thinnest_genres_within_the_original_budget", ("AIP_TEST_MONGO_URL",)),
     Suite("admin", "mysql_facereview_admin", "facereview_administrator_lists_match_the_original_admin_service_through_the_real_server"),
     Suite("adminui", "mysql_facereview_admin_ui", "facereview_admin_console_runs_through_the_generated_sdk_and_the_servers_own_policy", ("AIP_TEST_MONGO_URL",), (
-        "policy: member refused 6 administrator aggregates, 3 administrator extensions and the approval job",)),
+        "policy: member refused 6 administrator aggregates, 4 administrator extensions and the approval job",)),
 )
 
 
