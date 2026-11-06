@@ -54,6 +54,8 @@ i18n은 기존 STATUS의 열린 항목 그대로다.
 
 ### source trigger·후보·projection 계약 (정렬만으로 닫지 않는다)
 
+2026-11-06 최신: `4873f03` / [42155532950](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42155532950)의 import Python 5·compiler 4·생성 문서 21·PG 선택 대상 1·앱 HTTP/PG 25·UI host 27건이 통과했다. 아래 Topic.delete 9경계와 실제 SDK/UI Topic·답글 저장 및 readonly 거부가 포함된다. Post.publish의 원자 Topic 갱신 뒤 중복 Topic.bump를 호출하던 UI/SDK 연결을 교정하고 합성 재계산 fixture의 source order·Topic 포인터를 명시했다. 이전 a695 시점의 Topic.delete 미검증 표기는 이 실행과 아래 92 증거로 대체한다. 합성 Post.hide/delete 회귀를 원본 관계 순서·물리 retention 동등성으로 확대하지 않으며 해당 부족분과 전체 포팅은 open이다.
+
 2026-11-06 후속: `a695d40` / [42141043631](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42141043631)은 compiler 4·생성 문서 21·PG 선택 대상 1·앱 13건 모두 통과했다. Topic.hide의 top/non-top/only/null-self/null-other 5개 실제 RED를 교정해 숨기기 전 source order·Forum projection·첫 글 숨김 metadata를 검증했다. `PostOrder`와 같은 native 정수 Id namespace의 참조 크기 비교만 허용하며 UUID/상이 namespace 비교는 거부한다. Topic.delete와 Post.hide/unhide/delete, 원본 retention 및 전체 포팅은 여전히 open이다.
 
 2026-11-06 증분: `46e33d3` / [42139333310](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42139333310)의 실제 compiler 2건·PG 선택 대상 1건(apply/bundle/compose)·앱 HTTP/PG 8건에서 native publish의 Topic 포인터와 아래 Topic.unhide의 엄격 비교·Topic 작성자 projection·첫 글 metadata·동률/이전값 보존을 검증했다. 아래 다른 경로의 부족분은 계속 open이다.

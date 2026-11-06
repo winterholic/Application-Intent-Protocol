@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-06 답글의 원자 publish 연결·확대 회귀 검증
+
+집중 [42155532950](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42155532950), 실제 checkout `4873f03d9130b4702746cc4db60d281fe86474bd`에서 import Python 5건·컴파일러 4건·생성 문서 21건·선택 대상 PostgreSQL 1건·앱 HTTP/PG 25건·UI host 27건이 통과했다. 앱 25건에는 아래 Topic.delete 9경계와 실제 SDK/UI 글·답글 저장, readonly 쓰기 거부 및 합성 last-post 재계산 회귀가 포함된다. 전용 Python 환경을 명시해 SDK 여정도 DB와 서버에 실제 진입했다.
+
+Post.publish가 Topic 포인터와 날짜를 같은 트랜잭션에서 갱신하므로 UI와 SDK fixture의 중복 Topic.bump 호출을 제거했다. 이전 main `5f39903` worker에서 실제로 거부된 답글 bundle과 누락된 합성 Topic.last_post 초기값을 함께 교정했다. 이 결과는 Post.hide/unhide/delete의 원본 관계 순서·물리 retention 동등성 또는 최종 main 전체 CI·전체 포팅·1.0 완료를 뜻하지 않는다. 기존 main의 유효 전체 실행은 보존한다.
+
 ## 2026-11-06 Topic delete 조건부 projection·hidden 후보 검증
 
 집중 [42154597803](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42154597803), 실제 checkout `92a301628ecf561f7b66f86a5b5489930dd6ffc2`에서 컴파일러 4건·생성 문서 21건·선택 대상 PostgreSQL 1건·앱 HTTP/PG 23건이 통과했다. Topic.delete는 Forum 포인터가 없거나 삭제 Topic의 마지막 글을 가리킬 때만 재계산한다. 후보는 actor의 hidden Post 조회 권한을 따르며 hidden Topic 자체를 추가로 제외하지 않는다. 이미 현재 포인터가 최대 날짜 후보 집합에 있으면 projection을 보존한다. 동시각 후보의 특정 UUID 승자는 원본이 정하지 않으므로 후보 집합과 선택 행의 모든 projection 필드 일치로 검증했다. non-current·hidden-topic·hidden-post·member-hidden-topic·member-hidden-post·empty-pointer·same-pointer·only·tie 9경계에 인가 거부·재전송·무관 행 보존을 포함한다. 수정 전 7경계 중 4건은 실제 semantic RED였다.
