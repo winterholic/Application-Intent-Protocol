@@ -234,6 +234,9 @@ def main() -> int:
                     expect(page.get_by_role("button", name="마이페이지로 이동", exact=True)).to_be_visible()
                     ui["main_visible"] = True
                     page.wait_for_load_state("networkidle")
+                    # SPA navigation can retain cached networkidle. Drain the first
+                    # main page before reload can discard its response events.
+                    wait_for_api_completion(page, started, finished, pending, failures)
                     stage = "reload_main"
                     page.reload(wait_until="domcontentloaded")
                     expect(page.get_by_role("button", name="마이페이지로 이동", exact=True)).to_be_visible()

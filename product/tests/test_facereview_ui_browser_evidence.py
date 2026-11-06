@@ -96,6 +96,38 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertEqual(pending, {})
         self.assertEqual(page.ticks, 2)
 
+    def test_account_drains_first_main_requests_before_reload_even_with_cached_networkidle(self):
+        source = Path(__file__).with_name('facereview-ui-account-browser.py')
+        tree = ast.parse(source.read_text())
+        tutorial = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
+                        and any(isinstance(child, ast.Constant) and child.value == 'main_visible'
+                                for statement in node.orelse for child in ast.walk(statement)))
+        statements = tutorial.orelse
+        start = next(index for index, statement in enumerate(statements)
+                     if isinstance(statement, ast.Assign) and isinstance(statement.targets[0], ast.Subscript)
+                     and isinstance(statement.targets[0].slice, ast.Constant)
+                     and statement.targets[0].slice.value == 'main_visible')
+        end = next(index for index in range(start+1,len(statements))
+                   if isinstance(statements[index], ast.Expr) and isinstance(statements[index].value, ast.Call)
+                   and isinstance(statements[index].value.func, ast.Attribute)
+                   and statements[index].value.func.attr == 'reload')
+        # Execute the actual synchronization and reload calls. The server has
+        # accepted the three requests, but their response events are still queued.
+        started, finished = {'extension-1','extension-2','extension-3'}, set()
+        pending, failures = {}, []
+        class Page:
+            def wait_for_load_state(self, state):
+                pass  # networkidle can still describe the preceding SPA document
+            def wait_for_timeout(self, milliseconds):
+                finished.update(started)
+            def reload(self, **kwargs):
+                assert started == finished, 'reload discarded outstanding first-main responses'
+        calls = [statement for statement in statements[start+1:end+1] if isinstance(statement, ast.Expr)]
+        code = compile(ast.fix_missing_locations(ast.Module(body=calls,type_ignores=[])),str(source),'exec')
+        exec(code, {'page':Page(), 'started':started,'finished':finished,'pending':pending,'failures':failures,
+                    'wait_for_api_completion':wait_for_api_completion})
+        self.assertEqual(started, finished)
+
     def test_api_completion_never_accepts_a_failed_or_unfinished_request(self):
         class Page:
             def wait_for_timeout(self, milliseconds):
