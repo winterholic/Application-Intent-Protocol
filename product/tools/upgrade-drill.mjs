@@ -80,8 +80,9 @@ function tokenFor(jwk, privateKey) {
   return `${unsigned}.${sign("RSA-SHA256", Buffer.from(unsigned), privateKey).toString("base64url")}`;
 }
 
-async function startService(binary, appPath, configPath, stage) {
-  const child = spawn(binary, ["service", "serve", appPath, "--config", configPath], { cwd: repoDir, env: childEnv(), stdio: ["ignore", "pipe", "pipe"] });
+export async function startService(binary, appPath, configPath, stage, {ownedChildren, spawnProcess = spawn, stopProcess = stopService} = {}) {
+  const child = spawnProcess(binary, ["service", "serve", appPath, "--config", configPath], { cwd: repoDir, env: childEnv(), stdio: ["ignore", "pipe", "pipe"] });
+  ownedChildren?.add(child);
   let output = "";
   let errors = "";
   child.stderr.setEncoding("utf8");
@@ -106,7 +107,10 @@ async function startService(binary, appPath, configPath, stage) {
       if (!output.trim()) resolveOutcome({ started: false, code: "EXITED_WITHOUT_OUTPUT", errors: errors.slice(-400) });
     });
   });
-  if (!outcome.started) await stopService(child);
+  if (!outcome.started) {
+    await stopProcess(child);
+    ownedChildren?.delete(child);
+  }
   return { child, ...outcome, stage };
 }
 
@@ -120,6 +124,11 @@ async function stopService(child) {
     });
     child.kill("SIGTERM");
   });
+}
+
+export async function stopOwnedService(ownedChildren, child, stop = stopService) {
+  await stop(child);
+  ownedChildren.delete(child);
 }
 
 async function call(base, token, fingerprint, path, body) {
@@ -146,10 +155,13 @@ export async function rollbackBinaryOutcome(reverted, {call: request = call, tok
   return {started: false, failedClosedWith: refusal};
 }
 
-export async function finalizeDrill(report, {stopServer, cleanup, cleanupInfra, removeWorkDir}) {
+export async function finalizeDrill(report, {ownedChildren = new Set(), stopService: stop = stopService, cleanup, cleanupInfra, removeWorkDir}) {
   const cleanupFailures = [];
   const actions = [
-    ["cleanup-service", stopServer],
+    ...[...ownedChildren].map((child) => ["cleanup-service", async () => {
+      await stop(child);
+      ownedChildren.delete(child);
+    }]),
     ["cleanup-schema", cleanup],
     ["cleanup-infra-schema", cleanupInfra],
     ["cleanup-tempdir", removeWorkDir],
@@ -181,7 +193,9 @@ async function main() {
   const infra = infraSchema(schema);
   const workDir = await mkdtemp(join(tmpdir(), "aip-upgrade-drill-"));
   const report = { schema: "<run-owned>", oldBin: options.oldBin, newBin: options.newBin, workers: options.workers, stages: {} };
-  let server;
+  const ownedChildren = new Set();
+  const startOwnedService = (...args) => startService(...args, {ownedChildren});
+  const stopOwned = (child) => stopOwnedService(ownedChildren, child);
   const dumpPath = join(workDir, "pre-upgrade.dump");
   try {
     await mkdir(workDir, { recursive: true });
@@ -215,9 +229,9 @@ async function main() {
     const bound = runJson(options.oldBin, ["service", "principal", "--config", configPath, "bind", "--subject", "user-42", "--actor", "42"], "old-bind");
     assert(bound.affected === 1, "old-bind", "principal was not bound");
     const oldFingerprint = fingerprintOf(options.oldBin);
-    server = await startService(options.oldBin, options.app, configPath, "old-serve");
-    assert(server.started, "old-serve", `old binary did not start: ${describe(server)}`);
-    let base = `http://${server.address}`;
+    const oldService = await startOwnedService(options.oldBin, options.app, configPath, "old-serve");
+    assert(oldService.started, "old-serve", `old binary did not start: ${describe(oldService)}`);
+    let base = `http://${oldService.address}`;
     const ready = await fetch(`${base}/ready`);
     assert(ready.status === 200, "old-ready", `/ready answered ${ready.status}`);
     const written = await call(base, token, oldFingerprint, "/apply", { request: markRequest("11"), key: "drill-write-1" });
@@ -235,7 +249,7 @@ async function main() {
       const finished = await call(base, token, oldFingerprint, "/jobs/status", { id: jobId });
       assert(finished.run?.state === "SUCCEEDED", "old-job", `job ended in ${finished.run?.state}`);
     }
-    await stopService(server.child);
+    await stopOwned(oldService.child);
     const before = {
       rows: sql(`SELECT string_agg(id || ':' || checked, ',' ORDER BY id) FROM ${schema}.event`, "snapshot"),
       idempotency: Number(sql(`SELECT count(*) FROM ${schema}.aip_idem`, "snapshot")),
@@ -257,7 +271,7 @@ async function main() {
     const sqlSteps = (plan.steps ?? []).map((step) => step.sql ?? step.kind ?? "step");
     report.stages.plan = { blocked: plan.blocked, requiresReview: plan.requiresReview, changes: (plan.changes ?? []).map((change) => change.class ?? change), steps: sqlSteps.length };
     assert(sqlSteps.every((statement) => !/DROP|TRUNCATE|DELETE/iu.test(String(statement))), "new-plan", `the upgrade plan contains a destructive step: ${JSON.stringify(sqlSteps)}`);
-    const refused = await startService(options.newBin, options.app, configPath, "new-serve-before-apply");
+    const refused = await startOwnedService(options.newBin, options.app, configPath, "new-serve-before-apply");
     assert(!refused.started, "new-serve-before-apply", "the new binary served an old schema before the plan was applied");
     assert(String(refused.errors ?? "").includes("WIRE.SCHEMA_MISMATCH") || refused.code === "WIRE.SCHEMA_MISMATCH", "new-serve-before-apply", `unexpected refusal: ${describe(refused)}`);
     assert(String(refused.errors ?? "").includes("aip service migrate"), "new-serve-before-apply", `the refusal does not tell the operator how to upgrade: ${describe(refused)}`);
@@ -269,9 +283,9 @@ async function main() {
     const provisioned = runJson(options.newBin, ["service", "provision", "--config", configPath], "new-provision");
     assert(provisioned.ok === true, "new-provision", `provision failed: ${JSON.stringify(provisioned).slice(0, 300)}`);
     report.stages.apply = { refusedBeforeApply: String(refused.errors ?? "").trim().slice(0, 160), journalRows: [journalBefore, journalAfter], provisioned: true };
-    server = await startService(options.newBin, options.app, configPath, "new-serve");
-    assert(server.started, "new-serve", `new binary did not start after the upgrade was applied: ${describe(server)}`);
-    base = `http://${server.address}`;
+    const upgradedService = await startOwnedService(options.newBin, options.app, configPath, "new-serve");
+    assert(upgradedService.started, "new-serve", `new binary did not start after the upgrade was applied: ${describe(upgradedService)}`);
+    base = `http://${upgradedService.address}`;
     const newFingerprint = fingerprintOf(options.newBin);
     assert((await fetch(`${base}/ready`)).status === 200, "new-ready", "/ready not 200 on the upgraded schema");
     const rows = await call(base, token, newFingerprint, "/read", eventQuery);
@@ -296,7 +310,7 @@ async function main() {
       }
       assert(state === "SUCCEEDED", "new-job", `job on the upgraded schema ended in ${state}`);
     }
-    await stopService(server.child);
+    await stopOwned(upgradedService.child);
     const infraTables = sql(`SELECT string_agg(tablename, ',' ORDER BY tablename) FROM pg_tables WHERE schemaname='${infra}'`, "after-upgrade");
     const jobColumns = options.workers === "none" ? "" : sql(`SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_schema='${schema}' AND table_name='aip_jobs' AND column_name='trace_id'`, "after-upgrade");
     report.stages.upgrade = {
@@ -308,16 +322,16 @@ async function main() {
     };
 
     // 4. Rollback A: only the binary goes back. The old binary meets a schema the new one has already touched.
-    const reverted = await startService(options.oldBin, options.app, configPath, "rollback-binary");
+    const reverted = await startOwnedService(options.oldBin, options.app, configPath, "rollback-binary");
     const rollbackBinary = await rollbackBinaryOutcome(reverted, {token, oldFingerprint});
-    if (reverted.started) await stopService(reverted.child);
+    if (reverted.started) await stopOwned(reverted.child);
     report.stages.rollbackBinaryOnly = rollbackBinary;
 
     // 5. Rollback B: restore the pre-upgrade dump and serve with the old binary.
     sql(`DROP SCHEMA ${schema} CASCADE`, "restore");
     sql(`DROP SCHEMA IF EXISTS ${infra} CASCADE`, "restore");
     run("pg_restore", ["--no-owner", "--dbname", database, dumpPath], "restore");
-    const restored = await startService(options.oldBin, options.app, configPath, "restore-serve");
+    const restored = await startOwnedService(options.oldBin, options.app, configPath, "restore-serve");
     assert(restored.started, "restore-serve", `old binary did not start on the restored schema: ${describe(restored)}`);
     const restoredBase = `http://${restored.address}`;
     const back = await call(restoredBase, token, oldFingerprint, "/read", eventQuery);
@@ -326,7 +340,7 @@ async function main() {
     assert(backReplay.ok === true && backReplay.replayed === true, "restore-replay", "idempotency record missing after restore");
     const redo = await call(restoredBase, token, oldFingerprint, "/apply", { request: markRequest("12"), key: "drill-write-2" });
     assert(redo.ok === true && redo.replayed !== true, "restore-redo", "the write undone by the restore must run again as new");
-    await stopService(restored.child);
+    await stopOwned(restored.child);
     report.stages.rollbackRestore = { rowsRestored: true, idempotencyRestored: true, undoneWriteRunsAgain: true };
     report.ok = true;
   } catch (error) {
@@ -334,7 +348,7 @@ async function main() {
     report.failure = error instanceof DrillFailure ? { stage: error.stage, message: error.message } : { message: String(error?.message ?? error) };
   } finally {
     await finalizeDrill(report, {
-      stopServer: () => server ? stopService(server.child) : undefined,
+      ownedChildren,
       cleanup: () => {
         sql(`DROP SCHEMA IF EXISTS ${schema} CASCADE`, "cleanup-schema");
       },
