@@ -582,7 +582,20 @@ impl<'a> Ctx<'a> {
                 } else if !same_target(&lt.ty, &rt.ty) {
                     return Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{}` {op} `{}`", lt.show(), rt.show()), sp));
                 } else if !matches!(*op, "=" | "!=") && !matches!(lt.ty, Ty::Time | Ty::Date | Ty::Int | Ty::Decimal(_, _) | Ty::Text) {
-                    return Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{}`는 크기 비교 불가", lt.show()), sp));
+                    // Native integer identities retain their numeric source order.
+                    // UUID/shared/unknown key kinds stay fail-closed; same_target
+                    // above also prevents comparing distinct identity namespaces.
+                    let native_integer_identity = match &lt.ty {
+                        Ty::Ref(resource) | Ty::Id(resource) => self
+                            .res
+                            .get(resource.as_str())
+                            .and_then(|resource| resource.fields.iter().find(|field| field.name == "id"))
+                            .is_some_and(|field| field.ty.name == "Id" && !field.ty.id_of),
+                        _ => false,
+                    };
+                    if !native_integer_identity {
+                        return Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{}`는 크기 비교 불가", lt.show()), sp));
+                    }
                 }
                 Ok((json!({ "cmp": op, "l": lv, "r": rv }), b))
             }

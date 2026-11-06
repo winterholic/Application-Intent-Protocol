@@ -30,7 +30,7 @@
 |---|---|---|
 | `enum` | `enum Name { A, B }` | 닫힌 값 집합. 값은 따옴표 없이 쓰고 DB에는 text CHECK로 저장된다 |
 | `actor` | `actor Resource` | 호출자 행을 가리키는 resource. 조건식의 actor는 그 행이다. 정확히 하나 |
-| `predicate` | `predicate name(p: Type, ...) = condition` | 이름 붙인 재사용 조건. name(args)로 부르고 서로 순환 호출할 수 없다 |
+| `predicate` | `predicate name(p: Type, ...) = condition` | 이름 붙인 재사용 조건. name(args)로 부르고 서로 순환 호출할 수 없다. 같은 resource의 native 정수 Id 참조끼리는 크기를 비교할 수 있으며 UUID·다른 identity namespace는 거부한다 |
 | `access` | `access name = totalOfVisible(R)  \|  access name(a: Actor, c: X.Id) = condition` | 집계·확장 결과를 누구에게 줄지 정하는 guard |
 | `limit` | `limit name on R = atMost N where condition` | 조건에 맞는 행 수의 상한. resource가 invariant로 per 필드마다 건다 |
 | `resource` | `resource Name { ... }` | 테이블 하나와 그 테이블을 여는 방식 |
