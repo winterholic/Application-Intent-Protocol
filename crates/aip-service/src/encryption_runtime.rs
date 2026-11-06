@@ -36,8 +36,8 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 /// KEK provider configuration from service.json.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum KekConfig {
     /// Load from an environment variable (0400/0600 or inline spec).
     Env { name: String, active: String },
@@ -47,9 +47,83 @@ pub enum KekConfig {
     Spec { spec: String, active: String },
 }
 
+impl std::fmt::Debug for KekConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Env { name, active } => f.debug_struct("KekConfig::Env").field("name", name).field("active", active).finish(),
+            Self::File { path, active } => f.debug_struct("KekConfig::File").field("path", path).field("active", active).finish(),
+            Self::Spec { active, .. } => f.debug_struct("KekConfig::Spec").field("spec", &"[REDACTED]").field("active", active).finish(),
+        }
+    }
+}
+
+impl Serialize for KekConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        match self {
+            Self::Env { name, active } => {
+                let mut s = serializer.serialize_struct("KekConfig", 3)?;
+                s.serialize_field("kind", "env")?;
+                s.serialize_field("name", name)?;
+                s.serialize_field("active", active)?;
+                s.end()
+            }
+            Self::File { path, active } => {
+                let mut s = serializer.serialize_struct("KekConfig", 3)?;
+                s.serialize_field("kind", "file")?;
+                s.serialize_field("path", path)?;
+                s.serialize_field("active", active)?;
+                s.end()
+            }
+            Self::Spec { active, .. } => {
+                let mut s = serializer.serialize_struct("KekConfig", 3)?;
+                s.serialize_field("kind", "spec")?;
+                s.serialize_field("spec", "[REDACTED]")?;
+                s.serialize_field("active", active)?;
+                s.end()
+            }
+        }
+    }
+}
+
 impl KekConfig {
+    /// Validates KEK configuration fields before loading any provider.
+    pub fn validate(&self) -> Result<(), Error> {
+        match self {
+            Self::Env { name, active } => {
+                if name.trim().is_empty() {
+                    return Err(Error::InvalidConfig("KEK env 이름이 비어 있음".into()));
+                }
+                if active.trim().is_empty() {
+                    return Err(Error::InvalidConfig("active 키 식별자가 비어 있음".into()));
+                }
+            }
+            Self::File { path, active } => {
+                if path.as_os_str().is_empty() {
+                    return Err(Error::InvalidConfig("KEK 파일 경로가 비어 있음".into()));
+                }
+                if active.trim().is_empty() {
+                    return Err(Error::InvalidConfig("active 키 식별자가 비어 있음".into()));
+                }
+            }
+            Self::Spec { spec, active } => {
+                if spec.trim().is_empty() {
+                    return Err(Error::InvalidConfig("KEK spec이 비어 있음".into()));
+                }
+                if active.trim().is_empty() {
+                    return Err(Error::InvalidConfig("active 키 식별자가 비어 있음".into()));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Loads and initializes the configured KEK provider without leaking keys in errors.
     pub fn load_provider(&self) -> Result<LocalProvider, Error> {
+        self.validate()?;
         match self {
             Self::Env { name, active } => LocalProvider::from_env(name, active).map_err(|_| Error::Crypto("환경 변수에서 KEK를 읽을 수 없음".into())),
             Self::File { path, active } => LocalProvider::from_file(path, active)
@@ -67,21 +141,81 @@ pub fn bind_sealer_and_opener(store: DekStore, provider: LocalProvider, budget_c
 }
 
 /// Rekey operational parameters parsed from CLI or management worker.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RekeyOptions {
     pub scope_kind: String,
     pub scope_id: String,
     pub holder_id: String,
     pub targets: Vec<RekeyTargetSpec>,
+    /// Explicit assertion/proof of full inventory coverage across the scope.
+    /// Partial rekeying must never retire the scope's readable DEK.
+    #[serde(default)]
+    pub inventory_complete: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RekeyTargetSpec {
     pub table: String,
     pub column: String,
     pub id_column: String,
     pub resource: String,
     pub field: String,
+}
+
+impl RekeyOptions {
+    /// Validates rekey parameters before any database connections or locks are acquired.
+    pub fn validate(&self) -> Result<Scope, Error> {
+        if self.holder_id.trim().is_empty() {
+            return Err(Error::InvalidConfig("holder_id 누락".into()));
+        }
+        if self.targets.is_empty() {
+            return Err(Error::InvalidConfig("rekey target 목록이 비어 있음".into()));
+        }
+        for (i, t) in self.targets.iter().enumerate() {
+            if t.table.trim().is_empty()
+                || t.column.trim().is_empty()
+                || t.id_column.trim().is_empty()
+                || t.resource.trim().is_empty()
+                || t.field.trim().is_empty()
+            {
+                return Err(Error::InvalidConfig(format!("target[{i}] 필드 누락: 모든 필드는 필수임")));
+            }
+        }
+        let scope = match self.scope_kind.as_str() {
+            "service" => {
+                if !self.scope_id.is_empty() && self.scope_id != "global" {
+                    return Err(Error::InvalidConfig("service scope_id는 비어 있거나 'global'이어야 함".into()));
+                }
+                Scope::service()
+            }
+            "ref" => {
+                if self.scope_id.trim().is_empty() {
+                    return Err(Error::InvalidConfig("ref scope_id 누락".into()));
+                }
+                Scope::reference(&self.targets[0].resource, &self.scope_id).map_err(|e| Error::InvalidConfig(format!("ref scope 오류: {e:?}")))?
+            }
+            "owner" => {
+                if self.scope_id.trim().is_empty() {
+                    return Err(Error::InvalidConfig("owner scope_id 누락".into()));
+                }
+                Scope::owner(&self.targets[0].resource, &self.scope_id).map_err(|e| Error::InvalidConfig(format!("owner scope 오류: {e:?}")))?
+            }
+            _ => return Err(Error::InvalidConfig(format!("알 수 없는 scope_kind: {}", self.scope_kind))),
+        };
+        Ok(scope)
+    }
+
+    /// Verifies that the targets represent a verified complete inventory before allowing rekey retirement.
+    pub fn assert_complete_inventory(&self) -> Result<(), Error> {
+        if !self.inventory_complete {
+            return Err(Error::InvalidConfig(
+                "신뢰할 수 있는 전체 대상 인벤토리 보증(inventory_complete) 누락: 부분 재암호화 후 DEK 전체 폐기를 방지하기 위해 거부함".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Executes durable rekey cycle for the given scope and targets.
@@ -93,22 +227,14 @@ pub async fn execute_rekey(
     options: &RekeyOptions,
 ) -> Result<Vec<RekeyReport>, Error> {
     let store = DekStore::new(schema).map_err(|e| Error::InvalidConfig(format!("schema `{schema}`가 유효하지 않음: {e:?}")))?;
+    kek_config.validate()?;
     let provider = kek_config.load_provider()?;
 
-    if options.targets.is_empty() {
-        return Err(Error::InvalidConfig("rekey target 목록이 비어 있음".into()));
-    }
+    // 1. Structural validation before touching DB
+    let scope = options.validate()?;
 
-    let scope = match options.scope_kind.as_str() {
-        "service" => Scope::service(),
-        "ref" => {
-            Scope::reference(&options.targets[0].resource, &options.scope_id).map_err(|e| Error::InvalidConfig(format!("ref scope 오류: {e:?}")))?
-        }
-        "owner" => {
-            Scope::owner(&options.targets[0].resource, &options.scope_id).map_err(|e| Error::InvalidConfig(format!("owner scope 오류: {e:?}")))?
-        }
-        _ => return Err(Error::InvalidConfig(format!("알 수 없는 scope_kind: {}", options.scope_kind))),
-    };
+    // 2. Prevent partial target slice from retiring DEK across the whole scope
+    options.assert_complete_inventory()?;
 
     let targets: Vec<RekeyTarget> =
         options.targets.iter().map(|t| RekeyTarget::new(&t.table, &t.column, &t.id_column, &t.resource, &t.field, scope.clone())).collect();

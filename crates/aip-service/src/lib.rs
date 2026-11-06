@@ -1131,11 +1131,26 @@ async fn rekey_cli(config: Config, options_path: PathBuf) -> Result<Value, Value
         .encryption
         .as_ref()
         .ok_or_else(|| error("ENCRYPTION_CONFIG_REQUIRED", "rekey를 실행하려면 service.json에 encryption 설정이 필요함"))?;
+    kek_config.validate().map_err(|e| error("INVALID_ENCRYPTION_CONFIG", &e.to_string()))?;
 
     let options_data = fs::read_to_string(&options_path)
         .map_err(|e| error("INVALID_OPTIONS", &format!("rekey options 파일({options_path:?})을 읽을 수 없음: {e}")))?;
     let options: encryption_runtime::RekeyOptions =
         serde_json::from_str(&options_data).map_err(|e| error("INVALID_OPTIONS", &format!("rekey options JSON 형식 오류: {e}")))?;
+
+    // 1. Validate options structure BEFORE any database connection
+    options.validate().map_err(|e| error("INVALID_OPTIONS", &e.to_string()))?;
+
+    // 2. Reject unverified/partial inventory to prevent retiring the scope's DEK with un-rekeyed columns:
+    options.assert_complete_inventory().map_err(|e| error("INCOMPLETE_REKEY_INVENTORY", &e.to_string()))?;
+
+    // 3. Operational gate: reject execution until authoritative schema inventory equivalence verification is integrated
+    if !rekey_operational_inventory_verified(&config.schema, &options) {
+        return Err(error(
+            "REKEY_OPERATIONAL_GATE_CLOSED",
+            "운영 rekey CLI 차단: 정의 메타데이터 기반 전수 인벤토리 동등성 검증 엔진이 아직 제품에 연결되지 않음 (DB 변경 전 차단)",
+        ));
+    }
 
     let db_url = migrate_database_url(&config)?;
     let mut db = tokio::time::timeout(std::time::Duration::from_secs(5), spike_v2_read::connect_owned_with_url(&db_url))
@@ -1158,6 +1173,12 @@ async fn rekey_cli(config: Config, options_path: PathBuf) -> Result<Value, Value
         "scope_kind": options.scope_kind,
         "reports": reports,
     }))
+}
+
+/// Helper returning whether authoritative deployment-schema inventory has been verified.
+/// Always returns false until full compiler metadata extraction is wired to the operational CLI.
+fn rekey_operational_inventory_verified(_schema: &str, _options: &encryption_runtime::RekeyOptions) -> bool {
+    false
 }
 
 const AUDIT_BAD_QUERY: &str = "via는 apply·extension·job, limit은 1에서 500, since는 RFC 3339 시각(예: 2026-10-01T00:00:00Z)이어야 함";
