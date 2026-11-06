@@ -79,13 +79,13 @@ test('FlaskBB forum and topic last-post projections recover after post hide/dele
     assert.equal(forum.last_post, a2);
     assert.equal(forum.last_post_username, 'member-alice');
 
-    // Delete (tombstone) of the forum's last post follows the same fallback.
+    // Physical deletion of the forum's last post follows the same fallback.
     await run('Post.unhide', b2, 'lp-unhide-b2');
     assert.equal(forumRow(), before, 'unhide restores the pointer and projection');
     await run('Post.delete', b2, 'lp-delete-b2');
     assert.equal(forumRow(), upstreamAfterHide);
     assert.equal(topicUpdated(topicB), '2025-01-02');
-    assert.equal(sql(`SELECT deleted FROM ${q}.post WHERE id='${b2}'`), 't');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${b2}'`), '0');
 
     await run('Topic.delete', topicB, 'lp-delete-topic-b');
     assert.equal(forumRow(), upstreamAfterTopicHide);

@@ -182,7 +182,7 @@ resource Forum {
     locked: Bool
     external: Url?
     show_moderators: Bool
-    last_post: Post?
+    last_post: Post? on delete set null
     last_post_user: User?
     last_post_title: Text(1..255)?
     last_post_username: Text(1..255)?
@@ -237,7 +237,7 @@ resource ForumModerator {
 resource Topic {
   fields {
     id: Uuid
-    last_post: Post?
+    last_post: Post? on delete set null
     forum: Forum
     title: Text(1..255)
     user: User?
@@ -321,7 +321,7 @@ resource Topic {
   transition delete {
     allow actor.activated and (canDeleteTopic(actor, this) or (user = actor and not locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost)))
     from deleted = false
-    to deleted = true
+    delete
     update Forum when topicDeleteRecalculatesForum(this) and not topicDeleteKeepsForum(actor, this) where id = this.forum {
       last_post = latest Post candidate where topicDeleteCandidate(actor, this, candidate) order by candidate.date_created select candidate.id
       last_post_user = latest Post candidate where topicDeleteCandidate(actor, this, candidate) order by candidate.date_created select candidate.user
@@ -346,7 +346,7 @@ resource Post {
   fields {
     id: Uuid
     source_order: PostOrder?
-    topic: Topic
+    topic: Topic on delete cascade
     forum: Forum
     user: User?
     username: Text(1..200)
@@ -423,16 +423,17 @@ resource Post {
   transition delete {
     allow actor.activated and canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted)
     from deleted = false
-    to deleted = true
+    delete
     update Forum where id = this.forum {
-      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.id
-      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.user
-      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
-      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.username
-      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+      last_post = latest Post candidate where candidate.id != this and candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.id
+      last_post_user = latest Post candidate where candidate.id != this and candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.user
+      last_post_title = latest Post candidate where candidate.id != this and candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
+      last_post_username = latest Post candidate where candidate.id != this and candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.username
+      last_post_created = latest Post candidate where candidate.id != this and candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
     }
-    update Topic where id = this.topic {
-      last_updated = latest Post candidate where candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.date_created select candidate.date_created otherwise this.topic.date_created
+    update Topic when this.topic.last_post = this where id = this.topic {
+      last_post = latest Post candidate where candidate.id != this and candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.source_order select candidate.id
+      last_updated = latest Post candidate where candidate.id != this and candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.source_order select candidate.date_created otherwise this.topic.date_created
     }
   }
   expose apply delete { target id; bulk maxRows 1 }
@@ -450,7 +451,7 @@ resource Post {
 // verified original-ID manifest before any further native allocation is allowed.
 // No public read/create/patch operation can choose or rewrite this order.
 resource PostOrder {
-  fields { id: Id; post: Post }
+  fields { id: Id; post: Post on delete cascade }
   unique post
   rows read when canReadPost(actor, post)
 }
@@ -458,7 +459,7 @@ resource PostOrder {
 // Internal one-to-one relation keeps the source app's special first-post rules
 // without a cyclic Topic↔Post foreign key.
 resource TopicFirstPost {
-  fields { id: Id; topic: Topic; post: Post }
+  fields { id: Id; topic: Topic on delete cascade; post: Post on delete cascade }
   unique topic
   unique post
   rows read when canReadTopic(actor, topic)
@@ -497,7 +498,7 @@ resource ForumRead {
 }
 
 resource TopicRead {
-  fields { id: Id; user: User; topic: Topic; forum: Forum; last_read: Time }
+  fields { id: Id; user: User; topic: Topic on delete cascade; forum: Forum; last_read: Time }
   unique user, topic, forum
   rows read when user = actor
   expose create {
@@ -519,7 +520,7 @@ resource TopicRead {
 }
 
 resource TopicTracker {
-  fields { id: Id; user: User; topic: Topic; active: Bool }
+  fields { id: Id; user: User; topic: Topic on delete cascade; active: Bool }
   unique user, topic
   rows read when user = actor
   expose create {
@@ -539,7 +540,7 @@ resource TopicTracker {
 }
 
 resource Report {
-  fields { id: Id; reporter: User?; reported: Time?; post: Post?; zapped: Time?; zapped_by: User?; reason: Text? }
+  fields { id: Id; reporter: User?; reported: Time?; post: Post? on delete cascade; zapped: Time?; zapped_by: User?; reason: Text? }
   rows read when canReviewReports(actor) or (reporter = actor and reported = null)
   expose create {
     allow actor.activated and reporter = actor and post != null and canReadPost(actor, post) and reported = null and zapped = null and zapped_by = null

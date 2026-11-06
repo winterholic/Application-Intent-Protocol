@@ -170,7 +170,7 @@ for (const mode of ['non-current','hidden-topic','hidden-post','member-hidden-to
     const forum=()=>sql(`SELECT jsonb_build_array(last_post_id,last_post_user_id,last_post_title,last_post_username,last_post_created)::text FROM ${q}.forum WHERE id=1`);
     try {
       const before=forum();
-      const allPosts=sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p`);
+      const unrelatedPosts=sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p WHERE topic_id!='${topic}'`);
       const otherTopics=sql(`SELECT jsonb_agg(to_jsonb(t) ORDER BY id)::text FROM ${q}.topic t WHERE id!='${topic}'`);
       const denied=await fx.client('carol').bundle({atomic:[{apply:'Topic.delete',target:{ids:[topic]}}]}, {key:`topic-delete-denied-${mode}`});
       assert.equal(denied.ok,false);
@@ -190,10 +190,9 @@ for (const mode of ['non-current','hidden-topic','hidden-post','member-hidden-to
           AND f.last_post_created IS NOT DISTINCT FROM p.date_created
           FROM ${q}.forum f JOIN ${q}.post p ON p.id=f.last_post_id JOIN ${q}.topic t ON t.id=p.topic_id WHERE f.id=1`),'t');
       }
-      assert.equal(sql(`SELECT deleted FROM ${q}.topic WHERE id='${topic}'`),'t');
-      // This suite verifies projection parity under the existing tombstone
-      // policy. It deliberately does not claim upstream physical retention.
-      assert.equal(sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p`),allPosts);
+      assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id='${topic}'`),'0');
+      assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${topic}'`),'0');
+      assert.equal(sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p`),unrelatedPosts);
       assert.equal(sql(`SELECT jsonb_agg(to_jsonb(t) ORDER BY id)::text FROM ${q}.topic t WHERE id!='${topic}'`),otherTopics);
       const applied=forum();
       assert.equal((await fx.client(executor).bundle({atomic:[{apply:'Topic.delete',target:{ids:[topic]}}]}, {key:`topic-delete-${mode}`})).ok,true);

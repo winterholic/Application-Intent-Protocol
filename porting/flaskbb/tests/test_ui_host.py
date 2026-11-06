@@ -13,6 +13,35 @@ import read_tracking  # noqa: E402
 
 
 class UiHostTests(unittest.TestCase):
+    def test_post_delete_routes_first_post_to_topic_and_reply_to_post_transition(self):
+        for first_post in (True, False):
+            with self.subTest(first_post=first_post):
+                client_api = Mock()
+                client_api.read.side_effect = lambda query: (
+                    [{"id": "post-1", "topic": "topic-1", "forum": "forum-1"}]
+                    if query["read"] == "Post"
+                    else ([{"id": "relation-1"}] if first_post else [])
+                )
+                client_api.bundle.return_value = {"ok": True}
+                app = create_app(
+                    {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+                    sdk_factory=Mock(return_value=client_api),
+                    sessions={"delete-session": {"access_token": "test-only-token", "csrf_token": "csrf"}},
+                )
+                browser = app.test_client()
+                browser.set_cookie("aip_session", "delete-session")
+
+                denied = browser.post("/post/post-1/delete", data={"csrf_token": "wrong"})
+                self.assertEqual(denied.status_code, 403)
+                client_api.bundle.assert_not_called()
+
+                response = browser.post("/post/post-1/delete", data={"csrf_token": "csrf"})
+
+                self.assertEqual(response.status_code, 303)
+                expected = {"apply": "Topic.delete", "target": {"ids": ["topic-1"]}} if first_post else {"apply": "Post.delete", "target": {"ids": ["post-1"]}}
+                client_api.bundle.assert_called_once_with([expected], key="flaskbb-delete-post-post-1")
+                self.assertEqual(response.headers["Location"], "/forum/forum-1" if first_post else "/topic/topic-1")
+
     def test_forum_topics_request_sticky_then_recent_order_from_aip(self):
         client_api = Mock()
         client_api.discover.return_value = {"ok": True}

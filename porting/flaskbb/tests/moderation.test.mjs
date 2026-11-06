@@ -37,7 +37,7 @@ test('FlaskBB moderation does not depend on unrelated user_group rows (real Post
       sql(`INSERT INTO ${q}.topic (id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden) VALUES ('${id}',${forum},'probe ${id.slice(0, 8)}',2,'member-alice',now(),now(),false,false,0,true,false,false);`);
       return id;
     };
-    const deleted = id => sql(`SELECT deleted FROM ${q}.topic WHERE id='${id}'`) === 't';
+    const deleted = id => sql(`SELECT count(*) FROM ${q}.topic WHERE id='${id}'`) === '0';
     const attempt = async (who, forum) => {
       const id = newTopic(forum);
       const result = await actors[who].bundle({atomic: [{apply: 'Topic.delete', target: {ids: [id]}}]}, {key: `del-${id}`});

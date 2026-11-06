@@ -36,6 +36,7 @@ test('AIP server enforces forum group visibility and unique link relations with 
   const bindingPath = join(temp, 'binding.ts');
   let server;
   const uiHosts = [];
+  const physicalDeleteResults = [];
   try {
     const {publicKey, privateKey} = generateKeyPairSync('rsa', {modulusLength: 2048});
     const jwk = {...publicKey.export({format: 'jwk'}), kid: 'flaskbb-fixture', alg: 'RS256', use: 'sig', key_ops: ['verify']};
@@ -197,6 +198,12 @@ test('AIP server enforces forum group visibility and unique link relations with 
     const tracking = await member.bundle({atomic: [{create: 'TopicTracker', values: {user: '2', topic: topicId, active: true}}]}, {key: trackingKey});
     assert.equal(tracking.ok, true, JSON.stringify(tracking));
     const trackerId = tracking.created[0].id;
+    const unrelatedTracking = await member.bundle({atomic: [{create: 'TopicTracker', values: {user: '2', topic: '00000000-0000-4000-8000-000000000002', active: true}}]}, {key: `track-unrelated-${topicId}`});
+    assert.equal(unrelatedTracking.ok, true, JSON.stringify(unrelatedTracking));
+    const readMarker = await member.bundle({atomic: [{create: 'TopicRead', values: {user: '2', topic: topicId, forum: '2', last_read: new Date().toISOString()}}]}, {key: `read-marker-${topicId}`});
+    assert.equal(readMarker.ok, true, JSON.stringify(readMarker));
+    const unrelatedReadMarker = await member.bundle({atomic: [{create: 'TopicRead', values: {user: '2', topic: '00000000-0000-4000-8000-000000000002', forum: '2', last_read: new Date().toISOString()}}]}, {key: `read-marker-unrelated-${topicId}`});
+    assert.equal(unrelatedReadMarker.ok, true, JSON.stringify(unrelatedReadMarker));
     assert.deepEqual((await member.read({read: 'TopicTracker', select: ['id', 'user', 'topic', 'active'], filter: [{field: 'topic', op: 'eq', value: topicId}], limit: 10})).rows.map(row => [row.user, row.topic, row.active]), [['2', topicId, true]]);
     const deniedTracker = await readOnly.bundle({atomic: [{create: 'TopicTracker', values: {user: '2', topic: topicId, active: true}}]}, {key: `deny-track-${topicId}`});
     assert.equal(deniedTracker.code, 'WIRE.FORBIDDEN', JSON.stringify(deniedTracker));
@@ -282,16 +289,28 @@ test('AIP server enforces forum group visibility and unique link relations with 
     const replyDelete = await member.bundle({atomic: [{apply: 'Post.delete', target: {ids: [replyId]}}]}, {key: `delete-post-${replyId}`});
     assert.equal(replyDelete.ok, true, JSON.stringify(replyDelete));
     assert.equal((await member.read({read: 'Post', select: ['id'], filter: [{field: 'id', op: 'eq', value: replyId}], limit: 1})).rows.length, 0);
-    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${replyId}'`), '0', 'Post.delete physically removes the reply row');
+    physicalDeleteResults.push({kind: 'reply', rows: sql(`SELECT count(*) FROM ${q}.post WHERE id='${replyId}'`)});
+    const replyAudit = JSON.parse(run(binary, ['service', 'audit', '--config', config, 'list', '--resource', 'Post', '--target-id', replyId]));
+    assert.deepEqual([replyAudit.audit[0].transition, replyAudit.audit[0].after], ['delete', null]);
     const readonlyDelete = await readOnly.bundle({atomic: [{apply: 'Topic.delete', target: {ids: [topicId]}}]}, {key: `deny-delete-topic-${topicId}`});
     assert.equal(readonlyDelete.code, 'WIRE.FORBIDDEN', JSON.stringify(readonlyDelete));
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic_tracker WHERE topic_id='${topicId}'`), '1', 'denied delete preserves related tracker rows');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic_first_post WHERE topic_id='${topicId}'`), '1', 'denied delete preserves first-post relation');
     const topicDelete = await member.bundle({atomic: [
       {apply: 'Topic.delete', target: {ids: [topicId]}},
-      {apply: 'Post.delete', target: {ids: [firstPostId]}},
     ]}, {key: `delete-topic-${topicId}`});
     assert.equal(topicDelete.ok, true, JSON.stringify(topicDelete));
-    assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id='${topicId}'`), '0', 'Topic.delete physically removes the topic row');
-    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${topicId}'`), '0', 'Topic.delete physically removes its complete post set');
+    physicalDeleteResults.push({kind: 'topic', rows: sql(`SELECT count(*) FROM ${q}.topic WHERE id='${topicId}'`)});
+    physicalDeleteResults.push({kind: 'topic posts', rows: sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${topicId}'`)});
+    const topicAudit = JSON.parse(run(binary, ['service', 'audit', '--config', config, 'list', '--resource', 'Topic', '--target-id', topicId]));
+    assert.deepEqual([topicAudit.audit[0].transition, topicAudit.audit[0].after], ['delete', null]);
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post_order WHERE post_id='${firstPostId}'`), '0', 'cascaded posts do not leave PostOrder mappings');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic_first_post WHERE topic_id='${topicId}'`), '0', 'Topic.delete removes the first-post relation');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic_tracker WHERE topic_id='${topicId}'`), '0', 'Topic.delete removes topic trackers');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic_read WHERE topic_id='${topicId}'`), '0', 'Topic.delete removes topic read markers');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic_read WHERE topic_id='00000000-0000-4000-8000-000000000002'`), '1', 'Topic.delete preserves unrelated topic read markers');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic_tracker WHERE topic_id='00000000-0000-4000-8000-000000000002'`), '1', 'Topic.delete preserves unrelated topic tracker rows');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.report WHERE post_id='${firstPostId}'`), '0', 'Topic.delete cascades the upstream first-post report relation');
     assert.equal((await member.read({read: 'Topic', select: ['id'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows.length, 0);
     assert.equal((await member.read({read: 'Post', select: ['id'], filter: [{field: 'id', op: 'eq', value: firstPostId}], limit: 1})).rows.length, 0);
     const countsAfterDelete = (await member.read({read: 'Forum', select: ['topic_count', 'post_count'], filter: [{field: 'id', op: 'eq', value: '2'}], limit: 1})).rows[0];
@@ -322,8 +341,26 @@ test('AIP server enforces forum group visibility and unique link relations with 
     });
     assert.equal(uiReplyResponse.status, 303, `UI reply response: ${uiReplyResponse.status}`);
     assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${uiTopicId}' AND content='Reply through AIP SDK' AND published`), '1');
+    const uiReplyId = sql(`SELECT id FROM ${q}.post WHERE topic_id='${uiTopicId}' AND content='Reply through AIP SDK'`);
+    const uiReplyDelete = await fetch(`${memberUi.base}/post/${uiReplyId}/delete`, {
+      method: 'POST', redirect: 'manual', headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({csrf_token: csrf})
+    });
+    assert.equal(uiReplyDelete.status, 303, `UI reply delete response: ${uiReplyDelete.status}`);
+    assert.equal(uiReplyDelete.headers.get('location'), `/topic/${uiTopicId}`);
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${uiReplyId}'`), '0', 'UI reply deletion uses the AIP Post.delete SDK transition');
+    const uiFirstPostId = sql(`SELECT id FROM ${q}.post WHERE topic_id='${uiTopicId}' AND content='${uiTopicBody}'`);
+    const uiFirstDelete = await fetch(`${memberUi.base}/post/${uiFirstPostId}/delete`, {
+      method: 'POST', redirect: 'manual', headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({csrf_token: csrf})
+    });
+    assert.equal(uiFirstDelete.status, 303, `UI first-post delete response: ${uiFirstDelete.status}`);
+    assert.equal(uiFirstDelete.headers.get('location'), '/forum/2');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id='${uiTopicId}'`), '0', 'UI first-post deletion delegates to Topic.delete');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${uiTopicId}'`), '0', 'UI first-post delegation cascades all remaining posts');
     const uiTopicRows = (await member.read({read: 'Topic', select: ['id', 'title', 'published'], filter: [{field: 'id', op: 'eq', value: uiTopicId}], limit: 1})).rows;
-    assert.deepEqual(uiTopicRows.map(row => [row.title, row.published]), [[uiTopicTitle, true]], 'official SDK sees UI-created topic');
+    assert.deepEqual(uiTopicRows, [], 'official SDK sees the UI-deleted topic absent');
+    assert.deepEqual(physicalDeleteResults, [{kind: 'reply', rows: '0'}, {kind: 'topic', rows: '0'}, {kind: 'topic posts', rows: '0'}], 'Post.delete and Topic.delete remove their source rows through the official SDK');
     console.log(JSON.stringify({schema, ...init, memberVisible: memberRows.map(row => row.title), guestVisible: guestRows.map(row => row.title), duplicateLinkRejected: true, uiTopicAndReplyPersisted: true, readonlyUiWriteDenied: true}));
   } finally {
     const stopped = await Promise.allSettled([...uiHosts, server].filter(Boolean).map(child => stopOwnedProcess(child)));

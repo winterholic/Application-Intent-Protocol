@@ -383,6 +383,26 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
         except AipError as error:
             reject_aip_error(error)
 
+    @app.post("/post/<post_id>/delete")
+    def delete_post(post_id):
+        identity = session_store.get(request.cookies.get("aip_session"))
+        if not identity:
+            abort(401)
+        require_csrf(identity)
+        client = aip_client()
+        try:
+            posts = client.read({"read": "Post", "select": ["id", "topic", "forum"], "filter": [{"field": "id", "op": "eq", "value": post_id}], "limit": 1})
+            if not posts:
+                abort(404)
+            post = posts[0]
+            first_posts = client.read({"read": "TopicFirstPost", "select": ["id"], "filter": [{"field": "post", "op": "eq", "value": post_id}], "limit": 1})
+            first_post = bool(first_posts)
+            operation = {"apply": "Topic.delete" if first_post else "Post.delete", "target": {"ids": [post["topic"] if first_post else post_id]}}
+            destination = lambda: url_for("forum_view", forum_id=post["forum"]) if first_post else url_for("topic_view", topic_id=post["topic"])
+            return submit_bundle(client, [operation], f"flaskbb-delete-post-{post_id}", destination)
+        except AipError as error:
+            reject_aip_error(error)
+
     @app.get("/topic/<topic_id>")
     def topic_view(topic_id):
         client = aip_client()
