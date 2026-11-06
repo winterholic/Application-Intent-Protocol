@@ -183,9 +183,9 @@ resource User {
     implementation "slice14l_frame.recordFrame"
     internal
   }
-  // WBS 7.2.9 dashboard (AdminService.get_signup_trend / _get_weekly_active_users). Administrator only; the caller sends the period, so the
-  // clock of the period is the caller's: signupCount counts members created in [from, to) (deactivated ones too, as the original does),
-  // weeklyActive the members with a view log at or after `since`.
+  // WBS 7.2.9 dashboard (AdminService.get_signup_trend / _get_weekly_active_users). The SDK adapter anchors its buckets and rolling window
+  // to the UTC instant received from User.temporalContext. signupCount still accepts [from, to) (including deactivated accounts as source does);
+  // weeklyActive counts members with a view log at or after `since`.
   aggregate signupCount: Int {
     input { from: Time; to: Time }
     source User
@@ -206,6 +206,15 @@ resource User {
   }
   expose aggregate signupCount
   expose aggregate weeklyActive
+  // Dashboard calendar windows and computed_at use an instant measured by the server-side extension runtime, never a browser-supplied clock.
+  extension read temporalContext {
+    input { }
+    output { body: Text }
+    access User.totalCount
+    effect none
+    deadline 10s
+    implementation "slice14h_dashboard.temporalContext"
+  }
   // WBS 7.2.9 system status (AdminService.get_system_status). Administrator only (the first step is the administrator-only totalCount). It answers
   // the allowlisted figures of `mongo.server_status` (CPU, memory and disk usage of the server's machine; MongoDB ping), the request figures the
   // deployment keeps under the Redis prefix facereview:metrics: and whether MySQL, Redis and MongoDB answer.

@@ -61,10 +61,6 @@ export interface AdminReadClient {
   extension(name: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
-export interface AdminReadOptions {
-  now?: () => Date;
-}
-
 const DAY = 86_400_000;
 const GENRES = ['drama', 'eating', 'travel', 'cook', 'show', 'information', 'game', 'sports', 'music', 'animal', 'beauty', 'comedy', 'horror',
   'exercise', 'vlog', 'etc'];
@@ -103,7 +99,14 @@ export function subjectOf(token: string): string {
   return failure('access token has no usable subject', 'CLIENT.PROTOCOL_ERROR');
 }
 
-const rfc = (ms: number): string => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+const rfc = (ms: number): string => new Date(ms).toISOString().replace(/\.000Z$/, 'Z');
+const subtractUtcDays = (value: string, days: number): string => {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?Z$/.exec(value);
+  if (!match) return failure('unexpected UTC time value from the server', 'CLIENT.PROTOCOL_ERROR');
+  const shifted = new Date(Date.parse(value) - days * DAY).toISOString().slice(0, 19);
+  const fraction = match[2] ?? '';
+  return `${shifted}${fraction}Z`;
+};
 const dayText = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const midnight = (ms: number): number => Math.floor(ms / DAY) * DAY;
 const mondayOffset = (ms: number): number => (new Date(ms).getUTCDay() + 6) % 7;
@@ -128,8 +131,14 @@ function documentOf<T>(output: Record<string, unknown>): T {
 const reply = <T>(data: T): { data: T; status: number } => ({ data, status: 200 });
 const newest = [{ field: 'created_at', dir: 'desc' }];
 
-export function createAdminReadApi(client: AdminReadClient, options: AdminReadOptions = {}) {
-  const clock = options.now ?? (() => new Date());
+export function createAdminReadApi(client: AdminReadClient) {
+  const temporalContext = async (): Promise<{ now: number; computedAt: string; computedAtSource: string }> => {
+    const { now } = documentOf<{ now: string }>(await client.extension('User.temporalContext', {}));
+    const computedAt = naiveIso(now);
+    const instant = Date.parse(now);
+    if (!Number.isFinite(instant)) return failure('unexpected time value from the server', 'CLIENT.PROTOCOL_ERROR');
+    return { now: instant, computedAt, computedAtSource: now };
+  };
 
   const paging = (page?: number, size?: number): { page: number; size: number } => {
     const wantedPage = page ?? 1;
@@ -145,9 +154,9 @@ export function createAdminReadApi(client: AdminReadClient, options: AdminReadOp
   const either = (left: string, right: string, keyword: string) => ({ or: [{ field: left, op: 'like', value: keyword }, { field: right, op: 'like', value: keyword }] });
   const equals = (field: string, value: unknown) => ({ field, op: 'eq', value });
 
-  const trend = async (period: string): Promise<SignupTrend> => {
+  const trend = async (period: string, now: number): Promise<SignupTrend> => {
     const [days, granularity] = Object.hasOwn(PERIODS, period) ? PERIODS[period as SignupTrendPeriod] : PERIODS['7d'];
-    const today = midnight(clock().getTime());
+    const today = midnight(now);
     const start = today - (days - 1) * DAY;
     const end = today + DAY;
     const buckets: Array<{ date: string; low: number; high: number }> = [];
@@ -261,14 +270,15 @@ export function createAdminReadApi(client: AdminReadClient, options: AdminReadOp
     },
 
     async getSignupTrend(period: SignupTrendPeriod) {
-      return reply(await trend(period));
+      const context = await temporalContext();
+      return reply(await trend(period, context.now));
     },
 
     async getBusinessStats() {
-      const now = clock();
+      const context = await temporalContext();
       const [signup, weekly, pipeline, health, categories] = await Promise.all([
-        trend('7d'),
-        client.aggregate({ aggregate: 'User.weeklyActive', input: { since: rfc(now.getTime() - 7 * DAY) } }),
+        trend('7d', context.now),
+        client.aggregate({ aggregate: 'User.weeklyActive', input: { since: subtractUtcDays(context.computedAtSource, 7) } }),
         client.extension('VideoRequest.pipeline', {}),
         client.extension('Video.contentHealth', {}),
         inBatches(GENRES, async (category) => {
@@ -290,7 +300,7 @@ export function createAdminReadApi(client: AdminReadClient, options: AdminReadOp
           category_top5: categories.filter((row): row is { category: string; view_count: number } => row !== null).sort((a, b) => b.view_count - a.view_count),
           dominant_emotion_video_counts: content.dominant_emotion_video_counts,
         },
-        computed_at: naiveIso(`${now.toISOString().slice(0, 19)}Z`),
+        computed_at: context.computedAt,
       };
       return reply(stats);
     },

@@ -35,6 +35,12 @@ def _minutes(created, updated):
     return int((updated - created).total_seconds() / 60)
 
 
+async def temporalContext(input, ctx):
+    """Return a server-owned UTC instant for administrator date calculations."""
+    await ctx.data.aggregate("User", "totalCount", {})
+    return {"body": _text({"now": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")})}
+
+
 async def pipeline(input, ctx):
     pending = (await ctx.data.aggregate("VideoRequest", "pendingCount", {}))["value"]
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - WINDOW
