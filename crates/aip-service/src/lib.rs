@@ -1170,14 +1170,12 @@ async fn rekey_cli(config: Config, options_path: PathBuf) -> Result<Value, Value
     // 1. Validate options structure BEFORE any database connection
     options.validate().map_err(|e| error("INVALID_OPTIONS", &e.to_string()))?;
 
-    // 2. Reject unverified/partial inventory to prevent retiring the scope's DEK with un-rekeyed columns:
-    options.assert_complete_inventory().map_err(|e| error("INCOMPLETE_REKEY_INVENTORY", &e.to_string()))?;
-
-    // 3. Operational gate: reject execution until authoritative schema inventory equivalence verification is integrated
+    // Operational gate remains closed. The public execution API independently verifies declaration metadata and
+    // PostgreSQL catalog equivalence before it can reach this gate.
     if !encryption_runtime::rekey_operational_inventory_verified(&config.schema, &options) {
         return Err(error(
             "REKEY_OPERATIONAL_GATE_CLOSED",
-            "운영 rekey CLI 차단: 정의 메타데이터 기반 전수 인벤토리 동등성 검증 엔진이 아직 제품에 연결되지 않음 (DB 변경 전 차단)",
+            "운영 rekey CLI 차단: inventory 검증 경계는 구현됐지만 operational rekey 및 activation gate는 닫혀 있음 (DB 변경 전 차단)",
         ));
     }
 

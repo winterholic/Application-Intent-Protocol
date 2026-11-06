@@ -64,7 +64,7 @@ PY
   fmt) run_command 'cargo fmt --all -- --check' cargo fmt --all -- --check ;;
   check) run_command 'cargo check --locked -p aip-service -p aip-execution' cargo check --locked -p aip-service -p aip-execution ;;
   service_test) run_command 'cargo test --locked -p aip-service --test encryption_runtime_test' cargo test --locked -p aip-service --test encryption_runtime_test ;;
-  execution_test) run_command 'cargo test --locked -p aip-execution --test encryption_sealer_opener' cargo test --locked -p aip-execution --test encryption_sealer_opener ;;
+  execution_test) run_command 'cargo test --locked -p aip-execution --test encryption_sealer_opener --test encryption_rekey' cargo test --locked -p aip-execution --test encryption_sealer_opener --test encryption_rekey ;;
   clippy) run_command 'cargo clippy --locked --all-targets -p aip-service -p aip-execution -p aip-cli -- -D warnings' cargo clippy --locked --all-targets -p aip-service -p aip-execution -p aip-cli -- -D warnings ;;
   cli_build) run_command 'cargo build --locked -p aip-cli' cargo build --locked -p aip-cli ;;
   cli_gate)
@@ -89,11 +89,11 @@ base = {
  "scope_kind":"service", "scope_id":"global", "holder_id":"crypto-ci-test",
  "targets":[{"table":"secret","column":"value","id_column":"id","resource":"Secret","field":"value"}]
 }
-cases = [("incomplete_inventory", False, "INCOMPLETE_REKEY_INVENTORY"),
-         ("closed_operational_gate", True, "REKEY_OPERATIONAL_GATE_CLOSED")]
+cases = [("closed_gate_without_legacy_claim", False, "REKEY_OPERATIONAL_GATE_CLOSED"),
+         ("closed_gate_with_legacy_claim", True, "REKEY_OPERATIONAL_GATE_CLOSED")]
 observed=[]
-for name, complete, expected in cases:
-    options = dict(base, inventory_complete=complete)
+for name, legacy_claim, expected in cases:
+    options = dict(base, inventory_complete=legacy_claim)
     option_path = root / f"crypto-repair-{name}.json"
     option_path.write_text(json.dumps(options))
     proc = subprocess.run(["target/debug/aip", "service", "rekey", "--config", str(root / "crypto-repair-service.json"), "--options", str(option_path)], capture_output=True, text=True)
