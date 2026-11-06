@@ -151,6 +151,7 @@ async function main() {
     };
     const profileToken = await accessToken("aip-web");
     const stockToken = await accessToken("aip-stock");
+    const env = { ...process.env, AIP_TEST_DATABASE: testDatabase, SSL_CERT_FILE: join(certs, "kc-ca.crt") };
     const [rawHeader, rawClaims] = profileToken.split(".");
     const header = decode(rawHeader);
     const claims = decode(rawClaims);
@@ -163,6 +164,18 @@ async function main() {
     check("the issuer is the realm URL", claims.iss === issuer, claims.iss);
     check("a client without the setting issues a header type the profile refuses", decode(stockToken.split(".")[0]).typ !== "at+jwt", JSON.stringify(decode(stockToken.split(".")[0])));
 
+    console.log("==> 3a. Running the read-only OIDC readiness command against Keycloak...");
+    const readiness = JSON.parse(run(binary, ["service", "idp-readiness", "--issuer", issuer], { env }));
+    check("readiness discovers the exact issuer and reads the HTTPS JWKS without DB setup",
+      readiness.ok === true && readiness.stages?.issuer === "matched" && readiness.stages?.tls === "verified" && readiness.metadata?.keyCount >= 1,
+      JSON.stringify(readiness));
+    const missingInput = spawnSync(binary, ["service", "idp-readiness"], { encoding: "utf8", cwd: repoDir, env });
+    const missingResult = JSON.parse((missingInput.stderr || missingInput.stdout).trim());
+    check("readiness fails when no issuer or discovery endpoint is configured", missingInput.status !== 0 && missingResult.stage === "input", JSON.stringify(missingResult));
+    const wrongIssuer = spawnSync(binary, ["service", "idp-readiness", "--discovery-url", `${issuer}/.well-known/openid-configuration`, "--expected-issuer", `${issuer}/wrong`], { encoding: "utf8", cwd: repoDir, env });
+    const wrongResult = JSON.parse((wrongIssuer.stderr || wrongIssuer.stdout).trim());
+    check("readiness rejects an issuer mismatch", wrongIssuer.status !== 0 && wrongResult.stage === "issuer", JSON.stringify(wrongResult));
+
     console.log("==> 4. Starting aip service against Keycloak's own HTTPS JWKS...");
     const appPath = join(work, "app.aip");
     await writeFile(appPath, await readFile(join(repoDir, "spikes", "spike-v6-transport", "tests", "fixtures", "jobs.aip")));
@@ -172,7 +185,6 @@ async function main() {
       auth: { issuer, audience: "aip-api", jwks: { kind: "https", url: `${issuer}/protocol/openid-connect/certs` } },
       workers: { directory: join(repoDir, "spikes", "spike-v6-transport", "tests", "fixtures", "jobs"), language: "node" },
     }, null, 2));
-    const env = { ...process.env, AIP_TEST_DATABASE: testDatabase, SSL_CERT_FILE: join(certs, "kc-ca.crt") };
     run(binary, ["service", "init", appPath, "--config", configPath], { env });
     run(binary, ["service", "principal", "--config", configPath, "bind", "--subject", claims.sub, "--actor", "42"], { env });
     const bindingPath = join(work, "binding.ts");

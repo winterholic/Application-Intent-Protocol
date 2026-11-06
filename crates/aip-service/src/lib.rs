@@ -23,6 +23,18 @@ const INTEGRATION_DNS_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Read OIDC discovery and JWKS metadata without changing provider or application resources
+    IdpReadiness {
+        /// Expected issuer. If supplied alone, the standard discovery path is derived from it.
+        #[arg(long, conflicts_with_all = ["discovery_url", "expected_issuer"])]
+        issuer: Option<String>,
+        /// Explicit OIDC discovery endpoint; requires --expected-issuer for exact comparison.
+        #[arg(long, requires = "expected_issuer", conflicts_with = "issuer")]
+        discovery_url: Option<String>,
+        /// Exact issuer value expected in discovery metadata when --discovery-url is used.
+        #[arg(long, requires = "discovery_url")]
+        expected_issuer: Option<String>,
+    },
     /// Validate any of the five caller-definition formats
     Check {
         file: PathBuf,
@@ -993,6 +1005,23 @@ fn generate_binding(facts: &Value, sdk_import: &str, wire: Wire, lang: BindingLa
 
 pub async fn run(command: Command) -> Result<Value, Value> {
     match command {
+        Command::IdpReadiness { issuer, discovery_url, expected_issuer } => {
+            let (issuer, endpoint) = match (issuer, discovery_url, expected_issuer) {
+                (Some(issuer), None, None) => (issuer, None),
+                (None, Some(endpoint), Some(issuer)) => (issuer, Some(endpoint)),
+                _ => {
+                    return Err(
+                        json!({"ok":false,"code":"OIDC_READINESS_INPUT","stage":"input","message":"--issuer 또는 --discovery-url와 --expected-issuer가 필요함"}),
+                    );
+                }
+            };
+            let result = aip_auth::oidc_readiness(&issuer, endpoint.as_deref())
+                .await
+                .map_err(|failure| json!({"ok":false,"code":"OIDC_READINESS_FAILED","stage":failure.stage,"message":"OIDC readiness 확인 실패"}))?;
+            Ok(
+                json!({"ok":true,"stages":{"discovery":"passed","issuer":"matched","jwks":"valid","tls":"verified"},"metadata":{"keyCount":result.key_count,"algorithms":result.algorithms}}),
+            )
+        }
         Command::Check { file, dev_checks } => {
             let checked = load(&file, dev_checks)?;
             Ok(

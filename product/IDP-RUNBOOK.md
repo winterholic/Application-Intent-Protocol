@@ -44,6 +44,22 @@ mock은 저장소 테스트 CA로 서명한 HTTPS 서버다. 서비스 바이너
 5. 시작하면 서비스가 JWKS를 한 번 받아 검증한다. 실패하면 설정 오류의 원인 문장(`jwks.url에서 공개키 집합을 받지 못함` 등)이 나온다. 값은 로그에 남지 않는다.
 6. 토큰 한 장으로 `POST /session`을 호출해 `principal.actorId`가 기대와 같은지 본다.
 
+### 읽기 전용 OIDC readiness
+
+서비스 설정·DB를 준비하지 않고 issuer discovery와 JWKS만 확인하려면 명시적으로 실행한다:
+
+```sh
+aip service idp-readiness --issuer 'https://<tenant>/<realm>'
+```
+
+Discovery endpoint를 따로 지정할 때는 비교할 issuer도 함께 지정한다:
+
+```sh
+aip service idp-readiness --discovery-url 'https://<tenant>/<realm>/.well-known/openid-configuration' --expected-issuer 'https://<tenant>/<realm>'
+```
+
+이 명령은 HTTPS 인증서, 응답 기한·크기, discovery의 issuer 일치, HTTPS `jwks_uri`, 공개 RSA 서명 키 집합을 확인한다. 설정이 비어 있으면 실패한다. 성공 시 discovery·issuer·TLS·JWKS 단계와 키 개수/알고리즘만 출력한다. URL 원문, 사용자 정보, query, token, key body는 출력하지 않는다. provider 자원이나 AIP 설정·DB는 변경하지 않는다.
+
 ## 제공자별 메모 (확인 못함: 계정 없음)
 
 아래는 각 제품의 공개 문서를 바탕으로 한 확인 대상 목록이다. 실제 테넌트에서 토큰을 열어 `typ`·`iss`·`aud`·`exp - iat`를 확인한 뒤 쓴다.

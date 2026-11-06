@@ -207,14 +207,23 @@ async fn readiness_rejects_an_issuer_mismatch() {
     let a = SigningKey::new("readiness-key");
     let idp = Idp::start(jwks(&[&a]));
     let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
-    assert_eq!(oidc_readiness_with_client("https://issuer.example/", &endpoint, &idp.client()).await, Err(AuthError::Unavailable));
+    assert_eq!(oidc_readiness_with_client("https://issuer.example/", &endpoint, &idp.client()).await, Err(OidcReadinessFailure { stage: "issuer" }));
 }
 
 #[tokio::test]
 async fn readiness_rejects_a_malformed_key_set() {
     let idp = Idp::start(r#"{"keys":[{"kty":"RSA","kid":"broken","alg":"RS256","use":"sig","n":"!","e":"AQAB"}]}"#.into());
     let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
-    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await, Err(AuthError::Unavailable));
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await, Err(OidcReadinessFailure { stage: "jwks" }));
+}
+
+#[tokio::test]
+async fn readiness_rejects_private_key_material_and_oversized_jwks() {
+    let idp = Idp::start(r#"{"keys":[{"kty":"RSA","kid":"private","alg":"RS256","use":"sig","n":"AQ","e":"AQAB","d":"not-output"}]}"#.into());
+    let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.err().expect("private material rejected").stage, "jwks");
+    idp.publish(" ".repeat(MAX_JWKS_BYTES + 1));
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.err().expect("oversized response rejected").stage, "jwks");
 }
 
 #[tokio::test]
@@ -223,7 +232,7 @@ async fn readiness_rejects_a_jwks_http_error() {
     let idp = Idp::start(jwks(&[&a]));
     idp.set_failing(true);
     let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
-    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await, Err(AuthError::Unavailable));
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await, Err(OidcReadinessFailure { stage: "jwks" }));
 }
 
 #[tokio::test]
@@ -232,10 +241,11 @@ async fn readiness_times_out_and_rejects_untrusted_tls() {
     let idp = Idp::start(jwks(&[&a]));
     let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
     idp.set_delayed(true);
-    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await, Err(AuthError::Unavailable));
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await, Err(OidcReadinessFailure { stage: "discovery" }));
     idp.set_delayed(false);
-    let untrusted = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT).no_proxy().build().expect("untrusted client");
-    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &untrusted).await, Err(AuthError::Unavailable));
+    let untrusted =
+        reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT).no_proxy().build().expect("untrusted client");
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &untrusted).await, Err(OidcReadinessFailure { stage: "discovery" }));
 }
 
 #[tokio::test]
