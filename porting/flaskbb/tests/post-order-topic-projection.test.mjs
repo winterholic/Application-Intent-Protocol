@@ -165,6 +165,9 @@ for (const mode of ['non-current','hidden-topic','hidden-post','member-hidden-to
         UPDATE ${q}.forum SET last_post_id=${mode==='empty-pointer'?'NULL':`'${mode==='non-current'||mode==='same-pointer'?other:last}'`},last_post_user_id=2,
           last_post_title='sentinel-title',last_post_username='sentinel-name',last_post_created='1990-01-01' WHERE id=1;`);
       seedNativePostOrders(sql,q,[first,other,last,fallback]);
+      if(mode==='only') sql(`INSERT INTO ${q}.topic_read(id,user_id,topic_id,forum_id,last_read) VALUES(99,2,'${topic}',1,'2025-01-01');
+        INSERT INTO ${q}.topic_tracker(id,user_id,topic_id,active) VALUES(99,2,'${topic}',true);
+        INSERT INTO ${q}.report(id,reporter_id,reported,post_id,reason) VALUES(99,2,'2025-01-01','${last}','cascade probe');`);
     }});
     const {q,sql}=fx;
     const forum=()=>sql(`SELECT jsonb_build_array(last_post_id,last_post_user_id,last_post_title,last_post_username,last_post_created)::text FROM ${q}.forum WHERE id=1`);
@@ -172,10 +175,24 @@ for (const mode of ['non-current','hidden-topic','hidden-post','member-hidden-to
       const before=forum();
       const unrelatedPosts=sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p WHERE topic_id!='${topic}'`);
       const otherTopics=sql(`SELECT jsonb_agg(to_jsonb(t) ORDER BY id)::text FROM ${q}.topic t WHERE id!='${topic}'`);
+      const fullState=()=>sql(`SELECT jsonb_build_object(
+        'forum',(SELECT to_jsonb(f) FROM ${q}.forum f WHERE id=1),
+        'topic',(SELECT to_jsonb(t) FROM ${q}.topic t WHERE id='${topic}'),
+        'posts',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM ${q}.post p),
+        'post_order',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM ${q}.post_order o),
+        'first_post',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM ${q}.topic_first_post x),
+        'topic_read',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM ${q}.topic_read x),
+        'topic_tracker',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM ${q}.topic_tracker x),
+        'report',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM ${q}.report x))::text`);
+      const deniedState=fullState();
+      const deniedAudit=JSON.parse(fx.run(binary,['service','audit','--config',fx.config,'list','--resource','Topic','--target-id',topic]));
       const denied=await fx.client('carol').bundle({atomic:[{apply:'Topic.delete',target:{ids:[topic]}}]}, {key:`topic-delete-denied-${mode}`});
       assert.equal(denied.ok,false);
       assert.equal(forum(),before);
       assert.equal(sql(`SELECT deleted FROM ${q}.topic WHERE id='${topic}'`),'f');
+      assert.equal(fullState(),deniedState,'a refused delete preserves every fixture row and full Forum projection');
+      assert.deepEqual(JSON.parse(fx.run(binary,['service','audit','--config',fx.config,'list','--resource','Topic','--target-id',topic])),deniedAudit,
+        'a refused delete does not add or change audit entries');
       const result=await fx.client(executor).bundle({atomic:[{apply:'Topic.delete',target:{ids:[topic]}}]}, {key:`topic-delete-${mode}`});
       assert.equal(result.ok,true,JSON.stringify(result));
       if(mode==='non-current'||mode==='same-pointer') assert.equal(forum(),before,'source preserves all projection fields when no new last Post is selected');
@@ -192,6 +209,14 @@ for (const mode of ['non-current','hidden-topic','hidden-post','member-hidden-to
       }
       assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id='${topic}'`),'0');
       assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${topic}'`),'0');
+      if(mode==='only') {
+        assert.deepEqual(JSON.parse(forum()),[null,null,null,null,null],'no replacement sets pointer and every Forum projection field to NULL');
+        assert.equal(sql(`SELECT count(*) FROM ${q}.post_order WHERE post_id IN ('${first}','${last}')`),'0');
+        assert.equal(sql(`SELECT count(*) FROM ${q}.topic_first_post WHERE topic_id='${topic}'`),'0');
+        assert.equal(sql(`SELECT count(*) FROM ${q}.topic_read WHERE topic_id='${topic}'`),'0');
+        assert.equal(sql(`SELECT count(*) FROM ${q}.topic_tracker WHERE topic_id='${topic}'`),'0');
+        assert.equal(sql(`SELECT count(*) FROM ${q}.report WHERE post_id='${last}'`),'0');
+      }
       assert.equal(sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p`),unrelatedPosts);
       assert.equal(sql(`SELECT jsonb_agg(to_jsonb(t) ORDER BY id)::text FROM ${q}.topic t WHERE id!='${topic}'`),otherTopics);
       const applied=forum();
@@ -200,3 +225,60 @@ for (const mode of ['non-current','hidden-topic','hidden-post','member-hidden-to
     } finally { await fx.stop(); }
   });
 }
+
+test('Post.delete follows original ID order and preserves Forum projection for non-last deletes', {timeout:90000}, async () => {
+  const topic=id(90), first=id(91), target=id(92), olderIdNewerDate=id(93), newerIdOlderDate=id(94), otherTopic=id(95);
+  const fx=await startFixture({actors:{admin:3}, seed(sql,q,schema) {
+    base(sql,q,schema);
+    sql(`INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden)
+      VALUES('${topic}',1,'Target Topic',2,'topic-owner','2000-01-01','2025-02-01',false,false,0,true,false,false),
+      ('${otherTopic}',1,'Other Topic',3,'other-owner','2000-01-01','2025-01-01',false,false,0,true,false,false);
+      INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted)
+      VALUES('${first}','${topic}',1,2,'first-author','first','2025-01-01',false,true,0,false),
+      ('${target}','${topic}',1,2,'target-author','target','2025-02-01',false,true,0,false),
+      ('${olderIdNewerDate}','${otherTopic}',1,3,'id-51-author','id 51 is later by date','2025-01-02',false,true,0,false),
+      ('${newerIdOlderDate}','${otherTopic}',1,3,'id-52-author','id 52 is later by source ID','2025-01-01',false,true,0,false);
+      INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topic}','${first}'),('${otherTopic}','${olderIdNewerDate}');
+      UPDATE ${q}.topic SET last_post_id='${target}' WHERE id='${topic}';
+      UPDATE ${q}.topic SET last_post_id='${newerIdOlderDate}' WHERE id='${otherTopic}';
+      INSERT INTO ${q}.post_order(id,post_id) VALUES(50,'${first}'),(60,'${target}'),(51,'${olderIdNewerDate}'),(52,'${newerIdOlderDate}');
+      UPDATE ${q}.post p SET source_order_id=o.id FROM ${q}.post_order o WHERE p.id=o.post_id;
+      UPDATE ${q}.forum SET last_post_id='${target}',last_post_user_id=2,last_post_title='Target Topic',
+        last_post_username='target-author',last_post_created='2025-02-01' WHERE id=1;`);
+  }});
+  const {q,sql}=fx;
+  const forum=()=>sql(`SELECT jsonb_build_array(last_post_id,last_post_user_id,last_post_title,last_post_username,
+    to_char(last_post_created AT TIME ZONE 'UTC','YYYY-MM-DD'))::text FROM ${q}.forum WHERE id=1`);
+  const topicProjection=()=>sql(`SELECT jsonb_build_array(last_post_id,to_char(last_updated AT TIME ZONE 'UTC','YYYY-MM-DD'))::text FROM ${q}.topic WHERE id='${topic}'`);
+  try {
+    const originalForum=forum();
+    const originalTopic=topicProjection();
+    const result=await fx.client('admin').bundle({atomic:[{apply:'Post.delete',target:{ids:[target]}}]}, {key:'post-delete-id-order'});
+    assert.equal(result.ok,true,JSON.stringify(result));
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${target}'`),'0','Post.delete physically removes its target');
+    assert.deepEqual(JSON.parse(forum()),[newerIdOlderDate,'3','Other Topic','id-52-author','2025-01-01'],
+      `Forum fallback must follow imported source ID DESC even when date order is reversed (before=${originalForum})`);
+    assert.deepEqual(JSON.parse(topicProjection()),[first,'2025-01-01'],
+      `Topic fallback uses the imported source order and leaves the original first post (before=${originalTopic})`);
+
+    // A middle post in another topic is not either last-post pointer. Its delete
+    // must retain every Forum projection value, even if the projection is stale.
+    const nonlast=id(96), nonlastTopic=id(97), nonlastFirst=id(98);
+    sql(`INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden)
+      VALUES('${nonlastTopic}',1,'Nonlast Topic',2,'owner','2000-01-01','2000-01-01',false,false,0,true,false,false);
+      INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted)
+      VALUES('${nonlastFirst}','${nonlastTopic}',1,2,'owner','first','2000-01-01',false,true,0,false),
+      ('${nonlast}','${nonlastTopic}',1,2,'middle','middle','2001-01-01',false,true,0,false);
+      INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${nonlastTopic}','${nonlastFirst}');
+      UPDATE ${q}.topic SET last_post_id='${nonlast}' WHERE id='${nonlastTopic}';
+      INSERT INTO ${q}.post_order(post_id) VALUES('${nonlastFirst}'),('${nonlast}');
+      UPDATE ${q}.post p SET source_order_id=o.id FROM ${q}.post_order o WHERE p.id=o.post_id AND p.id IN ('${nonlastFirst}','${nonlast}');`);
+    const sentinel=sql(`UPDATE ${q}.forum SET last_post_title='preserve-all-fields',last_post_username='stale-name',last_post_created='1990-01-01' WHERE id=1 RETURNING 1`);
+    const beforeNonlast=forum();
+    const nonlastResult=await fx.client('admin').bundle({atomic:[{apply:'Post.delete',target:{ids:[nonlast]}}]}, {key:'post-delete-nonlast'});
+    assert.equal(nonlastResult.ok,true,JSON.stringify(nonlastResult));
+    assert.equal(forum(),beforeNonlast,`Forum projection must be unchanged for non-last delete (marker=${sentinel})`);
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id='${nonlastTopic}'`),'1');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${nonlast}'`),'0');
+  } finally { await fx.stop(); }
+});
