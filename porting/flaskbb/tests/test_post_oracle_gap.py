@@ -10,6 +10,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
+from unittest.mock import patch
 
 UPSTREAM = Path(__file__).resolve().parents[1] / "upstream"
 sys.path.insert(0, str(UPSTREAM))
@@ -41,7 +42,16 @@ class PostOracleGap(unittest.TestCase):
             raise RuntimeError("refusing ORM test without isolated aip_test_* PostgreSQL schema URI")
         if create_app.__module__ != "flaskbb.app" or sqlalchemy.__version__ != "1.3.10":
             raise RuntimeError("expected preserved FlaskBB app with pinned SQLAlchemy 1.3.10")
-        cls.app = create_app(OracleConfig, instance_path="/tmp/flaskbb-orm-oracle-" + uuid4().hex)
+        # The pinned FlaskBB requirements include Celery 4.3.0, whose
+        # ``pytz (>dev)`` metadata is rejected by pkg_resources when
+        # FlaskBB discovers installed plugin entry points. Plugins are outside
+        # this Post/Topic ORM oracle, so keep the original create_app path while
+        # isolating this test from external plugin discovery.
+        with patch("flaskbb.plugins.manager.iter_entry_points", return_value=[]):
+            cls.app = create_app(
+                OracleConfig,
+                instance_path="/tmp/flaskbb-orm-oracle-" + uuid4().hex,
+            )
         cls.ctx = cls.app.app_context()
         cls.ctx.push()
         cls.statements = []
