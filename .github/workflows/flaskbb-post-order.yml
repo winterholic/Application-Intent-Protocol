@@ -63,7 +63,7 @@ jobs:
         continue-on-error: true
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y libjpeg-dev postgresql-client
           rustup update stable
           rustup default stable
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
