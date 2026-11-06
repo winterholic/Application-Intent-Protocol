@@ -253,6 +253,7 @@ fn rekey_options_rejects_unknown_fields() {
 }
 
 const INVENTORY_DEFINITION: &str = r#"
+actor principal
 resource Team { fields { id: Id; } }
 resource Secret {
   fields {
