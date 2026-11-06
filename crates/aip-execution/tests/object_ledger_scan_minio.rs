@@ -63,7 +63,7 @@ async fn pg_minio_owner_mapping_paging_fencing_and_multipart_boundary() {
     let scoped = store.for_owner(&owner).unwrap();
     let keys = [ObjectKey::generate(), ObjectKey::generate(), ObjectKey::generate()];
     for (index, key) in keys.iter().enumerate() {
-        put(&http, &scoped, key, &[index as u8 + 1; index + 1]).await;
+        put(&http, &scoped, key, &vec![index as u8 + 1; index + 1]).await;
     }
     let prefix = ledger.register_owner(&mut client, &owner).await.unwrap();
     assert_eq!(ledger.owner_for_prefix(&client, &prefix).await.unwrap().as_deref(), Some(owner.as_str()));
