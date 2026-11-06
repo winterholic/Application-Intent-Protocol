@@ -135,6 +135,7 @@ def build(schema, admin_username, admin_email, welcome):
         out.append(f'UPDATE "{schema}"."post" SET source_order_id = '
                    f'(SELECT id FROM "{schema}"."post_order" WHERE post_id = {literal(post)}) WHERE id = {literal(post)};')
         out.append(insert(schema, "topic_first_post", ["id", "topic_id", "post_id"], [[1, topic, post]]))
+        out.append(f'UPDATE "{schema}"."topic" SET last_post_id = {literal(post)} WHERE id = {literal(topic)};')
         out.append(f'UPDATE "{schema}"."forum" SET last_post_id = {literal(post)}, last_post_user_id = 1, '
                    f'last_post_title = \'Welcome!\', last_post_username = {literal(admin_username)}, last_post_created = now() WHERE id = 1;')
 

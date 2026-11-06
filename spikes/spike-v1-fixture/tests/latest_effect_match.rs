@@ -1,4 +1,4 @@
-use spike_v1_fixture::{Form, load_str};
+use spike_v1_fixture::{load_str, Form};
 
 const SOURCE: &str = r#"
 actor Member
@@ -32,7 +32,8 @@ fn latest_nullable_selection_can_match_a_required_effect_target() {
 
 #[test]
 fn nullable_assignment_and_wrong_match_type_still_refuse() {
-    let nullable_assignment = SOURCE.replace("{ hidden = false }", "{ id = latest FirstPost link where link.topic = this order by link.id select link.post }");
+    let nullable_assignment =
+        SOURCE.replace("{ hidden = false }", "{ id = latest FirstPost link where link.topic = this order by link.id select link.post }");
     assert!(load_str(&nullable_assignment, Form::A).is_err());
     let wrong_type = SOURCE.replace("select link.post {", "select link.topic {");
     assert!(load_str(&wrong_type, Form::A).is_err());

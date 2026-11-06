@@ -11,6 +11,8 @@ on:
       - 'porting/flaskbb/tests/post-order-*.test.mjs'
       - 'spikes/spike-v1-fixture/tests/latest_effect_match.rs'
       - 'spikes/spike-v1-fixture/src/sema.rs'
+      - 'spikes/spike-v1-fixture/src/isolation.rs'
+      - 'spikes/spike-v3-write/tests/latest_effect_match.rs'
       - 'porting/flaskbb/seed/*post_order*'
 
 permissions:
@@ -61,6 +63,9 @@ jobs:
         run: cargo build -p aip-cli --locked
       - name: Verify server-selected effect target contract
         run: cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test latest_effect_match
+      - name: Verify selected target transactions
+        if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
+        run: cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test latest_effect_match
       - name: Verify active FlaskBB native ordering and the legacy allocation fence
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs

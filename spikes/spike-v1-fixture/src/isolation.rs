@@ -69,8 +69,7 @@ pub fn mark(facts: &mut Value) {
                 t["effects"].as_array().into_iter().flatten().flat_map(|e| ["create", "update", "delete"].into_iter().filter_map(|k| e[k].as_str())),
             );
             let effect_needs_absence = t["effects"].as_array().into_iter().flatten().any(|e| {
-                e["update"].is_string()
-                    && (reads(&e["when"], &predicates) || e["values"].as_object().into_iter().flatten().any(|(_, value)| reads(value, &predicates)))
+                e["update"].is_string() && (reads(&e["when"], &predicates) || ["match", "values"].into_iter().any(|key| reads(&e[key], &predicates)))
             });
             if reads(&t["allow"], &predicates)
                 || reads(&t["from"], &predicates)

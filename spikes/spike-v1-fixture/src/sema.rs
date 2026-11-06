@@ -627,7 +627,7 @@ impl<'a> Ctx<'a> {
             }
             Expr::Latest { resource, alias, where_, order_by, select, otherwise, span } => {
                 if !sc.allow_latest {
-                    return Err(Diag::new("DEF.UNSUPPORTED_EFFECT", "`latest`는 서버 전이 효과 값에서만 쓸 수 있음", *span));
+                    return Err(Diag::new("DEF.UNSUPPORTED_EFFECT", "`latest`는 서버 update 효과의 값이나 대상 조건에서만 쓸 수 있음", *span));
                 }
                 if sc.in_latest {
                     return Err(Diag::new("DEF.UNSUPPORTED_EFFECT", "중첩 `latest` 선택은 지원하지 않음", *span));
@@ -1505,7 +1505,7 @@ impl<'a> Ctx<'a> {
                     self.d("DEF.UNKNOWN_SYMBOL", format!("갱신 대상 `{resource}` 없음"), *span);
                     return None;
                 }
-                let typed = |pairs: &Vec<(String, Expr)>, what: &str, value_scope: &Scope, cx: &mut Self| -> Map<String, Value> {
+                let typed = |pairs: &Vec<(String, Expr)>, what: &str, value_scope: &Scope, match_value: bool, cx: &mut Self| -> Map<String, Value> {
                     let mut out = Map::new();
                     for (f, v) in pairs {
                         if out.contains_key(f) {
@@ -1517,7 +1517,7 @@ impl<'a> Ctx<'a> {
                             continue;
                         };
                         let res = cx.expect(v, value_scope, Some(&ft)).and_then(|(val, vt)| {
-                            if same_target(&vt.ty, &ft.ty) && (!vt.nullable || ft.nullable) {
+                            if same_target(&vt.ty, &ft.ty) && (match_value || !vt.nullable || ft.nullable) {
                                 Ok(val)
                             } else {
                                 Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{resource}.{f}`({})에 `{}` 불가", ft.show(), vt.show()), *span))
@@ -1529,10 +1529,13 @@ impl<'a> Ctx<'a> {
                     }
                     out
                 };
-                let m = typed(matches, "조건", sc, self);
-                let when = when.as_ref().and_then(|condition| self.run(self.bool_of(condition, sc)));
+                // A nullable scalar is safe in an equality match: no selected row
+                // matches nothing, and the runtime keeps its exact-target refusal.
+                // Assignments retain their required-field nullability check.
                 let value_scope = Scope { allow_latest: true, latest_target: Some(resource.clone()), ..sc.clone() };
-                let v = typed(values, "값", &value_scope, self);
+                let m = typed(matches, "조건", &value_scope, true, self);
+                let when = when.as_ref().and_then(|condition| self.run(self.bool_of(condition, sc)));
+                let v = typed(values, "값", &value_scope, false, self);
                 if m.is_empty() || v.is_empty() {
                     self.d("DEF.MISSING_ITEM", "update 효과에는 찾을 조건과 바꿀 값이 필요", *span);
                 }
