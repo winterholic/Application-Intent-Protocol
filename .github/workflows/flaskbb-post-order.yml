@@ -70,13 +70,20 @@ jobs:
       - name: Run pinned FlaskBB ORM against an isolated PostgreSQL schema
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: '3.8'
+          python-version: '3.7.17'
       - name: Install pinned FlaskBB ORM dependencies and run PostgreSQL regressions
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+          PYTHONDONTWRITEBYTECODE: '1'
         run: |
           python3 -m venv "$RUNNER_TEMP/flaskbb-upstream"
-          cd porting/flaskbb/upstream
-          "$RUNNER_TEMP/flaskbb-upstream/bin/pip" install --no-cache-dir -r requirements.txt "psycopg2-binary==2.9.9"
-          cd "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/flaskbb-upstream/bin/pip" install --upgrade 'pip<24' 'setuptools<68' 'wheel<0.43'
+          sed -e '/^git+https:\/\/github.com\/justanr\/flask-allows.git/d' \
+            -e "s|^-e \\.$|-e $GITHUB_WORKSPACE/porting/flaskbb/upstream|" \
+            porting/flaskbb/upstream/requirements.txt > "$RUNNER_TEMP/flaskbb-upstream-requirements.txt"
+          "$RUNNER_TEMP/flaskbb-upstream/bin/pip" install --no-cache-dir \
+            -r "$RUNNER_TEMP/flaskbb-upstream-requirements.txt" \
+            -r porting/flaskbb/compat/requirements.extra.txt
           psql "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA flaskbb_orm_oracle'
           FLASKBB_ORACLE_DATABASE_URI='postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle' \
             PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/porting/flaskbb/upstream" \
