@@ -1,15 +1,10 @@
 //! Boundary and contract tests for `WriteCellSealer` and `ReadCellOpener`.
 
 use aip_crypto::cell::MAX_CELL_BYTES;
-use aip_execution::{
-    encryption::{DekStore, Error as StoreError},
-    read_opener::{OpenCell, StoreOpener},
-    write_sealer::{SealCell, StoreSealer},
-};
+use aip_execution::{encryption::Error as StoreError, read_opener::OpenCell, write_sealer::SealCell};
 
 #[test]
 fn seal_cells_rejects_oversized_payloads_with_wire_bad_value() {
-    let store = DekStore::new("aip_sealer_test").unwrap();
     // Dummy client placeholder is not invoked because validation happens before locking budget.
     // We test that input validation fails closed with WIRE.BAD_VALUE.
     let cell = SealCell {
