@@ -60,6 +60,46 @@ fn reference_delete_policies_parse_and_set_null_requires_an_optional_reference()
 }
 
 #[test]
+fn latest_null_fallback_is_typed_nullable_and_preserves_the_selected_projection() {
+    let source = r#"
+resource Member { fields { id: Id } }
+actor Member
+resource Topic {
+  fields { id: Id; owner: Member; hidden: Bool }
+  transition unhide {
+    from hidden = true
+    to hidden = false
+    allow owner = actor
+    update Summary where topic = this.id {
+      post = latest Post candidate where candidate.topic = this.id order by candidate.id select candidate.id otherwise null
+      label = latest Post candidate where candidate.topic = this.id order by candidate.id select candidate.label otherwise null
+    }
+  }
+}
+resource Summary { fields { id: Id; topic: Topic; post: Post?; label: Text? } }
+resource Post { fields { id: Id; topic: Topic; label: Text? } }
+"#;
+    let loaded = load_str(&source, Form::A).unwrap_or_else(|errors| panic!("latest null fallback: {errors:?}"));
+    let values = &loaded.execution["resources"]["Topic"]["transitions"]["unhide"]["effects"][0]["values"];
+    let post = &values["post"];
+    assert_eq!(post["ty"], "Ref<Post>?");
+    assert_eq!(post["latest"]["select"]["path"]["segs"], serde_json::json!(["id"]));
+    assert!(post["latest"]["otherwise"]["lit"].is_null());
+    let label = &values["label"];
+    assert_eq!(label["ty"], "Text?");
+    assert_eq!(label["latest"]["select"]["path"]["segs"], serde_json::json!(["label"]));
+    assert!(label["latest"]["otherwise"]["lit"].is_null());
+
+    let required_target = source.replace("post: Post?; label", "post: Post; label");
+    let errors = load_str(&required_target, Form::A).err().expect("nullable latest result cannot fill a required reference");
+    assert!(errors.iter().any(|error| error.code == "DEF.TYPE_MISMATCH"), "unexpected diagnostics: {errors:?}");
+
+    let wrong_fallback = source.replace("select candidate.id otherwise null", "select candidate.id otherwise candidate.label");
+    let errors = load_str(&wrong_fallback, Form::A).err().expect("incompatible non-null fallback must be refused");
+    assert!(errors.iter().any(|error| error.code == "DEF.TYPE_MISMATCH"), "unexpected diagnostics: {errors:?}");
+}
+
+#[test]
 fn only_same_resource_integer_id_references_support_order_comparisons() {
     let source = "actor Entry resource Entry { fields { id: Id } } predicate later(left: Entry, right: Entry?) = left > right";
     load_str(source, Form::A).unwrap_or_else(|errors| panic!("native integer identity ordering: {errors:?}"));

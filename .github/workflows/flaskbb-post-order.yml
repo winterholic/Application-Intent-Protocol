@@ -22,6 +22,7 @@ on:
       - 'spikes/spike-v1-fixture/src/syntax_card.rs'
       - 'spikes/spike-v3-write/tests/latest_effect_match.rs'
       - 'spikes/spike-v2-read/src/sqlgen.rs'
+      - 'spikes/spike-v2-read/tests/latest_effect_value.rs'
       - 'spikes/spike-v2-read/tests/reference_cycles.rs'
       - 'porting/flaskbb/seed/*post_order*'
       - 'porting/flaskbb/tests/test_post_order_import.py'
@@ -177,6 +178,12 @@ jobs:
       - name: Verify generated language reference
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test diagnostics
+      - name: Verify latest fallback SQL projection
+        id: latest-sql-projection
+        if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
+        run: >-
+          python3 porting/flaskbb/tests/record_command.py --name latest-fallback-sql-projection --
+          cargo test --manifest-path spikes/spike-v2-read/Cargo.toml --locked --target-dir target --test latest_effect_value
       - name: Verify selected target transactions
         id: selected-target
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
@@ -210,12 +217,13 @@ jobs:
           SCHEMA_CLEANUP: ${{ steps.oracle-schema-cleanup.outcome }}
           PRODUCT_BUILD: ${{ steps.product-build.outcome }}
           LATEST_EFFECT_CONTRACT: ${{ steps.latest-effect-contract.outcome }}
+          LATEST_SQL_PROJECTION: ${{ steps.latest-sql-projection.outcome }}
           SELECTED_TARGET: ${{ steps.selected-target.outcome }}
           ACTIVE_NATIVE_ORDERING: ${{ steps.active-native-ordering.outcome }}
           UI_HOST: ${{ steps.ui-host.outcome }}
         run: >-
           python3 porting/flaskbb/tests/record_command.py --name stage-outcomes --
-          python3 -c 'import os,sys; keys=("FIXTURE_TOOLS","SETUP_PYTHON","VENV","INSTALLER","REQUIREMENTS","INSTALL","IMPORT","SCHEMA","REGRESSION","NEGATIVE_DATE","NEGATIVE_TOPIC_VISIBILITY","SCHEMA_CLEANUP","PRODUCT_BUILD","LATEST_EFFECT_CONTRACT","SELECTED_TARGET","ACTIVE_NATIVE_ORDERING","UI_HOST"); results={key:os.environ.get(key,"missing") for key in keys}; print("FLASKBB_STAGE_OUTCOMES", results); failed=[key for key,value in results.items() if value != "success"]; sys.exit(1 if failed else 0)'
+          python3 -c 'import os,sys; keys=("FIXTURE_TOOLS","SETUP_PYTHON","VENV","INSTALLER","REQUIREMENTS","INSTALL","IMPORT","SCHEMA","REGRESSION","NEGATIVE_DATE","NEGATIVE_TOPIC_VISIBILITY","SCHEMA_CLEANUP","PRODUCT_BUILD","LATEST_EFFECT_CONTRACT","LATEST_SQL_PROJECTION","SELECTED_TARGET","ACTIVE_NATIVE_ORDERING","UI_HOST"); results={key:os.environ.get(key,"missing") for key in keys}; print("FLASKBB_STAGE_OUTCOMES", results); failed=[key for key,value in results.items() if value != "success"]; sys.exit(1 if failed else 0)'
       - name: Upload stage-by-stage FlaskBB evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

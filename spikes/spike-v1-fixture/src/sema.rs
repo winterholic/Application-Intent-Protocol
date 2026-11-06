@@ -699,7 +699,7 @@ impl<'a> Ctx<'a> {
                 let (otherwise_value, nullable) = if let Some(otherwise) = otherwise {
                     let fallback_scope = Scope { in_latest: true, ..sc.clone() };
                     let (fallback, fallback_ty) = self.ex(otherwise, &fallback_scope)?;
-                    if !same_target(&fallback_ty.ty, &selected_ty.ty) {
+                    if fallback_ty.ty != Ty::Null && !same_target(&fallback_ty.ty, &selected_ty.ty) {
                         return Err(Diag::new(
                             "DEF.TYPE_MISMATCH",
                             format!("`latest otherwise` `{}`는 선택식 `{}`와 타입이 다름", fallback_ty.show(), selected_ty.show()),

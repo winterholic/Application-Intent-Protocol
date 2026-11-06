@@ -67,3 +67,21 @@ fn latest_without_fallback_keeps_a_single_selection() {
         assert_eq!(ctx.params.finish(sql).1.len(), 1);
     }
 }
+
+#[test]
+fn latest_null_fallback_preserves_a_selected_null_projection() {
+    let facts = facts();
+    let env = Env { this: Some(("parent".into(), "Order".into())), ..Default::default() };
+    let mut expression = latest();
+    expression["latest"]["select"] = json!({"path":{"root":"var.candidate","segs":["label"]},"ty":"Text?"});
+    expression["latest"]["otherwise"] = json!({"lit":null,"ty":"Null?"});
+
+    for dialect in [Dialect::Postgres, Dialect::MySql] {
+        let mut ctx = Ctx::new(&facts, None, "").with_dialect(dialect);
+        let sql = ctx.value(&expression, &env).unwrap();
+        assert!(sql.contains("CASE WHEN EXISTS"), "row absence must select the fallback: {sql}");
+        assert!(sql.contains("THEN (SELECT latest1."), "a present row projects its field even when that field is NULL: {sql}");
+        assert!(sql.ends_with(" ELSE NULL END)"), "NULL fallback must remain a separate projection branch: {sql}");
+        assert!(!sql.contains("COALESCE"), "selected NULL must not be replaced by the fallback: {sql}");
+    }
+}
