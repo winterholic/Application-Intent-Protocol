@@ -17,6 +17,23 @@ const binary = process.env.AIP_BINARY || join(root, 'target/debug/aip');
 const file = join(track, 'app.aip');
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
+function uiDeleteFailureDiagnostic(response, body, hostStderr) {
+  const error = [...hostStderr.matchAll(/AIP (mutation|request) rejected code=([A-Za-z0-9_.-]{1,64}) request_id=([A-Za-z0-9_.-]{1,128})/g)].at(-1);
+  const title = /<strong>([^<]{0,120})<\/strong>/.exec(body)?.[1] ?? null;
+  const message = /<p>([^<]{0,240})<\/p>/.exec(body)?.[1] ?? null;
+  return {
+    stage: 'ui-post-delete-reply',
+    httpStatus: response.status,
+    contentType: response.headers.get('content-type'),
+    location: response.headers.get('location'),
+    responseTitle: title,
+    responseMessage: message,
+    sdkStage: error ? (error[1] === 'mutation' ? 'bundle-result-rejected' : 'sdk-error') : 'not-logged',
+    errorCode: error?.[2] ?? null,
+    requestId: error?.[3] ?? null,
+  };
+}
+
 test('AIP server enforces forum group visibility and unique link relations with the SDK', {timeout: 60000}, async () => {
   const python = process.env.AIP_FLASKBB_TEST_PYTHON;
   assert.ok(python, 'AIP_FLASKBB_TEST_PYTHON must name the run-owned UI Python environment');
@@ -124,7 +141,7 @@ test('AIP server enforces forum group visibility and unique link relations with 
         once(host, 'exit').then(([code]) => {throw new Error(`UI host exit ${code}: ${hostStderr}`);}),
         new Promise((_, reject) => setTimeout(() => reject(new Error(`UI host timeout: ${hostStderr}`)), 15000).unref())
       ]);
-      return {host, base: `http://127.0.0.1:${listening.port}`};
+      return {host, base: `http://127.0.0.1:${listening.port}`, get stderr() {return hostStderr;}};
     };
     const readonlyUi = await launchUi('readonly-fixture');
     const cookie = 'aip_session=aip-integration-session';
@@ -346,7 +363,9 @@ test('AIP server enforces forum group visibility and unique link relations with 
       method: 'POST', redirect: 'manual', headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
       body: new URLSearchParams({csrf_token: csrf})
     });
-    assert.equal(uiReplyDelete.status, 303, `UI reply delete response: ${uiReplyDelete.status}`);
+    const uiReplyDeleteBody = await uiReplyDelete.text();
+    assert.equal(uiReplyDelete.status, 303,
+      `UI reply delete diagnostic: ${JSON.stringify(uiDeleteFailureDiagnostic(uiReplyDelete, uiReplyDeleteBody, memberUi.stderr))}`);
     assert.equal(uiReplyDelete.headers.get('location'), `/topic/${uiTopicId}`);
     assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${uiReplyId}'`), '0', 'UI reply deletion uses the AIP Post.delete SDK transition');
     const uiFirstPostId = sql(`SELECT id FROM ${q}.post WHERE topic_id='${uiTopicId}' AND content='${uiTopicBody}'`);

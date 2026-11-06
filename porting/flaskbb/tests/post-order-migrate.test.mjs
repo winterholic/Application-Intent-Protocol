@@ -42,7 +42,7 @@ test('FlaskBB PostOrder schema upgrade preserves legacy UUIDs and requires the e
     removeOnce('  unique source_order\n  check sourceOrderBelongsToPost when source_order = null or source_order.post = this\n');
     removeOnce(' and not (exists Post where published = true and source_order = null)');
     removeOnce('    create PostOrder { post = this }\n    update Post where id = this { source_order = latest PostOrder mapped where mapped.post = this order by mapped.id select mapped.id }\n');
-    removeOnce('resource PostOrder {\n  fields { id: Id; post: Post }\n  unique post\n  rows read when canReadPost(actor, post)\n}\n');
+    removeOnce('resource PostOrder {\n  fields { id: Id; post: Post on delete cascade }\n  unique post\n  rows read when canReadPost(actor, post)\n}\n');
     const oldFile = join(dir, 'legacy.aip');
     writeFileSync(oldFile, legacy);
     const post = 'ffffffff-ffff-4fff-8fff-ffffffffffff';

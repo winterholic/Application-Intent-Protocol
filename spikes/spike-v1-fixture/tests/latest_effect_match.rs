@@ -83,7 +83,9 @@ resource Post { fields { id: Id; topic: Topic; label: Text? } }
     let values = &loaded.execution["resources"]["Topic"]["transitions"]["unhide"]["effects"][0]["values"];
     let post = &values["post"];
     assert_eq!(post["ty"], "Ref<Post>?");
-    assert_eq!(post["latest"]["select"]["path"]["segs"], serde_json::json!(["id"]));
+    assert_eq!(post["latest"]["select"]["path"]["root"], "var.candidate");
+    assert_eq!(post["latest"]["select"]["path"]["segs"], serde_json::json!([]));
+    assert_eq!(post["latest"]["select"]["ty"], "Ref<Post>");
     assert!(post["latest"]["otherwise"]["lit"].is_null());
     let label = &values["label"];
     assert_eq!(label["ty"], "Text?");

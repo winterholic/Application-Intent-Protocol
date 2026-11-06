@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {GROUPS_SQL, USERS_SQL, seedNativePostOrders, startFixture} from './harness.mjs';
+import {GROUPS_SQL, USERS_SQL, binary, seedNativePostOrders, startFixture} from './harness.mjs';
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const base = (sql, q, schema) => {
@@ -256,7 +256,7 @@ test('Post.delete follows original ID order and preserves Forum projection for n
     const result=await fx.client('admin').bundle({atomic:[{apply:'Post.delete',target:{ids:[target]}}]}, {key:'post-delete-id-order'});
     assert.equal(result.ok,true,JSON.stringify(result));
     assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${target}'`),'0','Post.delete physically removes its target');
-    assert.deepEqual(JSON.parse(forum()),[newerIdOlderDate,'3','Other Topic','id-52-author','2025-01-01'],
+    assert.deepEqual(JSON.parse(forum()),[newerIdOlderDate,3,'Other Topic','id-52-author','2025-01-01'],
       `Forum fallback must follow imported source ID DESC even when date order is reversed (before=${originalForum})`);
     assert.deepEqual(JSON.parse(topicProjection()),[first,'2025-01-01'],
       `Topic fallback uses the imported source order and leaves the original first post (before=${originalTopic})`);
