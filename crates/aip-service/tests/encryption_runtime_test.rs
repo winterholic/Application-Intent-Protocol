@@ -394,7 +394,7 @@ async fn metadata_inventory_rejects_duplicate_targets_and_scope_mismatch() {
     options.scope_resource = Some("Project".into());
     let scope =
         aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options).await.expect_err("undeclared scope resource must fail");
-    assert!(matches!(scope, Error::InvalidConfig(message) if message.contains("inventory") && message.contains("empty")));
+    assert!(matches!(scope, Error::InvalidConfig(message) if message.contains("inventory") && message.contains("비어 있음")));
     drop_inventory_fixture(&db, &schema).await;
 }
 
@@ -408,7 +408,7 @@ async fn metadata_inventory_rejects_missing_physical_column_and_wrong_scope_fore
 
     let (db, schema, options) = inventory_fixture(false, true).await;
     let wrong_fk = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options).await.expect_err("wrong PG scope FK must fail");
-    assert!(matches!(wrong_fk, Error::Database(message) if message.contains("team_id") && message.contains("Team")));
+    assert!(matches!(wrong_fk, Error::Database(message) if message.contains("team_id") && message.contains("team.id")));
     drop_inventory_fixture(&db, &schema).await;
 }
 
