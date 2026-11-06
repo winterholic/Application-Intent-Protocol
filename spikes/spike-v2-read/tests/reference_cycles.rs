@@ -10,12 +10,12 @@ use spike_v2_read::{
 const DB: &str = aip_test_support::test_database_url!();
 const PAIR: &str = r#"
 resource Member {
-  fields { id: Id; dept: Dept? }
+  fields { id: Id; dept: Dept? on delete cascade }
   rows read when true
   expose read { select id, dept; budget { rows 10; depth 1; deadline 2s; cost 100 } }
 }
 actor Member
-resource Dept { fields { id: Id; lead: Member? } rows read when true }
+resource Dept { fields { id: Id; lead: Member? on delete set null } rows read when true }
 "#;
 
 fn facts(source: &str) -> serde_json::Value {
@@ -29,8 +29,8 @@ fn cyclic_refs_generate_named_fk_after_both_tables() {
     let dept = ddl.iter().position(|s| s.starts_with("CREATE TABLE aip_ref_cycle.dept ")).unwrap();
     let deferred = ddl.iter().position(|s| s.starts_with("ALTER TABLE aip_ref_cycle.dept ADD CONSTRAINT aip_fk_")).unwrap();
     assert!(deferred > member && deferred > dept, "{ddl:?}");
-    assert!(ddl[member].contains("dept_id bigint REFERENCES aip_ref_cycle.dept(id)"), "{ddl:?}");
-    assert!(ddl[deferred].contains("FOREIGN KEY (lead_id) REFERENCES aip_ref_cycle.member(id)"), "{ddl:?}");
+    assert!(ddl[member].contains("dept_id bigint REFERENCES aip_ref_cycle.dept(id) ON DELETE CASCADE"), "{ddl:?}");
+    assert!(ddl[deferred].contains("FOREIGN KEY (lead_id) REFERENCES aip_ref_cycle.member(id) ON DELETE SET NULL"), "{ddl:?}");
     assert!(!ddl[deferred].contains("DEFERRABLE"), "{ddl:?}");
 }
 

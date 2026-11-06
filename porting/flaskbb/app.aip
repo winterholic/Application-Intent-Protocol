@@ -424,7 +424,7 @@ resource Post {
     allow actor.activated and canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted)
     from deleted = false
     delete
-    update Forum when this.forum.last_post = this where id = this.forum {
+    update Forum when this.topic.last_post = this and this.forum.last_post = this where id = this.forum {
       last_post = latest Post candidate where candidate.id != this and candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order select candidate.id otherwise null
       last_post_user = latest Post candidate where candidate.id != this and candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order select candidate.user otherwise null
       last_post_title = latest Post candidate where candidate.id != this and candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order select candidate.topic.title otherwise null

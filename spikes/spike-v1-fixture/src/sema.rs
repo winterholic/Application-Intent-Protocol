@@ -1050,6 +1050,12 @@ impl<'a> Ctx<'a> {
                 continue;
             }
             if let Some(tt) = self.type_of(Some(&r.name), &f.ty) {
+                if f.on_delete.is_some() && !matches!(&tt.ty, Ty::Ref(_)) {
+                    self.d("DEF.TYPE_MISMATCH", "`on delete`는 resource 참조 필드에만 적용할 수 있음", f.span);
+                }
+                if f.on_delete == Some(RefAction::SetNull) && !tt.nullable {
+                    self.d("DEF.TYPE_MISMATCH", "`on delete set null`에는 nullable 참조 필드가 필요", f.span);
+                }
                 if let Ty::Ref(target) = &tt.ty {
                     if !self.res[target.as_str()].fields.iter().any(|field| field.name == "id") {
                         self.d("DEF.TYPE_MISMATCH", format!("Ref 대상 resource `{target}`에는 명시적 id가 필요"), f.ty.span);
@@ -1057,6 +1063,13 @@ impl<'a> Ctx<'a> {
                     }
                 }
                 fields.insert(f.name.clone(), json!({ "ty": tt.show(), "range": f.ty.range.map(|(a, b)| json!([a, b])) }));
+                if let Some(action) = f.on_delete {
+                    fields.get_mut(&f.name).unwrap()["onDelete"] = json!(match action {
+                        RefAction::Cascade => "CASCADE",
+                        RefAction::Restrict => "RESTRICT",
+                        RefAction::SetNull => "SET NULL",
+                    });
+                }
                 if f.ty.database_default {
                     fields.get_mut(&f.name).unwrap()["databaseDefault"] = json!(true);
                 }

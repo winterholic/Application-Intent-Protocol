@@ -270,14 +270,19 @@ test('Post.delete follows original ID order and preserves Forum projection for n
       VALUES('${nonlastFirst}','${nonlastTopic}',1,2,'owner','first','2000-01-01',false,true,0,false),
       ('${nonlast}','${nonlastTopic}',1,2,'middle','middle','2001-01-01',false,true,0,false);
       INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${nonlastTopic}','${nonlastFirst}');
-      UPDATE ${q}.topic SET last_post_id='${nonlast}' WHERE id='${nonlastTopic}';
+      UPDATE ${q}.topic SET last_post_id='${nonlastFirst}' WHERE id='${nonlastTopic}';
+      UPDATE ${q}.forum SET last_post_id='${nonlast}',last_post_user_id=2,last_post_title='preserve-all-fields',
+        last_post_username='stale-name',last_post_created='1990-01-01' WHERE id=1;
       INSERT INTO ${q}.post_order(post_id) VALUES('${nonlastFirst}'),('${nonlast}');
       UPDATE ${q}.post p SET source_order_id=o.id FROM ${q}.post_order o WHERE p.id=o.post_id AND p.id IN ('${nonlastFirst}','${nonlast}');`);
-    const sentinel=sql(`UPDATE ${q}.forum SET last_post_title='preserve-all-fields',last_post_username='stale-name',last_post_created='1990-01-01' WHERE id=1 RETURNING 1`);
-    const beforeNonlast=forum();
+    const beforeNonlast=sql(`SELECT jsonb_build_array(last_post_user_id,last_post_title,last_post_username,last_post_created)::text FROM ${q}.forum WHERE id=1`);
     const nonlastResult=await fx.client('admin').bundle({atomic:[{apply:'Post.delete',target:{ids:[nonlast]}}]}, {key:'post-delete-nonlast'});
     assert.equal(nonlastResult.ok,true,JSON.stringify(nonlastResult));
-    assert.equal(forum(),beforeNonlast,`Forum projection must be unchanged for non-last delete (marker=${sentinel})`);
+    assert.equal(sql(`SELECT jsonb_build_array(last_post_user_id,last_post_title,last_post_username,last_post_created)::text FROM ${q}.forum WHERE id=1`),beforeNonlast,
+      'the source helper does not refresh Forum fields when Topic.last_post is not the deleted Post');
+    assert.equal(sql(`SELECT last_post_id IS NULL FROM ${q}.forum WHERE id=1`),'t','the FK SET NULL policy clears only the deleted Forum pointer');
+    assert.equal(sql(`SELECT last_post_id::text FROM ${q}.topic WHERE id='${nonlastTopic}'`),nonlastFirst,
+      'Topic still points to its own last Post, so Forum fallback must not run');
     assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id='${nonlastTopic}'`),'1');
     assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${nonlast}'`),'0');
   } finally { await fx.stop(); }

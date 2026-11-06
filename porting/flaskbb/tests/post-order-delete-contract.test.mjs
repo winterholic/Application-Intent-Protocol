@@ -50,12 +50,17 @@ test('imported Forum fallback selects source ID 52 when date order selects 51', 
 });
 
 test('Post.delete changes Forum projection only when the deleted Post is Forum.last_post', () => {
-  assert.match(forumUpdate, /when\s+this\.forum\.last_post\s*=\s*this/,
+  assert.match(forumUpdate, /when[\s\S]*this\.forum\.last_post\s*=\s*this/,
     'upstream _deal_with_last_post preserves Forum fields unless the deleted post is also the Forum last post');
   for (const field of ['last_post', 'last_post_user', 'last_post_title', 'last_post_username', 'last_post_created']) {
     const assignment = forumUpdate.match(new RegExp(`^\\s+${field}\\s*=([^\\n]+)`, 'm'))?.[1] ?? '';
     assert.match(assignment, /otherwise null$/, `${field} must clear when no Forum replacement exists`);
   }
+});
+
+test('Post.delete preserves Forum fields unless both source pointers name the deleted Post', () => {
+  assert.match(forumUpdate, /when\s+this\.topic\.last_post\s*=\s*this\s+and\s+this\.forum\.last_post\s*=\s*this/,
+    'upstream enters Forum fallback only when both Topic.last_post and Forum.last_post equal the deleted Post');
 });
 
 test('Post.delete updates Topic only when the deleted Post is Topic.last_post', () => {
@@ -66,4 +71,10 @@ test('Post.delete updates Topic only when the deleted Post is Topic.last_post', 
 test('PostOrder importer binds original Post IDs directly to source_order', () => {
   assert.match(importSql, /post_order\(id,post_id\)\s+OVERRIDING SYSTEM VALUE VALUES/);
   assert.match(importSql, /SET source_order_id=\{row\['source_id'\]\}/);
+});
+
+test('the legacy migration fixture removes the new nullable Topic pointer field including its delete policy', () => {
+  const migrationTest = readFileSync(new URL('./post-order-migrate.test.mjs', import.meta.url), 'utf8');
+  assert.match(migrationTest, /last_post: Post\? on delete set null/,
+    'the preceding-schema fixture must anchor the active definition spelling');
 });

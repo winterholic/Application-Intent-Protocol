@@ -14,10 +14,15 @@ on:
       - 'porting/flaskbb/tests/test_ui_host.py'
       - 'porting/flaskbb/ui/app.py'
       - 'spikes/spike-v1-fixture/tests/latest_effect_match.rs'
+      - 'spikes/spike-v1-fixture/src/ast.rs'
+      - 'spikes/spike-v1-fixture/src/parser.rs'
+      - 'spikes/spike-v1-fixture/src/hmap.rs'
       - 'spikes/spike-v1-fixture/src/sema.rs'
       - 'spikes/spike-v1-fixture/src/isolation.rs'
       - 'spikes/spike-v1-fixture/src/syntax_card.rs'
       - 'spikes/spike-v3-write/tests/latest_effect_match.rs'
+      - 'spikes/spike-v2-read/src/sqlgen.rs'
+      - 'spikes/spike-v2-read/tests/reference_cycles.rs'
       - 'porting/flaskbb/seed/*post_order*'
       - 'porting/flaskbb/tests/test_post_order_import.py'
       - 'porting/flaskbb/tests/test_post_oracle_gap.py'
@@ -164,20 +169,28 @@ jobs:
       - name: Verify import approval and SQL emission
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s porting/flaskbb/tests -p test_post_order_import.py -v
       - name: Verify server-selected effect target contract
+        id: latest-effect-contract
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
-        run: cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test latest_effect_match
+        run: >-
+          python3 porting/flaskbb/tests/record_command.py --name step19-latest-effect-match --
+          cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test latest_effect_match
       - name: Verify generated language reference
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test diagnostics
       - name: Verify selected target transactions
+        id: selected-target
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test latest_effect_match
       - name: Verify active FlaskBB native ordering and the legacy allocation fence
+        id: active-native-ordering
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         env:
           AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
-        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs porting/flaskbb/tests/last-post-recompute.test.mjs porting/flaskbb/tests/aip-read.test.mjs
+        run: >-
+          python3 porting/flaskbb/tests/record_command.py --name step22-active-native-ordering --
+          node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs porting/flaskbb/tests/last-post-recompute.test.mjs porting/flaskbb/tests/aip-read.test.mjs
       - name: Verify FlaskBB UI atomic publish requests
+        id: ui-host
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host
       - name: Preserve ORM and fixture failures as a nonzero workflow result
@@ -195,9 +208,14 @@ jobs:
           NEGATIVE_DATE: ${{ steps.negative-date.outcome }}
           NEGATIVE_TOPIC_VISIBILITY: ${{ steps.negative-topic-visibility.outcome }}
           SCHEMA_CLEANUP: ${{ steps.oracle-schema-cleanup.outcome }}
+          PRODUCT_BUILD: ${{ steps.product-build.outcome }}
+          LATEST_EFFECT_CONTRACT: ${{ steps.latest-effect-contract.outcome }}
+          SELECTED_TARGET: ${{ steps.selected-target.outcome }}
+          ACTIVE_NATIVE_ORDERING: ${{ steps.active-native-ordering.outcome }}
+          UI_HOST: ${{ steps.ui-host.outcome }}
         run: >-
           python3 porting/flaskbb/tests/record_command.py --name stage-outcomes --
-          python3 -c 'import os,sys; keys=("FIXTURE_TOOLS","SETUP_PYTHON","VENV","INSTALLER","REQUIREMENTS","INSTALL","IMPORT","SCHEMA","REGRESSION","NEGATIVE_DATE","NEGATIVE_TOPIC_VISIBILITY","SCHEMA_CLEANUP"); results={key:os.environ.get(key,"missing") for key in keys}; print("FLASKBB_STAGE_OUTCOMES", results); failed=[key for key,value in results.items() if value != "success"]; sys.exit(1 if failed else 0)'
+          python3 -c 'import os,sys; keys=("FIXTURE_TOOLS","SETUP_PYTHON","VENV","INSTALLER","REQUIREMENTS","INSTALL","IMPORT","SCHEMA","REGRESSION","NEGATIVE_DATE","NEGATIVE_TOPIC_VISIBILITY","SCHEMA_CLEANUP","PRODUCT_BUILD","LATEST_EFFECT_CONTRACT","SELECTED_TARGET","ACTIVE_NATIVE_ORDERING","UI_HOST"); results={key:os.environ.get(key,"missing") for key in keys}; print("FLASKBB_STAGE_OUTCOMES", results); failed=[key for key,value in results.items() if value != "success"]; sys.exit(1 if failed else 0)'
       - name: Upload stage-by-stage FlaskBB evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

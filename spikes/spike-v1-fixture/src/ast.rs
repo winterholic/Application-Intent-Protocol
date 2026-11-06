@@ -74,7 +74,15 @@ pub struct Limit {
 pub struct Field {
     pub name: String,
     pub ty: TypeRef,
+    pub on_delete: Option<RefAction>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefAction {
+    Cascade,
+    Restrict,
+    SetNull,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -365,7 +365,28 @@ impl Parser {
                         let fsp = self.span();
                         let name = self.ident()?;
                         self.expect_sym(":")?;
-                        r.fields.push(Field { name, ty: self.type_ref()?, span: fsp });
+                        let ty = self.type_ref()?;
+                        let on_delete = if self.is_kw("on") {
+                            self.expect_kw("on")?;
+                            self.expect_kw("delete")?;
+                            let action = if self.is_kw("cascade") {
+                                self.expect_kw("cascade")?;
+                                RefAction::Cascade
+                            } else if self.is_kw("restrict") {
+                                self.expect_kw("restrict")?;
+                                RefAction::Restrict
+                            } else if self.is_kw("set") {
+                                self.expect_kw("set")?;
+                                self.expect_kw("null")?;
+                                RefAction::SetNull
+                            } else {
+                                return self.err("cascade, restrict 또는 set null");
+                            };
+                            Some(action)
+                        } else {
+                            None
+                        };
+                        r.fields.push(Field { name, ty, on_delete, span: fsp });
                     }
                 }
                 "rows" => {

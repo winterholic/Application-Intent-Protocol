@@ -162,7 +162,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
     let mut r = Resource { name: name.to_string(), span, ..Default::default() };
     if let Some((f, fs)) = get(o, "fields") {
         for (n, v, vs) in obj(f, fs, "fields")? {
-            r.fields.push(Field { name: n.clone(), ty: parse_type_str(s(v, *vs, "필드 타입")?, inner(*vs))?, span: *vs });
+            r.fields.push(Field { name: n.clone(), ty: parse_type_str(s(v, *vs, "필드 타입")?, inner(*vs))?, on_delete: None, span: *vs });
         }
     }
     if let Some((e, es)) = get(o, "rows") {

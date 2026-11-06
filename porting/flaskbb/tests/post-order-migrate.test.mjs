@@ -35,8 +35,8 @@ test('FlaskBB PostOrder schema upgrade preserves legacy UUIDs and requires the e
     };
     removeOnce('    source_order: PostOrder?\n');
     // This fixture preserves the prior schema, without guessing a historical Topic pointer.
-    assert.equal(legacy.split('resource Topic {\n  fields {\n    id: Uuid\n    last_post: Post?\n').length,2);
-    legacy=legacy.replace('resource Topic {\n  fields {\n    id: Uuid\n    last_post: Post?\n','resource Topic {\n  fields {\n    id: Uuid\n');
+    assert.equal(legacy.split('resource Topic {\n  fields {\n    id: Uuid\n    last_post: Post? on delete set null\n').length,2);
+    legacy=legacy.replace('resource Topic {\n  fields {\n    id: Uuid\n    last_post: Post? on delete set null\n','resource Topic {\n  fields {\n    id: Uuid\n');
     removeOnce('    update Topic where id = this.topic { last_post = this; last_updated = now }\n');
     legacy=legacy.replace('last_post = this.last_post\n','last_post = this.forum.last_post\n');
     removeOnce('  unique source_order\n  check sourceOrderBelongsToPost when source_order = null or source_order.post = this\n');

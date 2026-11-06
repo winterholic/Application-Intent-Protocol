@@ -44,6 +44,19 @@ fn active_flaskbb_definition_accepts_selected_first_post_and_snapshot_guards() {
     let source = include_str!("../../../porting/flaskbb/app.aip");
     let loaded = load_str(source, Form::A).unwrap_or_else(|errors| panic!("active FlaskBB: {errors:?}"));
     assert_eq!(loaded.execution["resources"]["Topic"]["transitions"]["hide"]["isolation"], "serializable");
+    assert_eq!(loaded.execution["resources"]["Forum"]["fields"]["last_post"]["onDelete"], "SET NULL");
+    assert_eq!(loaded.execution["resources"]["PostOrder"]["fields"]["post"]["onDelete"], "CASCADE");
+}
+
+#[test]
+fn reference_delete_policies_parse_and_set_null_requires_an_optional_reference() {
+    let source = "actor Parent resource Parent { fields { id: Id } } resource Child { fields { id: Id; parent: Parent? on delete set null } }";
+    let loaded = load_str(source, Form::A).unwrap_or_else(|errors| panic!("reference delete policy: {errors:?}"));
+    assert_eq!(loaded.execution["resources"]["Child"]["fields"]["parent"]["onDelete"], "SET NULL");
+
+    let invalid = source.replace("Parent? on delete set null", "Parent on delete set null");
+    let errors = load_str(&invalid, Form::A).err().expect("SET NULL must not be accepted for a required reference");
+    assert!(errors.iter().any(|error| error.code == "DEF.TYPE_MISMATCH"), "unexpected diagnostics: {errors:?}");
 }
 
 #[test]
