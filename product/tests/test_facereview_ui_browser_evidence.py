@@ -40,6 +40,26 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_admin_dashboard_metric_evidence_is_a_point_in_time_snapshot(self):
+        from product.tests.facereview_ui_browser_evidence import admin_dashboard_metrics_snapshot
+
+        expected = {"category_video_counts": {"cook": 1}}
+        aggregates = {"User.totalCount": [42]}
+        videos = {"cook": 1}
+        views = {"cook": 5}
+        extensions = {"VideoRequest.pipeline": {"pending_count": 2}}
+        snapshot = admin_dashboard_metrics_snapshot(expected, aggregates, videos, views, extensions)
+
+        videos["cook"] = 0
+        videos["vlog"] = 1
+        views["cook"] = 0
+        aggregates["User.totalCount"].append(43)
+        extensions["VideoRequest.pipeline"]["pending_count"] = 0
+        self.assertEqual(snapshot["actual_category_video_counts"], {"cook": 1})
+        self.assertEqual(snapshot["actual_category_views"], {"cook": 5})
+        self.assertEqual(snapshot["actual_aggregates"], {"User.totalCount": [42]})
+        self.assertEqual(snapshot["actual_extensions"], {"VideoRequest.pipeline": {"pending_count": 2}})
+
     def test_admin_signup_trend_evidence_checks_every_bucket_and_names_wrong_date(self):
         from product.tests.facereview_ui_browser_evidence import admin_signup_svg_evidence, admin_signup_trend_evidence
 

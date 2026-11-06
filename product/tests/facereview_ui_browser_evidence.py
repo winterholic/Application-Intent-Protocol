@@ -5,6 +5,7 @@ import json
 import math
 import re
 import time
+from copy import deepcopy
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -1163,6 +1164,18 @@ def admin_signup_svg_evidence(period: str, rendered_points: Any, axis_ticks: Any
         "rendered_points": actual_points,
         "verified": valid and not mismatches and len(actual_points) == len(expected_points),
         "mismatches": mismatches,
+    }
+
+
+def admin_dashboard_metrics_snapshot(expected: Any, aggregates: dict[str, list[int]], category_video_counts: dict[str, int],
+                                     category_views: dict[str, int], extensions: dict[str, object]) -> dict[str, object]:
+    """Freeze dashboard values at comparison time so later UI writes cannot rewrite the evidence."""
+    return {
+        "expected": deepcopy(expected),
+        "actual_aggregates": deepcopy(aggregates),
+        "actual_category_video_counts": deepcopy(category_video_counts),
+        "actual_category_views": deepcopy(category_views),
+        "actual_extensions": deepcopy(extensions),
     }
 
 

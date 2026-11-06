@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (  # noqa: E402
     admin_signup_svg_evidence,
     admin_signup_trend_evidence,
+    admin_dashboard_metrics_snapshot,
     admin_request_evidence,
     aggregate_count,
     body_failure_reason,
@@ -394,13 +395,9 @@ def main() -> int:
                 checks["signup_trend_periods"] = trend_results
                 checks["signup_trend_rendered_svg"] = trend_render_results
                 checks["signup_trend_period_sums"] = period_sums
-                checks["dashboard_business_metrics"] = {
-                    "expected": dashboard_expected,
-                    "actual_aggregates": dashboard_aggregates,
-                    "actual_category_video_counts": dashboard_category_video_counts,
-                    "actual_category_views": dashboard_category_views,
-                    "actual_extensions": dashboard_extensions,
-                }
+                checks["dashboard_business_metrics"] = admin_dashboard_metrics_snapshot(
+                    dashboard_expected, dashboard_aggregates, dashboard_category_video_counts, dashboard_category_views, dashboard_extensions
+                )
                 if dashboard_expected.get("weekly_active_users") not in dashboard_aggregates.get("User.weeklyActive", []):
                     raise RuntimeError("dashboard weekly active count differs from direct MySQL fixture query")
                 if dashboard_extensions.get("VideoRequest.pipeline") != dashboard_expected.get("video_request_pipeline"):
