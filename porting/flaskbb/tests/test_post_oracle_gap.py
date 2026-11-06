@@ -117,6 +117,11 @@ class PostOracleGap(unittest.TestCase):
             rows.append(row)
             db.session.add(row)
             db.session.flush()
+            if hidden is None:
+                # SQLAlchemy applies the mapped False default when None is
+                # present at INSERT time; persist NULL with a real UPDATE.
+                row.hidden = None
+                db.session.flush()
         topic.first_post = rows[0]
         topic.last_post = rows[-1]
         topic.last_updated = rows[-1].date_created
@@ -243,13 +248,14 @@ class PostOracleGap(unittest.TestCase):
             Post.id.desc()
         ).first()
         self.assertEqual(source_candidate.id, 120)
+        wrong_filter_id = wrong_filter.id if wrong_filter is not None else None
         if os.environ.get("FLASKBB_ORACLE_NEGATIVE_CONTROL") == "topic-filter":
-            self.assertEqual(wrong_filter.id, source_candidate.id,
+            self.assertEqual(wrong_filter_id, source_candidate.id,
                              "negative control: Topic visibility filter must be rejected")
         with self.assertRaises(AssertionError):
-            self.assertEqual(wrong_filter.id, source_candidate.id)
+            self.assertEqual(wrong_filter_id, source_candidate.id)
         print("NEGATIVE_CONTROL topic_visibility_filter_rejected expected_id=120 actual_id={}".format(
-            wrong_filter.id))
+            wrong_filter_id))
 
 
 if __name__ == "__main__":
