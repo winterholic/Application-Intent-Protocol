@@ -5,7 +5,7 @@
 //!
 //! Fail-closed: missing or invalid keys refuse execution. Debug and logging never echo key material.
 
-use aip_crypto::provider::{KekProvider, LocalProvider};
+use aip_crypto::provider::LocalProvider;
 use aip_execution::{
     encryption::{DekStore, Scope},
     read_opener::StoreOpener,
