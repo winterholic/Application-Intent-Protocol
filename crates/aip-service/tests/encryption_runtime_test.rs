@@ -299,7 +299,7 @@ async fn inventory_fixture(omit_backup: bool, wrong_scope_fk: bool) -> (tokio_po
         .expect("persist the declaration facts used by the deployment");
 
     let secret_scope = if wrong_scope_fk { "project" } else { "team" };
-    let backup = if omit_backup { "" } else { ", backup text" };
+    let backup = if omit_backup { "" } else { ", backup text NOT NULL" };
     db.batch_execute(&format!(
         "CREATE TABLE {schema}.secret (
            id bigint PRIMARY KEY,
