@@ -46,6 +46,8 @@ test('FlaskBB PostOrder schema upgrade preserves legacy UUIDs and requires the e
     assert.equal(plan.blocked, false, JSON.stringify(plan));
     assert.equal(plan.requiresReview, true);
     assert.equal(snapshot(), before, 'preview must not rewrite legacy data');
+    assert.throws(() => run(binary, ['service', 'migrate', definition, '--config', config, '--apply', 'wrong-digest']), /PLAN_CHANGED/);
+    assert.equal(snapshot(), before, 'a rejected digest must preserve the original rows');
     const applied = JSON.parse(run(binary, ['service', 'migrate', definition, '--config', config, '--apply', plan.digest]));
     assert.equal(applied.ok, true, JSON.stringify(applied));
     assert.equal(snapshot(), before, 'additive migration must preserve UUIDs, content and actors');
