@@ -652,7 +652,14 @@ def main() -> int:
                 checks["admin_permission_denials"] = denied
                 if any(code != "WIRE.FORBIDDEN" for code in denied.values()):
                     raise RuntimeError("an ADMIN changed role or deactivated a protected role through the generated SDK")
+                member_search = page.get_by_placeholder("이름 또는 이메일 검색")
+                member_search.fill("")
+                settled_idle()
+                member_search.fill("e@example.com")
+                settled_idle()
                 expect(page.locator("tr", has_text="e@example.com").get_by_text("ADMIN", exact=True)).to_be_visible()
+                member_search.fill("c@example.com")
+                settled_idle()
                 expect(page.locator("tr", has_text="c@example.com").get_by_text("SUPER_ADMIN", exact=True)).to_be_visible()
                 page.screenshot(path=str(output / "admin-admin-permission-denials.png"), full_page=True)
                 settled_idle()

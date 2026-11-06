@@ -829,6 +829,11 @@ class BrowserEvidenceTests(unittest.TestCase):
         evidence = source.index("render_result = admin_signup_svg_evidence")
         self.assertLess(evidence, screenshot)
 
+    def test_admin_permission_denial_rows_are_checked_after_clearing_member_filter(self):
+        source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
+        block = source.split('stage("admin_permission_denials")', 1)[1].split("except Exception:", 1)[0]
+        self.assertLess(block.index('.fill("")'), block.index('has_text="e@example.com"'))
+
     def test_admin_diagnostic_prepares_its_own_definition_and_sdk(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
         admin_step = workflow.split("      - name: Prepare the pinned FaceReview admin console browser journey\n", 1)[1].split("      - name:", 1)[0]
