@@ -13,9 +13,12 @@ use tokio_postgres::{Client, Transaction};
 const LEDGER: &str = "aip_object_ledger";
 const PARTS: &str = "aip_object_parts";
 const OWNERS: &str = "aip_object_owners";
+const OWNER_SEED: &str = "aip_object_owner_seed";
 /// Advisory lock namespace for one owner's ledger rows. Distinct from the deployment fence (1095323725),
 /// the job collector (1095323726) and the message quota (1095323727).
 const OWNER_LOCK: i32 = 1_095_323_728;
+/// Serializes the one-time principal-table backfill across service instances.
+const OWNER_SEED_LOCK: i32 = 1_095_323_729;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -170,6 +173,10 @@ impl ObjectLedger {
         format!("{}.{OWNERS}", self.schema)
     }
 
+    fn owner_seed(&self) -> String {
+        format!("{}.{OWNER_SEED}", self.schema)
+    }
+
     pub fn ddl(schema: &str) -> Result<String, Error> {
         if !valid_schema(schema) {
             return Err(Error::InvalidSchema);
@@ -188,6 +195,7 @@ impl ObjectLedger {
              continuation_token text, next_scan_at timestamptz NOT NULL DEFAULT clock_timestamp(), lease_until timestamptz, \
              last_scanned_at timestamptz, registered_at timestamptz NOT NULL DEFAULT clock_timestamp()); \
              CREATE INDEX IF NOT EXISTS aip_object_owners_scan_due ON {schema}.{OWNERS} (next_scan_at); \
+             CREATE TABLE IF NOT EXISTS {schema}.{OWNER_SEED} (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), seeded_at timestamptz NOT NULL DEFAULT clock_timestamp()); \
              INSERT INTO {schema}.{OWNERS} (owner, owner_prefix) SELECT DISTINCT owner, encode(sha256(convert_to(owner,'UTF8')),'hex') FROM {schema}.{LEDGER} \
              ON CONFLICT DO NOTHING"
         ))
@@ -516,6 +524,39 @@ impl ObjectLedger {
         }
         .await;
         finish(tx, result).await
+    }
+
+    /// Whether the one-time out-of-band seed from the deployment's active principal table has completed.
+    pub async fn owner_seed_completed(&self, client: &Client) -> Result<bool, Error> {
+        Ok(client.query_one(&format!("SELECT EXISTS (SELECT 1 FROM {} WHERE singleton)", self.owner_seed()), &[]).await?.get(0))
+    }
+
+    /// Registers active principal owners once. The completion row and mappings commit together, and a transaction
+    /// advisory lock prevents replicas from observing a partial seed or performing it twice.
+    pub async fn seed_owners_once(&self, client: &mut Client, owners: &[String]) -> Result<bool, Error> {
+        let owners: Vec<(String, String)> = owners
+            .iter()
+            .map(|owner| owner_prefix(owner).map(|prefix| (owner.clone(), prefix)).map_err(|_| Error::InvalidRequest))
+            .collect::<Result<_, _>>()?;
+        let tx = client.transaction().await?;
+        let result = async {
+            tx.query_one("SELECT pg_advisory_xact_lock($1,hashtext($2))", &[&OWNER_SEED_LOCK, &self.schema]).await?;
+            if self.owner_seed_completed_tx(&tx).await? {
+                return Ok(false);
+            }
+            for (owner, prefix) in &owners {
+                tx.execute(&format!("INSERT INTO {} (owner,owner_prefix) VALUES ($1,$2) ON CONFLICT DO NOTHING", self.owners()), &[owner, prefix])
+                    .await?;
+            }
+            tx.execute(&format!("INSERT INTO {} (singleton) VALUES (true) ON CONFLICT DO NOTHING", self.owner_seed()), &[]).await?;
+            Ok(true)
+        }
+        .await;
+        finish(tx, result).await
+    }
+
+    async fn owner_seed_completed_tx(&self, tx: &Transaction<'_>) -> Result<bool, Error> {
+        Ok(tx.query_one(&format!("SELECT EXISTS (SELECT 1 FROM {} WHERE singleton)", self.owner_seed()), &[]).await?.get(0))
     }
 
     async fn register_in(&self, tx: &Transaction<'_>, owner: &str) -> Result<String, Error> {

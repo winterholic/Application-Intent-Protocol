@@ -566,6 +566,26 @@ async fn installing_the_ledger_registers_owners_that_already_have_rows() {
 }
 
 #[tokio::test]
+async fn out_of_band_owner_seed_is_idempotent_and_keeps_prefixes_isolated() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100 * MIB, 100);
+    assert!(!ledger.owner_seed_completed(&db.client).await.unwrap());
+    assert_eq!(ledger.seed_owners_once(&mut db.client, &[String::new()]).await, Err(Error::InvalidRequest));
+    assert!(!ledger.owner_seed_completed(&db.client).await.unwrap(), "invalid input cannot mark an incomplete seed complete");
+
+    let owners = vec!["alice".to_owned(), "bob".to_owned()];
+    assert!(ledger.seed_owners_once(&mut db.client, &owners).await.unwrap());
+    assert!(!ledger.seed_owners_once(&mut db.client, &owners).await.unwrap(), "a repeated seed is a no-op");
+    assert!(ledger.owner_seed_completed(&db.client).await.unwrap());
+    assert_eq!(db.owner_rows().await, 2);
+    assert_eq!(db.rows().await, 0, "seeding owners does not fabricate object ledger entries");
+    assert_eq!(ledger.owner_for_prefix(&db.client, &owner_prefix("alice").unwrap()).await.unwrap().as_deref(), Some("alice"));
+    assert_eq!(ledger.owner_for_prefix(&db.client, &owner_prefix("bob").unwrap()).await.unwrap().as_deref(), Some("bob"));
+    assert_ne!(owner_prefix("alice").unwrap(), owner_prefix("bob").unwrap());
+    assert_eq!(ledger.owner_for_prefix(&db.client, &"0".repeat(64)).await.unwrap(), None);
+}
+
+#[tokio::test]
 async fn scan_targets_are_leased_and_resume_from_the_persisted_continuation_token() {
     let mut db = Db::new().await;
     let ledger = db.ledger(100 * MIB, 100);

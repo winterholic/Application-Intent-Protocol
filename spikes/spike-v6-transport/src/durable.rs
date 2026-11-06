@@ -119,7 +119,7 @@ fn retryable(rt: &Runtime, operation: &str, code: &str) -> bool {
 fn schema(rt: &Runtime) -> Result<&str> {
     rt.deployment.as_ref().map(|f| f.schema.as_str()).ok_or("WIRE.NOT_AVAILABLE")
 }
-fn owner(g: &DurablePrincipal) -> String {
+pub(crate) fn owner(g: &DurablePrincipal) -> String {
     // The revocation floor is deliberately left out: after revoke and re-bind the same person owns the same files and jobs.
     // The fixed 0 keeps the digest of a never-revoked principal, which is what existing stored data used.
     spike_v1_fixture::digest(&json!([g.issuer, g.subject, g.actor_id, 0]))

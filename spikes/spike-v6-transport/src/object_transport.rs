@@ -283,6 +283,17 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
         Ok(ledger) => ledger,
         Err(code) => return failure(code),
     };
+    // Registration follows durable validation, so newly added principals enter the scan map on their first object
+    // request while revoked principals cannot add a mapping.
+    let (ledger_for_seed, owner_for_seed) = (ledger.clone(), owner.clone());
+    let seeded = with_db(rt, move |mut db| async move {
+        let result = ledger_for_seed.register_owner(&mut db, &owner_for_seed).await.map(|_| ());
+        (db, result)
+    })
+    .await;
+    if let Err(code) = seeded {
+        return failure(code);
+    }
     let response = match path {
         "/objects/sign" => sign_with_ledger(rt, &ledger, &owner, &store, body).await,
         "/objects/confirm" => confirm_with_ledger(rt, &ledger, &owner, &store, body).await,
@@ -650,6 +661,7 @@ pub(crate) async fn scan_once(rt: &Runtime) -> Result<ScanTickReport, &'static s
         _ => return Ok(ScanTickReport::default()),
     };
     let ledger = ledger_for(rt, &base)?;
+    seed_active_principal_owners(rt, &ledger).await?;
     let policy = ScanPolicy {
         page_keys: scan.page_keys,
         max_pages: scan.max_pages_per_tick,
@@ -664,6 +676,47 @@ pub(crate) async fn scan_once(rt: &Runtime) -> Result<ScanTickReport, &'static s
                 async move { base.for_owner(&target.owner)?.list_objects_v2(max_keys, token.as_deref()).await }
             })
             .await;
+        (db, result)
+    })
+    .await
+}
+
+/// Seeds the persistent owner-prefix map from the deployment's currently active principals once per object-ledger
+/// schema. Ledger writes and validated object requests register subsequent principals in-band.
+async fn seed_active_principal_owners(rt: &Runtime, ledger: &ObjectLedger) -> Result<(), &'static str> {
+    let deployment = rt.deployment.as_ref().ok_or("WIRE.NOT_AVAILABLE")?;
+    let deployment_schema = deployment.schema.clone();
+    let ledger = ledger.clone();
+    with_db(rt, move |mut db| async move {
+        let result: Result<(), LedgerError> = async {
+            if ledger.owner_seed_completed(&db).await? {
+                return Ok(());
+            }
+            let rows = db
+                .query(
+                    &format!(
+                        "SELECT issuer,subject,actor_id FROM {deployment_schema}.aip_principals WHERE enabled=true ORDER BY issuer,subject,actor_id"
+                    ),
+                    &[],
+                )
+                .await
+                .map_err(|error| LedgerError::Database(error.to_string()))?;
+            let owners: Vec<String> = rows
+                .into_iter()
+                .map(|row| {
+                    durable::owner(&crate::auth::DurablePrincipal {
+                        issuer: row.get(0),
+                        subject: row.get(1),
+                        actor_id: row.get(2),
+                        issued_at: 0,
+                        min_iat: 0,
+                    })
+                })
+                .collect();
+            ledger.seed_owners_once(&mut db, &owners).await?;
+            Ok(())
+        }
+        .await;
         (db, result)
     })
     .await

@@ -16,7 +16,7 @@ async fn put(client: &reqwest::Client, store: &S3Store, key: &ObjectKey, bytes: 
 }
 
 async fn db() -> (Client, String, ObjectLedger) {
-    let schema = format!("scan_verify_{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+    let schema = format!("aip_scan_verify_{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
     let (client, connection) = tokio_postgres::connect(DB, NoTls).await.unwrap();
     tokio::spawn(async move {
         let _ = connection.await;
@@ -75,7 +75,7 @@ async fn pg_minio_owner_mapping_paging_fencing_and_multipart_boundary() {
         }
         let listing = scoped.clone();
         let tick = ledger
-            .scan_tick(&mut client, &policy, move |target, token, max_keys| {
+            .scan_tick(&mut client, &policy, move |_target, token, max_keys| {
                 let listing = listing.clone();
                 async move { listing.list_objects_v2(max_keys, token.as_deref()).await }
             })

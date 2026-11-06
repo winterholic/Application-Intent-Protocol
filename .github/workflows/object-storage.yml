@@ -75,7 +75,7 @@ jobs:
         run: |
           set +e
           python3 scripts/run-storage-check.py --dir "$AIP_STORAGE_EVIDENCE_DIR" --label fmt-ledger -- rustfmt --edition 2024 --check crates/aip-execution/src/object_ledger.rs crates/aip-execution/tests/object_ledger.rs
-          python3 scripts/run-storage-check.py --dir "$AIP_STORAGE_EVIDENCE_DIR" --label fmt-transport -- rustfmt --edition 2021 --check spikes/spike-v6-transport/src/object_transport.rs spikes/spike-v6-transport/src/durable.rs spikes/spike-v6-transport/tests/object_ledger_s3.rs crates/aip-execution/tests/object_ledger_scan_minio.rs
+          python3 scripts/run-storage-check.py --dir "$AIP_STORAGE_EVIDENCE_DIR" --label fmt-transport -- rustfmt --edition 2021 --check spikes/spike-v6-transport/src/object_transport.rs spikes/spike-v6-transport/src/durable.rs spikes/spike-v6-transport/src/server.rs spikes/spike-v6-transport/tests/object_ledger_s3.rs crates/aip-execution/tests/object_ledger_scan_minio.rs
           python3 scripts/run-storage-check.py --dir "$AIP_STORAGE_EVIDENCE_DIR" --label diff -- git diff --check 921d339621675819c3455513834ab7123262c482...HEAD
           python3 scripts/run-storage-check.py --dir "$AIP_STORAGE_EVIDENCE_DIR" --label pg-ledger -- cargo test -p aip-execution --test object_ledger --locked -- --nocapture
           python3 scripts/run-storage-check.py --dir "$AIP_STORAGE_EVIDENCE_DIR" --label pg-principal-seed -- cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test object_ledger_s3 a_valid_principal_is_seeded_for_list_scan_before_any_ledger_row_exists --locked -- --nocapture
