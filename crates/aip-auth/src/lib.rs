@@ -120,12 +120,11 @@ pub async fn oidc_readiness(expected_issuer: &str, discovery_endpoint: Option<&s
         }
     };
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT);
-    if let Some(ca_path) = std::env::var_os("SSL_CERT_FILE").or_else(|| std::env::var_os("AIP_AUTH_CA_PEM")) {
-        if let Ok(bytes) = std::fs::read(ca_path) {
-            if let Ok(certificate) = reqwest::Certificate::from_pem(&bytes) {
-                builder = builder.add_root_certificate(certificate);
-            }
-        }
+    if let Some(ca_path) = std::env::var_os("SSL_CERT_FILE").or_else(|| std::env::var_os("AIP_AUTH_CA_PEM"))
+        && let Ok(bytes) = std::fs::read(ca_path)
+        && let Ok(certificate) = reqwest::Certificate::from_pem(&bytes)
+    {
+        builder = builder.add_root_certificate(certificate);
     }
     let http = builder.build().map_err(|_| OidcReadinessFailure { stage: "discovery" })?;
     oidc_readiness_with_client(expected_issuer, discovery_url.as_str(), &http).await
