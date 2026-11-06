@@ -12,7 +12,7 @@ use crate::codes::BLOCK_KEYS;
 pub const NOTES: &[(&str, &str, &str, &str)] = &[
     ("선언", "enum", "enum Name { A, B }", "닫힌 값 집합. 값은 따옴표 없이 쓰고 DB에는 text CHECK로 저장된다"),
     ("선언", "actor", "actor Resource", "호출자 행을 가리키는 resource. 조건식의 actor는 그 행이다. 정확히 하나"),
-    ("선언", "predicate", "predicate name(p: Type, ...) = condition", "이름 붙인 재사용 조건. name(args)로 부르고 서로 순환 호출할 수 없다"),
+    ("선언", "predicate", "predicate name(p: Type, ...) = condition", "이름 붙인 재사용 조건. name(args)로 부르고 서로 순환 호출할 수 없다. 같은 resource의 native 정수 Id 참조끼리는 크기를 비교할 수 있으며 UUID·다른 identity namespace는 거부한다"),
     (
         "선언",
         "access",

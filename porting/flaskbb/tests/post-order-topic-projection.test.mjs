@@ -79,3 +79,61 @@ for (const mode of ['older','tie','newer','empty']) {
     } finally { await fx.stop(); }
   });
 }
+
+// Pinned upstream Topic._remove_topic_from_forum observes the two leading
+// visible Topics BEFORE hiding this Topic. The key is original Post.id,
+// not a UUID or a date. A NULL last_post sorts first on PostgreSQL DESC.
+for (const mode of ['top','non-top','only','null-self','null-other']) {
+  test(`Topic hide ${mode}: pre-state Topic order, projection and first-post metadata`, {timeout:90000}, async () => {
+    const topic=id(30), first=id(31), last=id(32), otherTopic=id(40), other=id(41), excludedTopic=id(50), excluded=id(51);
+    const fx=await startFixture({actors:{admin:3,alice:2}, seed(sql,q,schema) {
+      base(sql,q,schema);
+      sql(`INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden)
+        VALUES('${topic}',1,'Hidden Topic',2,'topic-owner','2000-01-01','2025-01-01',false,false,0,true,false,false),
+        ('${otherTopic}',1,'Replacement Topic',NULL,'replacement-topic-owner','2001-01-01','2035-01-01',false,false,0,true,false,${mode==='only'}),
+        ('${excludedTopic}',1,'Already hidden',3,'excluded-topic-owner','2002-01-01','2040-01-01',false,false,0,true,false,true);
+        INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted)
+        VALUES('${first}','${topic}',1,2,'first-post-owner','first','2000-01-01',false,true,0,false),
+        ('${last}','${topic}',1,2,'reply-owner','reply','2025-01-01',false,true,0,false),
+        ('${other}','${otherTopic}',1,3,'replacement-post-owner','other','1990-01-01',false,true,0,false),
+        ('${excluded}','${excludedTopic}',1,3,'excluded-post-owner','excluded','2050-01-01',false,true,0,false);
+        INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topic}','${first}');
+        UPDATE ${q}.topic SET last_post_id='${last}' WHERE id='${topic}';
+        UPDATE ${q}.topic SET last_post_id='${other}' WHERE id='${otherTopic}';
+        UPDATE ${q}.topic SET last_post_id='${excluded}' WHERE id='${excludedTopic}';
+        UPDATE ${q}.forum SET last_post_id='${last}',last_post_user_id=2,last_post_title='sentinel-title',
+          last_post_username='sentinel-owner',last_post_created='2025-01-01' WHERE id=1;`);
+      // UUID/date ordering disagree with the source key, and an excluded hidden
+      // Topic has the greatest mapped key. Neither may decide the replacement.
+      seedNativePostOrders(sql,q,mode==='non-top' ? [first,last,other,excluded] : [first,other,last,excluded]);
+      if(mode==='null-self') sql(`UPDATE ${q}.topic SET last_post_id=NULL WHERE id='${topic}'`);
+      if(mode==='null-other') sql(`UPDATE ${q}.topic SET last_post_id=NULL WHERE id='${otherTopic}'`);
+    }});
+    const {q,sql}=fx;
+    const forum=()=>sql(`SELECT jsonb_build_array(last_post_id,last_post_user_id,last_post_title,last_post_username,last_post_created)::text FROM ${q}.forum WHERE id=1`);
+    try {
+      const before=forum();
+      const topicBefore=sql(`SELECT to_jsonb(t)-'hidden'-'hidden_by_id'-'hidden_at' FROM ${q}.topic t WHERE id='${topic}'`);
+      const unrelated=sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p WHERE id!='${first}'`);
+      const denied=await fx.client('alice').bundle({atomic:[{apply:'Topic.hide',target:{ids:[topic]}}]}, {key:`topic-hide-denied-${mode}`});
+      assert.equal(denied.ok,false);
+      assert.equal(forum(),before);
+      assert.equal(sql(`SELECT hidden FROM ${q}.topic WHERE id='${topic}'`),'f');
+      const result=await fx.client('admin').bundle({atomic:[{apply:'Topic.hide',target:{ids:[topic]}}]}, {key:`topic-hide-${mode}`});
+      assert.equal(result.ok,true,JSON.stringify(result));
+      if(mode==='non-top'||mode==='null-other') assert.equal(forum(),before,'hiding a non-leading Topic preserves every Forum field');
+      else if(mode==='only') assert.deepEqual(JSON.parse(forum()),[null,null,null,null,null]);
+      else {
+        assert.deepEqual(JSON.parse(forum()).slice(0,4),[other,null,'Replacement Topic','replacement-topic-owner']);
+        assert.equal(sql(`SELECT last_post_created='2035-01-01'::timestamptz FROM ${q}.forum WHERE id=1`),'t');
+      }
+      assert.equal(sql(`SELECT t.hidden AND p.hidden AND p.hidden_by_id=t.hidden_by_id AND p.hidden_by_id=3
+        AND p.hidden_at=t.hidden_at AND p.hidden_at IS NOT NULL FROM ${q}.topic t JOIN ${q}.post p ON p.id='${first}' WHERE t.id='${topic}'`),'t');
+      assert.equal(sql(`SELECT to_jsonb(t)-'hidden'-'hidden_by_id'-'hidden_at' FROM ${q}.topic t WHERE id='${topic}'`),topicBefore);
+      assert.equal(sql(`SELECT jsonb_agg(to_jsonb(p) ORDER BY id)::text FROM ${q}.post p WHERE id!='${first}'`),unrelated);
+      const applied=forum();
+      assert.equal((await fx.client('admin').bundle({atomic:[{apply:'Topic.hide',target:{ids:[topic]}}]}, {key:`topic-hide-${mode}`})).ok,true);
+      assert.equal(forum(),applied);
+    } finally { await fx.stop(); }
+  });
+}

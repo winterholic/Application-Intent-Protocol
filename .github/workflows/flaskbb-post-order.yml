@@ -12,6 +12,7 @@ on:
       - 'spikes/spike-v1-fixture/tests/latest_effect_match.rs'
       - 'spikes/spike-v1-fixture/src/sema.rs'
       - 'spikes/spike-v1-fixture/src/isolation.rs'
+      - 'spikes/spike-v1-fixture/src/syntax_card.rs'
       - 'spikes/spike-v3-write/tests/latest_effect_match.rs'
       - 'porting/flaskbb/seed/*post_order*'
       - 'porting/flaskbb/tests/test_post_order_import.py'
@@ -67,6 +68,9 @@ jobs:
       - name: Verify server-selected effect target contract
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test latest_effect_match
+      - name: Verify generated language reference
+        if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
+        run: cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test diagnostics
       - name: Verify selected target transactions
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test latest_effect_match

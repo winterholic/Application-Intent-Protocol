@@ -13,6 +13,15 @@ test('FlaskBB PostOrder schema upgrade preserves legacy UUIDs and requires the e
     // Each removal must be unique so a changed definition cannot silently turn
     // this into a migration from the new schema to itself.
     let legacy = readFileSync(definition, 'utf8');
+    // This is a preceding-schema fixture, not the old behavior implementation.
+    // Remove the new Topic ordering behavior before removing its nullable fields.
+    const orderPredicates=legacy.match(/^predicate topicHide(?:OrderKnown|ReplacesForum|NullReplacement).*$/gm);
+    assert.equal(orderPredicates?.length,3);
+    legacy=legacy.replace(/^predicate topicHide(?:OrderKnown|ReplacesForum|NullReplacement).*\n/gm,'');
+    const hideStart=legacy.indexOf('  transition hide {',legacy.indexOf('resource Topic {'));
+    const hideEnd=legacy.indexOf('  expose apply hide { target id; bulk maxRows 1 }',hideStart);
+    assert.ok(hideStart>0 && hideEnd>hideStart);
+    legacy=legacy.slice(0,hideStart)+'  transition hide { allow canHide(actor, forum); from hidden != true and deleted = false; to hidden = true, hidden_at = now, hidden_by = actor }\n'+legacy.slice(hideEnd);
     const removeOnce = text => {
       assert.equal(legacy.split(text).length, 2, `legacy schema anchor must be unique: ${text}`);
       legacy = legacy.replace(text, '');
