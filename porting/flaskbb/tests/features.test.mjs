@@ -1,4 +1,4 @@
-import {dbUrl} from './harness.mjs';
+import {dbUrl, seedNativePostOrders} from './harness.mjs';
 import {stopOwnedProcess} from './mail-fixture.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
@@ -87,6 +87,7 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     sql(`INSERT INTO ${q}.post (id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted) VALUES
       ('00000000-0000-4000-8000-000000000201','00000000-0000-4000-8000-000000000101',1,2,'member-alice','Hello world! First post content',now(),false,true,0,false),
       ('00000000-0000-4000-8000-000000000202','00000000-0000-4000-8000-000000000102',1,3,'admin-bob','Top secret hidden post content',now(),true,true,0,false);`);
+    seedNativePostOrders(sql, q, ['00000000-0000-4000-8000-000000000201', '00000000-0000-4000-8000-000000000202']);
 
     sql(`SELECT setval(pg_get_serial_sequence('${q}.category', 'id'), 100);`);
     sql(`SELECT setval(pg_get_serial_sequence('${q}.forum', 'id'), 100);`);

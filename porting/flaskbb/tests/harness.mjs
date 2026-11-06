@@ -37,6 +37,20 @@ export const USERS_SQL = schema => `INSERT INTO "${schema}".user (id,username,em
   (5,'super-mod','supermod@example.test',now(),now(),5,true,'en'),
   (6,'member-carol','carol@example.test',now(),now(),2,true,'en');`;
 
+// Explicit creation order for new synthetic fixture posts only. Historical
+// UUID-only rows must use a verified original-ID import, never this helper.
+export function seedNativePostOrders(sql, q, posts) {
+  if (new Set(posts).size !== posts.length || posts.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) {
+    throw new Error('new synthetic post IDs must be distinct canonical UUIDs');
+  }
+  const statements = ['BEGIN'];
+  for (const id of posts) {
+    statements.push(`INSERT INTO ${q}.post_order(post_id) VALUES ('${id}')`);
+    statements.push(`UPDATE ${q}.post SET source_order_id=(SELECT id FROM ${q}.post_order WHERE post_id='${id}') WHERE id='${id}'`);
+  }
+  sql([...statements, 'COMMIT'].join(';') + ';');
+}
+
 /**
  * Start a fresh schema and listener. `seed(sql, q, schema, run)` inserts rows after init;
  * `actors` maps token subject -> actor id and is bound as service principals.

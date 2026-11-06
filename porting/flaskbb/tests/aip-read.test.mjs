@@ -1,4 +1,4 @@
-import {dbUrl} from './harness.mjs';
+import {dbUrl, seedNativePostOrders} from './harness.mjs';
 import {stopOwnedProcess} from './mail-fixture.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
@@ -69,6 +69,7 @@ test('AIP server enforces forum group visibility and unique link relations with 
       ('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000001',1,1,'guest-fixture','Public post',now(),false,true,0,false),
       ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000002',2,2,'member-fixture','Private post',now(),false,true,0,false),
       ('00000000-0000-4000-8000-000000000013','00000000-0000-4000-8000-000000000003',2,2,'member-fixture','Hidden post',now(),true,true,0,false);`);
+    seedNativePostOrders(sql, q, ['00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000012', '00000000-0000-4000-8000-000000000013']);
     sql(`INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (1,1,1),(2,2,2),(3,2,3),(4,2,4);`);
     const duplicate = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', dbUrl, '-c', `INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (5,2,2)`], {encoding: 'utf8', env});
     assert.notEqual(duplicate.status, 0, 'duplicate forum/group access must be rejected');
