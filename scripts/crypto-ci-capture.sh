@@ -5,27 +5,38 @@ step=${1:?step name required}
 evidence_dir=${CRYPTO_EVIDENCE_DIR:?CRYPTO_EVIDENCE_DIR is required}
 mkdir -p "$evidence_dir"
 result="$evidence_dir/$step.json"
-log="$RUNNER_TEMP/crypto-repair-$step.log"
+stdout="$RUNNER_TEMP/crypto-repair-$step.stdout"
+stderr="$RUNNER_TEMP/crypto-repair-$step.stderr"
 
 run_command() {
   local label=$1
   shift
   set +e
-  "$@" >"$log" 2>&1
+  "$@" >"$stdout" 2>"$stderr"
   local code=$?
   set -e
-  python3 - "$result" "$step" "$label" "$code" "$log" <<'PY'
+  python3 - "$result" "$step" "$label" "$code" "$stdout" "$stderr" "$evidence_dir" <<'PY'
 import json, pathlib, re, sys
-result, step, label, code, log = sys.argv[1:]
-text = pathlib.Path(log).read_text(errors="replace")
-text = re.sub(r"k[0-9]+:[A-Za-z0-9+/=_-]+", "kN:[REDACTED]", text)
-text = re.sub(r"\b[A-Za-z0-9+/]{40,}={0,2}\b", "[REDACTED_BASE64]", text)
-excerpt = "\n".join(text.splitlines()[-12:])[-1800:] if int(code) else ""
+result, step, label, code, stdout, stderr, evidence_dir = sys.argv[1:]
+def sanitize(path):
+    text = pathlib.Path(path).read_text(errors="replace")
+    text = re.sub(r"k[0-9]+:[A-Za-z0-9+/=_-]+", "kN:[REDACTED]", text)
+    return re.sub(r"\b[A-Za-z0-9+/]{40,}={0,2}\b", "[REDACTED_BASE64]", text)
+stdout_text, stderr_text = sanitize(stdout), sanitize(stderr)
+evidence_dir = pathlib.Path(evidence_dir)
+stdout_file, stderr_file = evidence_dir / f"{step}.stdout.txt", evidence_dir / f"{step}.stderr.txt"
+stdout_file.write_text(stdout_text)
+stderr_file.write_text(stderr_text)
+sha = __import__("subprocess").check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+excerpt = "\n".join((stdout_text + "\n" + stderr_text).splitlines()[-12:])[-1800:] if int(code) else ""
 payload = {
     "step": step,
     "command": label,
+    "source_revision": sha,
     "status": "passed" if int(code) == 0 else "failed",
     "exit_code": int(code),
+    "stdout_file": str(stdout_file),
+    "stderr_file": str(stderr_file),
     "error_excerpt": excerpt,
 }
 pathlib.Path(result).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
@@ -53,8 +64,9 @@ PY
   fmt) run_command 'cargo fmt --all -- --check' cargo fmt --all -- --check ;;
   check) run_command 'cargo check --locked -p aip-service -p aip-execution' cargo check --locked -p aip-service -p aip-execution ;;
   service_test) run_command 'cargo test --locked -p aip-service --test encryption_runtime_test' cargo test --locked -p aip-service --test encryption_runtime_test ;;
-  execution_test) run_command 'cargo test --locked -p aip-execution --test encryption_sealer_opener' cargo test --locked -p aip-execution --test encryption_sealer_opener ;;
+  execution_test) run_command 'cargo test --locked -p aip-execution --test encryption_sealer_opener --test encryption_rekey' cargo test --locked -p aip-execution --test encryption_sealer_opener --test encryption_rekey ;;
   clippy) run_command 'cargo clippy --locked --all-targets -p aip-service -p aip-execution -p aip-cli -- -D warnings' cargo clippy --locked --all-targets -p aip-service -p aip-execution -p aip-cli -- -D warnings ;;
+  clippy_scoped) run_command 'cargo clippy --locked --all-targets --no-deps -p aip-service -p aip-execution -p aip-cli -- -D warnings' cargo clippy --locked --all-targets --no-deps -p aip-service -p aip-execution -p aip-cli -- -D warnings ;;
   cli_build) run_command 'cargo build --locked -p aip-cli' cargo build --locked -p aip-cli ;;
   cli_gate)
     config="$RUNNER_TEMP/crypto-repair-service.json"
@@ -78,11 +90,11 @@ base = {
  "scope_kind":"service", "scope_id":"global", "holder_id":"crypto-ci-test",
  "targets":[{"table":"secret","column":"value","id_column":"id","resource":"Secret","field":"value"}]
 }
-cases = [("incomplete_inventory", False, "INCOMPLETE_REKEY_INVENTORY"),
-         ("closed_operational_gate", True, "REKEY_OPERATIONAL_GATE_CLOSED")]
+cases = [("closed_gate_without_legacy_claim", False, "REKEY_OPERATIONAL_GATE_CLOSED"),
+         ("closed_gate_with_legacy_claim", True, "REKEY_OPERATIONAL_GATE_CLOSED")]
 observed=[]
-for name, complete, expected in cases:
-    options = dict(base, inventory_complete=complete)
+for name, legacy_claim, expected in cases:
+    options = dict(base, inventory_complete=legacy_claim)
     option_path = root / f"crypto-repair-{name}.json"
     option_path.write_text(json.dumps(options))
     proc = subprocess.run(["target/debug/aip", "service", "rekey", "--config", str(root / "crypto-repair-service.json"), "--options", str(option_path)], capture_output=True, text=True)

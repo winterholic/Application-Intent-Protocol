@@ -1,0 +1,124 @@
+name: AIP 1.0 release gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.cargo/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain*'
+      - 'crates/**'
+      - 'product/**'
+      - 'prototype/**'
+      - 'porting/**'
+      - 'spikes/**'
+      - 'tools/**'
+      - 'scripts/**'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aip-release-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+      AIP_TEST_MONGO_URL: mongodb://aip_test_slice13a:local_fixture_only_13a@127.0.0.1:15441/aip_test_slice13a?authSource=admin
+      AIP_TEST_MONGO_UUID_URL: mongodb://127.0.0.1:25443/aip_test_uuid_ci
+      AIP_TEST_REDIS_URL: redis://:local_fixture_only_13a@127.0.0.1:15442/
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+          - '127.0.0.1:5432:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Install release-gate toolchains
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client bubblewrap apparmor python3-venv
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+          python3 -m venv "$RUNNER_TEMP/aip-python-checks"
+          "$RUNNER_TEMP/aip-python-checks/bin/pip" install --no-cache-dir mypy==2.4.0 setuptools wheel
+          echo "$RUNNER_TEMP/aip-python-checks/bin" >> "$GITHUB_PATH"
+      - name: Configure CI Bubblewrap user namespace policy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
+            mkdir -p "$sandbox_bin"
+            cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
+            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
+            echo "$sandbox_bin" >> "$GITHUB_PATH"
+          fi
+      - name: Start native-store test fixtures
+        id: native-fixtures
+        shell: bash
+        run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120
+      - name: Run the original 1.0 package, install, upgrade and rollback gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "AIP 1.0 release package, install, upgrade and rollback gate"
+          bash scripts/release-gate.sh \
+            --baseline 4c27040c6d4a2a2931321e1980842be79512bdb0 \
+            --ref "$GITHUB_SHA" \
+            --out "$RUNNER_TEMP/aip-release-gate"
+      - name: Show native-store logs on failure
+        if: failure() && steps.native-fixtures.outcome != '' && steps.native-fixtures.outcome != 'skipped'
+        run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml logs --no-color mongo mongo-uuid redis
+      - name: Preserve release-gate summary and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aip-release-gate-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/aip-release-gate/summary.txt
+            ${{ runner.temp }}/aip-release-gate/logs/**
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Stop native-store test fixtures
+        if: always() && steps.native-fixtures.outcome != '' && steps.native-fixtures.outcome != 'skipped'
+        run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml down --volumes
