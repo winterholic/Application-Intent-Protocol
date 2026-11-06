@@ -191,6 +191,38 @@ const ROWS: &str = "SELECT count(*) FROM {infra}.aip_object_ledger";
 const HELD: &str = "SELECT count(*) FROM {infra}.aip_object_ledger WHERE settling";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_valid_principal_is_seeded_for_list_scan_before_any_ledger_row_exists() {
+    let fixture = Fixture::start(offline_store(10 * MIB, 10)).await;
+    let alice_owner = digest(&json!(["test", "alice", 1, 0]));
+    let alice_prefix = aip_execution::objects::owner_prefix(&alice_owner).unwrap();
+    let bob_owner = digest(&json!(["test", "bob", 1, 0]));
+    let bob_prefix = aip_execution::objects::owner_prefix(&bob_owner).unwrap();
+
+    assert_eq!(fixture.number("SELECT count(*) FROM {infra}.aip_object_owners").await, 0);
+    let invalid = json!({"unexpected":true});
+    assert_eq!(fixture.control("alice", "/objects/confirm", invalid.clone()).await["code"], "WIRE.BAD_REQUEST");
+    assert_eq!(fixture.number(ROWS).await, 0, "validation must not invent ledger rows");
+    assert_eq!(fixture.number("SELECT count(*) FROM {infra}.aip_object_owners").await, 1);
+    assert_eq!(
+        fixture.number(&format!("SELECT count(*) FROM {{infra}}.aip_object_owners WHERE owner_prefix='{alice_prefix}'")).await,
+        1,
+        "the validated principal is stored under the exact legacy owner prefix"
+    );
+    assert_eq!(fixture.control("alice", "/objects/confirm", invalid.clone()).await["code"], "WIRE.BAD_REQUEST", "revalidation is idempotent");
+    assert_eq!(fixture.number("SELECT count(*) FROM {infra}.aip_object_owners").await, 1);
+
+    fixture
+        .db
+        .execute(&format!("UPDATE {}.aip_principals SET enabled=false WHERE issuer='test' AND subject='bob'", SCHEMA.as_str()), &[])
+        .await
+        .unwrap();
+    assert_eq!(fixture.control("bob", "/objects/confirm", invalid).await["code"], "WIRE.UNAUTHENTICATED");
+    assert_eq!(fixture.number("SELECT count(*) FROM {infra}.aip_object_owners").await, 1, "a revoked principal cannot be seeded");
+    assert_ne!(alice_prefix, bob_prefix, "principal prefixes stay isolated");
+    assert_eq!(fixture.number(&format!("SELECT count(*) FROM {{infra}}.aip_object_owners WHERE owner_prefix='{bob_prefix}'")).await, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn signing_uploads_is_refused_once_the_owner_quota_is_signed_for() {
     let fixture = Fixture::start(offline_store(10 * MIB, 3)).await;
     let first = fixture.control("alice", "/objects/sign", put_request(6 * MIB)).await;
