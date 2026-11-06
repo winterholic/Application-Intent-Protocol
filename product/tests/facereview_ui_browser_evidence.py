@@ -906,6 +906,64 @@ def bookmark_listing_evidence(api_rows: list[dict[str, object]], empty: bool, re
             'verified': bool(accepted and matches and rendered is True)}
 
 
+def member_recent_request_matches(body: Any) -> bool:
+    """The my page asks for the original's defaults: emotion `all`, page 1, size 10."""
+    if not isinstance(body, dict) or body.get('extension') != 'User.myRecentVideos':
+        return False
+    inputs = body.get('input')
+    return (isinstance(inputs, dict) and set(inputs) == {'emotion', 'page', 'size'}
+            and inputs.get('emotion') == 'all'
+            and type(inputs.get('page')) is int and inputs['page'] == 1
+            and type(inputs.get('size')) is int and inputs['size'] == 10)
+
+
+def recent_videos_response_evidence(payload: Any) -> dict[str, object]:
+    """Keep only fixture ids, emotions, percentages and shape flags of the recent-view answer (never titles, URLs or times)."""
+    unusable: dict[str, object] = {
+        'recent_video_ids': None, 'recent_emotions': None, 'recent_percentages': None,
+        'recent_timelines_complete': False, 'recent_total': None, 'recent_has_next': None}
+    output = payload.get('output') if isinstance(payload, dict) else None
+    text = output.get('body') if isinstance(output, dict) else None
+    try:
+        body = json.loads(text) if isinstance(text, str) else None
+    except ValueError:
+        return unusable
+    videos = body.get('videos') if isinstance(body, dict) else None
+    if not isinstance(videos, list) or not all(isinstance(video, dict) for video in videos):
+        return unusable
+    total, has_next = body.get('total'), body.get('has_next')
+    timelines = [video.get('timeline_data') for video in videos]
+    return {
+        'recent_video_ids': [video.get('video_id') for video in videos],
+        'recent_emotions': [video.get('dominant_emotion') for video in videos],
+        'recent_percentages': [video.get('dominant_emotion_per') for video in videos],
+        'recent_timelines_complete': bool(videos) and all(
+            isinstance(timeline, dict) and set(timeline) == {'neutral', 'happy', 'surprise', 'sad', 'angry'}
+            and all(isinstance(points, list) and points for points in timeline.values()) for timeline in timelines),
+        'recent_total': total if type(total) is int else None,
+        'recent_has_next': has_next if isinstance(has_next, bool) else None,
+    }
+
+
+def member_recent_evidence(api_rows: list[dict[str, object]], expected: list[dict[str, object]], rendered: bool) -> dict[str, object]:
+    """One my page load: the accepted answer lists exactly the visible fixture sessions, newest first, with the UI showing the same."""
+    rows = [row for row in api_rows if row.get('path') == '/extension'
+            and (row.get('extension_request') or {}).get('extension') == 'User.myRecentVideos']
+    accepted = (len(rows) == 1 and type(rows[0].get('status')) is int and rows[0]['status'] == 200
+                and all(rows[0].get(key) is True for key in
+                        ('body_captured', 'ok', 'recent_input_matches', 'contract_matches_runtime')))
+    matches = (bool(expected) and len(rows) == 1
+               and rows[0].get('recent_video_ids') == [item['video_id'] for item in expected]
+               and rows[0].get('recent_emotions') == [item['emotion'] for item in expected]
+               and rows[0].get('recent_percentages') == [item['percentage'] for item in expected]
+               and rows[0].get('recent_timelines_complete') is True
+               and rows[0].get('recent_total') == len(expected)
+               and rows[0].get('recent_has_next') is False)
+    return {'response_count': len(rows), 'expected_count': len(expected), 'server_accepted': bool(accepted),
+            'response_matches_fixture': bool(matches), 'render_matches': rendered,
+            'verified': bool(accepted and matches and rendered is True)}
+
+
 def extension_request_evidence(body: Any) -> dict[str, object]:
     """Return only the allowlisted extension name and page/emotion inputs."""
     if not isinstance(body, dict):

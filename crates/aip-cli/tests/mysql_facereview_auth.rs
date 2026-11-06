@@ -69,6 +69,7 @@ const LIST_EXTENSIONS: [(&str, &str); 16] = [
 const META: &str = "aip_t_auth_meta";
 const SOURCE: &str = "aip_t_auth_src";
 const MONGO_DB: &str = "aip_t_auth_fr";
+const RECENT_SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/auth-recent-sessions.json");
 const ISSUER: &str = "https://login.facereview.example";
 const AUDIENCE: &str = "aip-api";
 const ORIGIN: &str = "http://localhost:5173";
@@ -1067,6 +1068,59 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         }
         if !recommend_db_ok {
             journey_failures.push("recommend form rows or unrelated business data preservation failed".to_owned());
+        }
+
+        // Recent views with sessions. The my page reads the caller's own MongoDB sessions through User.myRecentVideos: two visible
+        // sessions (newest first), one on a soft-deleted video and another member's session must stay out of the list. The journey
+        // only reads, so every MongoDB session document and every business row except the member's own `user`/summary rows
+        // (the page's emotion-summary write extension updates the latter) is compared before and after.
+        let recent_sessions: Vec<Value> = serde_json::from_str(RECENT_SESSIONS).unwrap();
+        let watching = database.collection::<mongodb::bson::Document>("youtube_watching_data");
+        let member_sessions_before_seed = watching.count_documents(mongodb::bson::doc! {"user_id": LEGACY}).await.unwrap();
+        for session in &recent_sessions {
+            watching.insert_one(serde_json::from_value::<mongodb::bson::Document>(session.clone()).unwrap()).await.unwrap();
+        }
+        async fn sessions_snapshot(watching: &mongodb::Collection<mongodb::bson::Document>) -> Vec<String> {
+            use futures_util::TryStreamExt;
+            let mut documents: Vec<mongodb::bson::Document> = watching.find(mongodb::bson::doc! {}).await.unwrap().try_collect().await.unwrap();
+            documents.sort_by_key(|document| document.get_object_id("_id").unwrap());
+            documents.iter().map(|document| format!("{document:?}")).collect()
+        }
+        let sessions_before = sessions_snapshot(&watching).await;
+        let recent_before = business_snapshot_excluding(&mut setup, Some(LEGACY), false, true).await;
+        let recent = run_facereview_ui_browser_journey(&address, &fingerprint, "recent", &browser_root, None);
+        let recent_after = business_snapshot_excluding(&mut setup, Some(LEGACY), false, true).await;
+        let sessions_after = sessions_snapshot(&watching).await;
+        let recent_business_preserved = recent_before == recent_after;
+        let recent_sessions_preserved = sessions_before == sessions_after;
+        let seeded_ids: Vec<&str> = recent_sessions.iter().map(|session| session["video_view_log_id"].as_str().unwrap()).collect();
+        watching.delete_many(mongodb::bson::doc! {"video_view_log_id": {"$in": seeded_ids}}).await.unwrap();
+        let sessions_cleaned = watching.count_documents(mongodb::bson::doc! {"user_id": LEGACY}).await.unwrap() == member_sessions_before_seed;
+        let recent_dir = Path::new(&browser_output).join("recent");
+        std::fs::create_dir_all(&recent_dir).unwrap();
+        let recent_db_ok = member_sessions_before_seed == 0
+            && sessions_before.len() == recent_sessions.len()
+            && recent_business_preserved
+            && recent_sessions_preserved
+            && sessions_cleaned;
+        let recent_db_result = json!({
+            "journey": "member_recent_videos",
+            "browser_status": if recent.status.success() { "success" } else { "failure" },
+            "database_status": if recent_db_ok { "success" } else { "failure" },
+            "member_started_without_sessions": member_sessions_before_seed == 0,
+            "seeded_session_count": recent_sessions.len(), "visible_expected_count": 2,
+            "mongo_sessions_preserved": recent_sessions_preserved,
+            "business_table_count": recent_before.len(), "business_rows_preserved_except_member_user_and_summary": recent_business_preserved,
+            "seeded_sessions_removed": sessions_cleaned
+        });
+        std::fs::write(recent_dir.join("recent-db-result.json"), serde_json::to_vec_pretty(&recent_db_result).unwrap()).unwrap();
+        println!("recent videos browser/DB: {recent_db_result}");
+        print!("{}", String::from_utf8_lossy(&recent.stdout));
+        if !recent.status.success() {
+            journey_failures.push(format!("recent videos browser journey failed: {}", String::from_utf8_lossy(&recent.stderr)));
+        }
+        if !recent_db_ok {
+            journey_failures.push("recent videos sessions or business data preservation failed".to_owned());
         }
 
         // Each original comment UI action runs in a fresh browser, with a DB checkpoint

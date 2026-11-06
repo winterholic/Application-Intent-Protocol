@@ -108,6 +108,66 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertFalse(bookmark_listing_evidence([row], False, False)['verified'])
         self.assertFalse(bookmark_listing_evidence([row], True, True)['verified'])
 
+    def test_recent_videos_request_requires_the_original_defaults(self):
+        from product.tests import facereview_ui_browser_evidence as evidence
+        matches = getattr(evidence, 'member_recent_request_matches', None)
+        self.assertTrue(callable(matches), 'member_recent_request_matches is missing')
+        request = {'extension': 'User.myRecentVideos', 'input': {'emotion': 'all', 'page': 1, 'size': 10}}
+        self.assertTrue(matches(request))
+        for broken in [None, {}, {**request, 'extension': 'Video.homeBookmark'},
+                       *[{**request, 'input': {**request['input'], key: value}} for key, value in
+                         [('page', True), ('page', 2), ('size', 20), ('emotion', 'sad'), ('user', 'private-user')]]]:
+            self.assertFalse(matches(broken))
+
+    def test_recent_videos_response_keeps_only_ids_emotions_and_shape_flags(self):
+        from product.tests import facereview_ui_browser_evidence as evidence
+        summarize = getattr(evidence, 'recent_videos_response_evidence', None)
+        self.assertTrue(callable(summarize), 'recent_videos_response_evidence is missing')
+        timeline = {emotion: [{'x': 1, 'y': 0.0}] for emotion in ('neutral', 'happy', 'surprise', 'sad', 'angry')}
+        videos = [
+            {'video_id': 'v1', 'youtube_url': 'private-url', 'title': 'private-title', 'dominant_emotion': 'sad',
+             'dominant_emotion_per': 55.0, 'watched_at': 'private-time', 'timeline_data': timeline},
+            {'video_id': 'v2', 'youtube_url': 'private-url', 'title': 'private-title', 'dominant_emotion': 'happy',
+             'dominant_emotion_per': 60.0, 'watched_at': 'private-time', 'timeline_data': timeline},
+        ]
+        body = json.dumps({'videos': videos, 'total': 2, 'page': 1, 'size': 10, 'has_next': False})
+        got = summarize({'ok': True, 'output': {'body': body}})
+        self.assertEqual(got, {
+            'recent_video_ids': ['v1', 'v2'], 'recent_emotions': ['sad', 'happy'],
+            'recent_percentages': [55.0, 60.0], 'recent_timelines_complete': True,
+            'recent_total': 2, 'recent_has_next': False})
+        self.assertNotIn('private-', json.dumps(got))
+        empty_timeline = json.dumps({'videos': [{**videos[0], 'timeline_data': {}}], 'total': 1, 'has_next': False})
+        self.assertIs(summarize({'output': {'body': empty_timeline}})['recent_timelines_complete'], False)
+        unusable = {'recent_video_ids': None, 'recent_emotions': None, 'recent_percentages': None,
+                    'recent_timelines_complete': False, 'recent_total': None, 'recent_has_next': None}
+        for invalid in [None, {}, {'output': {}}, {'output': {'body': 'broken'}}, {'output': {'body': '{}'}},
+                        {'output': {'body': json.dumps({'videos': 'x'})}}]:
+            self.assertEqual(summarize(invalid), unusable)
+
+    def test_recent_videos_gate_needs_exact_order_values_and_visible_render(self):
+        from product.tests import facereview_ui_browser_evidence as evidence
+        gate = getattr(evidence, 'member_recent_evidence', None)
+        self.assertTrue(callable(gate), 'member_recent_evidence is missing')
+        expected = [{'video_id': 'v1', 'emotion': 'sad', 'percentage': 55.0},
+                    {'video_id': 'v2', 'emotion': 'happy', 'percentage': 60.0}]
+        row = {'path': '/extension', 'extension_request': {'extension': 'User.myRecentVideos'},
+               'recent_input_matches': True, 'status': 200, 'body_captured': True, 'ok': True,
+               'contract_matches_runtime': True, 'recent_video_ids': ['v1', 'v2'],
+               'recent_emotions': ['sad', 'happy'], 'recent_percentages': [55.0, 60.0],
+               'recent_timelines_complete': True, 'recent_total': 2, 'recent_has_next': False}
+        self.assertTrue(gate([row], expected, True)['verified'])
+        for changed in [{'body_captured': False}, {'ok': False}, {'status': 500}, {'recent_input_matches': False},
+                        {'contract_matches_runtime': False}, {'recent_video_ids': ['v2', 'v1']},
+                        {'recent_video_ids': ['v1']}, {'recent_video_ids': None},
+                        {'recent_emotions': ['sad', 'sad']}, {'recent_percentages': [55.0, 61.0]},
+                        {'recent_timelines_complete': False}, {'recent_total': 3}, {'recent_has_next': True}]:
+            self.assertFalse(gate([{**row, **changed}], expected, True)['verified'], changed)
+        for rows in [[], [row, row], [{**row, 'extension_request': {'extension': 'private-extension'}}]]:
+            self.assertFalse(gate(rows, expected, True)['verified'])
+        self.assertFalse(gate([row], expected, False)['verified'])
+        self.assertFalse(gate([row], [], True)['verified'])
+
     def test_member_read_names_cover_detail_recent_related_and_bookmark_without_values(self):
         for name in ('Video.watchDetail', 'User.myRecentVideos',
                      'Video.watchRecommended', 'Video.homeBookmark'):

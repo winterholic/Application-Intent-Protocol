@@ -1,0 +1,250 @@
+[
+ {
+  "user_id": "77777777-7777-4777-8777-777777777777",
+  "video_id": "aaaaaaaa-0000-4000-8000-000000000001",
+  "video_view_log_id": "aip-recent-0001",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1770109507123"
+   }
+  },
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 0.1,
+   "happy": 0.6,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.9,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 10.0,
+    "happy": 12.0,
+    "surprise": 14.0,
+    "sad": 16.0,
+    "angry": 18.0
+   },
+   "4240": {
+    "neutral": 13.0,
+    "happy": 15.0,
+    "surprise": 17.0,
+    "sad": 19.0,
+    "angry": 21.0
+   },
+   "8480": {
+    "neutral": 16.0,
+    "happy": 18.0,
+    "surprise": 20.0,
+    "sad": 22.0,
+    "angry": 24.0
+   },
+   "12720": {
+    "neutral": 19.0,
+    "happy": 21.0,
+    "surprise": 23.0,
+    "sad": 25.0,
+    "angry": 27.0
+   },
+   "16960": {
+    "neutral": 22.0,
+    "happy": 24.0,
+    "surprise": 26.0,
+    "sad": 28.0,
+    "angry": 30.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1770109807123"
+   }
+  }
+ },
+ {
+  "user_id": "77777777-7777-4777-8777-777777777777",
+  "video_id": "aaaaaaaa-0000-4000-8000-000000000003",
+  "video_view_log_id": "aip-recent-0002",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1770195907123"
+   }
+  },
+  "dominant_emotion": "angry",
+  "emotion_percentages": {
+   "neutral": 0.1,
+   "happy": 0.0,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.7
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 10.0,
+    "happy": 12.0,
+    "surprise": 14.0,
+    "sad": 16.0,
+    "angry": 18.0
+   },
+   "2000": {
+    "neutral": 13.0,
+    "happy": 15.0,
+    "surprise": 17.0,
+    "sad": 19.0,
+    "angry": 21.0
+   },
+   "4000": {
+    "neutral": 16.0,
+    "happy": 18.0,
+    "surprise": 20.0,
+    "sad": 22.0,
+    "angry": 24.0
+   },
+   "6000": {
+    "neutral": 19.0,
+    "happy": 21.0,
+    "surprise": 23.0,
+    "sad": 25.0,
+    "angry": 27.0
+   },
+   "8000": {
+    "neutral": 22.0,
+    "happy": 24.0,
+    "surprise": 26.0,
+    "sad": 28.0,
+    "angry": 30.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1770196207123"
+   }
+  }
+ },
+ {
+  "user_id": "77777777-7777-4777-8777-777777777777",
+  "video_id": "aaaaaaaa-0000-4000-8000-000000000002",
+  "video_view_log_id": "aip-recent-0003",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1770282307123"
+   }
+  },
+  "dominant_emotion": "sad",
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.1,
+   "surprise": 0.1,
+   "sad": 0.55,
+   "angry": 0.05
+  },
+  "completion_rate": 0.7,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 10.0,
+    "happy": 12.0,
+    "surprise": 14.0,
+    "sad": 16.0,
+    "angry": 18.0
+   },
+   "6000": {
+    "neutral": 13.0,
+    "happy": 15.0,
+    "surprise": 17.0,
+    "sad": 19.0,
+    "angry": 21.0
+   },
+   "12000": {
+    "neutral": 16.0,
+    "happy": 18.0,
+    "surprise": 20.0,
+    "sad": 22.0,
+    "angry": 24.0
+   },
+   "18000": {
+    "neutral": 19.0,
+    "happy": 21.0,
+    "surprise": 23.0,
+    "sad": 25.0,
+    "angry": 27.0
+   },
+   "24000": {
+    "neutral": 22.0,
+    "happy": 24.0,
+    "surprise": 26.0,
+    "sad": 28.0,
+    "angry": 30.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1770282607123"
+   }
+  }
+ },
+ {
+  "user_id": "33333333-3333-4333-8333-333333333333",
+  "video_id": "aaaaaaaa-0000-4000-8000-000000000001",
+  "video_view_log_id": "aip-recent-0004",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1770368707123"
+   }
+  },
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 0.7,
+   "happy": 0.1,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.8,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 10.0,
+    "happy": 12.0,
+    "surprise": 14.0,
+    "sad": 16.0,
+    "angry": 18.0
+   },
+   "4240": {
+    "neutral": 13.0,
+    "happy": 15.0,
+    "surprise": 17.0,
+    "sad": 19.0,
+    "angry": 21.0
+   },
+   "8480": {
+    "neutral": 16.0,
+    "happy": 18.0,
+    "surprise": 20.0,
+    "sad": 22.0,
+    "angry": 24.0
+   },
+   "12720": {
+    "neutral": 19.0,
+    "happy": 21.0,
+    "surprise": 23.0,
+    "sad": 25.0,
+    "angry": 27.0
+   },
+   "16960": {
+    "neutral": 22.0,
+    "happy": 24.0,
+    "surprise": 26.0,
+    "sad": 28.0,
+    "angry": 30.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1770369007123"
+   }
+  }
+ }
+]

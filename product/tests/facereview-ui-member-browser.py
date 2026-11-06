@@ -49,6 +49,9 @@ from product.tests.facereview_ui_browser_evidence import (
     member_search_evidence,
     member_recommend_request_matches,
     member_recommend_evidence,
+    member_recent_request_matches,
+    recent_videos_response_evidence,
+    member_recent_evidence,
     bookmark_listing_request_matches,
     bookmark_listing_response_evidence,
     bookmark_listing_evidence,
@@ -63,6 +66,12 @@ COMMENT_EDITED = "AIP 원본 UI 댓글 수정 표본"
 SEARCH_ABSENT = "AIP-no-match-7be19b92"
 RECOMMEND_VIDEO_IDS = ["AipForm0001", "AipForm0002"]
 MEMBER_ID = "77777777-7777-4777-8777-777777777777"
+# The member's visible recent sessions, newest first (auth-recent-sessions.json): a third session on a soft-deleted video and
+# another member's session are seeded too and must not appear.
+RECENT_EXPECTED = [
+    {"video_id": "aaaaaaaa-0000-4000-8000-000000000002", "title": "요리 영상 고양이", "emotion": "sad", "label": "슬픈", "percentage": 55.0},
+    {"video_id": VIDEO_ID, "title": VIDEO_TITLE, "emotion": "happy", "label": "즐거운", "percentage": 60.0},
+]
 
 
 class FixtureThumbnailHandler(BaseHTTPRequestHandler):
@@ -167,7 +176,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ui", type=Path, required=True)
     parser.add_argument("--api", required=True)
-    parser.add_argument("--phase", choices=("search", "recommend", "add", "remove", "comment-create", "comment-edit", "comment-delete"), required=True)
+    parser.add_argument("--phase", choices=("search", "recommend", "recent", "add", "remove", "comment-create", "comment-edit", "comment-delete"), required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     email = os.environ["AIP_FACEREVIEW_JOURNEY_EMAIL"]
@@ -242,6 +251,9 @@ def main() -> int:
     recommend_failures: list[dict[str, str]] = []
     bookmark_listing_checks: list[dict[str, object]] = []
     bookmark_listing_failures: list[dict[str, str]] = []
+    recent_checks: list[dict[str, object]] = []
+    recent_filter_checks: list[dict[str, object]] = []
+    recent_failures: list[dict[str, str]] = []
     bookmark_api_row_count: int | None = None
     thumbnail_server = None
     thumbnail_thread = None
@@ -339,6 +351,8 @@ def main() -> int:
             row.update(extension_response_evidence(str(extension_request["extension"]), envelope, VIDEO_ID))
             if extension_request['extension'] == 'Video.homeBookmark':
                 row.update(bookmark_listing_response_evidence(envelope, VIDEO_ID))
+            if extension_request['extension'] == 'User.myRecentVideos':
+                row.update(recent_videos_response_evidence(envelope))
         if 'recommend_input_matches' in row:
             extension_output = envelope.get('output') if isinstance(envelope, dict) else None
             requested = extension_output.get('requested') if isinstance(extension_output, dict) else None
@@ -389,6 +403,8 @@ def main() -> int:
                 row['recommend_input_matches'] = member_recommend_request_matches(payload, MEMBER_ID, RECOMMEND_VIDEO_IDS)
             if isinstance(payload, dict) and payload.get('extension') == 'Video.homeBookmark':
                 row['bookmark_listing_input_matches'] = bookmark_listing_request_matches(payload)
+            if isinstance(payload, dict) and payload.get('extension') == 'User.myRecentVideos':
+                row['recent_input_matches'] = member_recent_request_matches(payload)
             if isinstance(payload, dict) and payload.get("extension") == "Video.homeSearch":
                 row["search_input_matches"] = any(
                     member_search_request_matches(payload, keyword) for keyword in (VIDEO_TITLE, SEARCH_ABSENT)
@@ -762,6 +778,66 @@ def main() -> int:
                                 screenshot_names.append(screenshot.name)
                             except Exception as error:
                                 recommend_failures.append({'stage': stage, 'failure_type': safe_browser_failure_type(error)})
+                    elif args.phase == "recent":
+                        # The my page lists the member's recent sessions. Open, client-side emotion filter and reload are
+                        # independent observations; a failed one is recorded before the next is attempted.
+                        recent_cards = page.locator(".my-page-video-wrapper .recent-video-item")
+                        for stage in ("open", "filter", "reload"):
+                            journey_stage = f"member_recent_{stage}"
+                            try:
+                                deadline = time.monotonic() + 15
+                                while unfinished_requests() or pending_bodies:
+                                    if time.monotonic() >= deadline:
+                                        raise AssertionError("API requests did not settle before my page navigation")
+                                    page.wait_for_timeout(50)
+                                baseline = len(api_paths)
+                                if stage == "open":
+                                    page.goto(f"http://localhost:{ui_port}/my", wait_until="domcontentloaded")
+                                elif stage == "reload":
+                                    page.reload(wait_until="domcontentloaded")
+                                if stage != "filter":
+                                    expect(page).to_have_url(re.compile(r"/my$"))
+                                    expect(recent_cards).to_have_count(len(RECENT_EXPECTED), timeout=30000)
+                                    expect(recent_cards.locator(".video-title")).to_have_text([item["title"] for item in RECENT_EXPECTED])
+                                    expect(recent_cards.locator(".video-emotion-data")).to_have_text([
+                                        re.compile(rf"{item['label']}\s*{item['percentage']:g}%") for item in RECENT_EXPECTED])
+                                    expect(page.locator(".my-page-video-empty")).to_have_count(0)
+                                    graph_cards = page.evaluate(
+                                        "() => [...document.querySelectorAll('.my-page-video-wrapper .recent-video-item')]"
+                                        ".filter((card) => card.querySelector('.video-graph-container svg')).length")
+                                    assert graph_cards == len(RECENT_EXPECTED), "every recent card must draw its emotion timeline graph"
+                                    page.wait_for_load_state("networkidle", timeout=10000)
+                                    deadline = time.monotonic() + 15
+                                    while True:
+                                        check = member_recent_evidence(api_paths[baseline:], RECENT_EXPECTED, True)
+                                        if check["verified"] and not unfinished_requests() and not pending_bodies:
+                                            break
+                                        if time.monotonic() >= deadline:
+                                            raise AssertionError("recent videos response, fixture order and rendered cards did not agree")
+                                        page.wait_for_timeout(50)
+                                    recent_checks.append({"stage": stage, **check})
+                                else:
+                                    # The pinned UI filters the fetched list in the browser: one emotion shows its sessions,
+                                    # an emotion whose only session is on a deleted video shows the empty state.
+                                    for emotion, shown in (("sad", ["요리 영상 고양이"]), ("angry", []), ("happy", [VIDEO_TITLE]), ("all", None)):
+                                        page.locator(f".my-page-chip-wrapper .chip.{emotion}").click()
+                                        expected_titles = [item["title"] for item in RECENT_EXPECTED] if shown is None else shown
+                                        expect(recent_cards).to_have_count(len(expected_titles))
+                                        if expected_titles:
+                                            expect(recent_cards.locator(".video-title")).to_have_text(expected_titles)
+                                            expect(page.locator(".my-page-video-empty")).to_have_count(0)
+                                        else:
+                                            expect(page.locator(".my-page-video-empty")).to_be_visible()
+                                            expect(page.locator(".my-page-video-empty")).to_contain_text("아직 본 영상이 없어요")
+                                    assert not [row for row in api_paths[baseline:]
+                                                if (row.get("extension_request") or {}).get("extension") == "User.myRecentVideos"], \
+                                        "the emotion filter must not refetch the list"
+                                    recent_filter_checks.append({"stage": stage, "emotions": ["sad", "angry", "happy", "all"], "refetched": False})
+                                screenshot = output / f"recent-{stage}.png"
+                                page.screenshot(path=str(screenshot), full_page=True)
+                                screenshot_names.append(screenshot.name)
+                            except Exception as error:
+                                recent_failures.append({"stage": stage, "failure_type": safe_browser_failure_type(error)})
                     elif args.phase == "search":
                         for kind, keyword in (("found", VIDEO_TITLE), ("empty", SEARCH_ABSENT)):
                             for reloaded in (False, True):
@@ -1080,7 +1156,7 @@ def main() -> int:
         bookmark_api_paths = api_paths[:bookmark_api_row_count] if bookmark_api_row_count is not None else api_paths
         observed_paths = {row["path"] for row in bookmark_api_paths}
         required_paths = {"/auth/check-email", "/auth/login", "/extension"}
-        if args.phase not in {"search", "recommend"}:
+        if args.phase not in {"search", "recommend", "recent"}:
             required_paths.add("/apply")
         if not required_paths.issubset(observed_paths):
             raise RuntimeError("browser did not issue the expected real AIP API requests")
@@ -1110,13 +1186,16 @@ def main() -> int:
             )
         if args.phase == 'recommend' and (recommend_failures or len(recommend_checks) != 2 or unfinished_requests() or api_request_failures):
             raise AssertionError('recommend form checks failed: ' + json.dumps(recommend_failures))
+        if args.phase == 'recent' and (recent_failures or [check["stage"] for check in recent_checks] != ["open", "reload"]
+                                       or len(recent_filter_checks) != 1 or unfinished_requests() or api_request_failures):
+            raise AssertionError('recent videos checks failed: ' + json.dumps(recent_failures))
         if bookmark_listing_failures:
             raise AssertionError('bookmark listing checks failed: ' + json.dumps(bookmark_listing_failures))
         if page_errors:
             raise RuntimeError("browser reported an unhandled React page error")
         if fixture_thumbnail_redirect_count < 1 or 200 not in fixture_thumbnail_response_statuses:
             raise RuntimeError("the local fixture thumbnail did not load successfully")
-        if args.phase not in {"search", "recommend"} and youtube_player_api_fixture_count < 1:
+        if args.phase not in {"search", "recommend", "recent"} and youtube_player_api_fixture_count < 1:
             raise RuntimeError("the local no-op player API fixture was not used")
 
         report = {
@@ -1141,6 +1220,9 @@ def main() -> int:
             "member_search": search_evidence,
             "member_recommend": recommend_checks,
             "recommend_failures": recommend_failures,
+            "member_recent": recent_checks,
+            "member_recent_filter": recent_filter_checks,
+            "recent_failures": recent_failures,
             "member_bookmark_listing": bookmark_listing_checks,
             "bookmark_listing_failures": bookmark_listing_failures,
             "failure_type": failure_type,
@@ -1192,6 +1274,9 @@ def main() -> int:
             "member_search": search_evidence,
             "member_recommend": recommend_checks,
             "recommend_failures": recommend_failures,
+            "member_recent": recent_checks,
+            "member_recent_filter": recent_filter_checks,
+            "recent_failures": recent_failures,
             "member_bookmark_listing": bookmark_listing_checks,
             "bookmark_listing_failures": bookmark_listing_failures,
             "failure_type": failure_type,
