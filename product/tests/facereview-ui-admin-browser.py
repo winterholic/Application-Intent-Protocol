@@ -366,20 +366,25 @@ def main() -> int:
                         raise RuntimeError(f"{label}: fixture/API bucket mismatch {json.dumps(result, ensure_ascii=False)}")
                     period_sums[label] = result["actual_total"]
                     expect(page.locator(".chart-panel svg circle")).to_have_count(len(asked))
+                    page.screenshot(path=str(output / f"admin-dashboard-signup-{label}.png".replace(" ", "-")), full_page=True)
                     for index, point in enumerate(expected_points):
                         dot = page.locator(".chart-panel svg circle").nth(index)
-                        if dot.is_visible():
-                            dot.hover()
-                            expect(page.locator(".chart-panel__tooltip")).to_contain_text(f"신규가입 {point['count']}명")
-                            year, month, day = map(int, point["date"].split("-"))
-                            if period in {"1y", "3y"}:
-                                tooltip_date = f"{year}년 {month}월"
-                            elif period == "3m":
-                                tooltip_date = f"{year}년 {month}월 {day}일 주"
-                            else:
-                                tooltip_date = f"{year}년 {month}월 {day}일"
-                            expect(page.locator(".chart-panel__tooltip")).to_contain_text(tooltip_date)
-                    page.screenshot(path=str(output / f"admin-dashboard-signup-{label}.png".replace(" ", "-")), full_page=True)
+                        expect(dot).to_be_visible()
+                        box = dot.bounding_box()
+                        if box is None:
+                            raise RuntimeError(f"{period}: chart point {index} has no layout box")
+                        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                        tooltip = page.locator(".chart-panel__tooltip")
+                        expect(tooltip).to_be_visible()
+                        expect(tooltip).to_contain_text(f"신규가입 {point['count']}명")
+                        year, month, day = map(int, point["date"].split("-"))
+                        if period in {"1y", "3y"}:
+                            tooltip_date = f"{year}년 {month}월"
+                        elif period == "3m":
+                            tooltip_date = f"{year}년 {month}월 {day}일 주"
+                        else:
+                            tooltip_date = f"{year}년 {month}월 {day}일"
+                        expect(tooltip).to_contain_text(tooltip_date)
                 checks["signup_trend_periods"] = trend_results
                 checks["signup_trend_period_sums"] = period_sums
                 checks["dashboard_business_metrics"] = {

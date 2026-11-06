@@ -812,6 +812,14 @@ class BrowserEvidenceTests(unittest.TestCase):
         source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
         self.assertLess(source.index("checks: dict[str, object] = {}"), source.index('checks["signup_checker_negative_control"]'))
 
+    def test_admin_trend_tooltips_use_svg_coordinates_and_save_period_evidence_first(self):
+        source = Path(__file__).with_name("facereview-ui-admin-browser.py").read_text()
+        self.assertIn("box = dot.bounding_box()", source)
+        self.assertIn("page.mouse.move(box[\"x\"] + box[\"width\"] / 2, box[\"y\"] + box[\"height\"] / 2)", source)
+        screenshot = source.index('page.screenshot(path=str(output / f"admin-dashboard-signup-')
+        hover = source.index("page.mouse.move(box[")
+        self.assertLess(screenshot, hover)
+
     def test_admin_diagnostic_prepares_its_own_definition_and_sdk(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
         admin_step = workflow.split("      - name: Prepare the pinned FaceReview admin console browser journey\n", 1)[1].split("      - name:", 1)[0]
