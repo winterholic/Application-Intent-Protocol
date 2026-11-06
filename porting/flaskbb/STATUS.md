@@ -1,10 +1,16 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-06 Topic hide 및 main 전체 회귀 검증
+
+집중 [42141043631](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42141043631), 실제 checkout `a695d40ed32be986f395288ffce7c21b44f6977f`에서 컴파일러 4건, 생성 참조 문서 21건, PostgreSQL 선택 대상 1건, 앱 HTTP/PG 13건이 통과했다. Topic.hide의 top/non-top/only/null-self/null-other 5경계는 수정 전 실제 RED에서 GREEN으로 바뀌었다. 숨기기 전 Topic 순서와 내부 PostOrder를 사용하고, 최신이 아닌 Topic을 숨길 때 Forum 전체 projection을 보존하며, 첫 글의 숨김 메타데이터를 같은 트랜잭션에서 맞춘다. UUID나 다른 namespace의 참조 크기 비교는 거부한다. 마지막 test-only 교정은 새 비교 fixture의 필수 actor 선언과 정확한 타입 오류 단언이다.
+
+기존 main `95ab815d7cf4014075f9fcb01529b65ecf5f1122`의 전체 Verify [42139293868](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42139293868)도 성공했다. broad core/runtime/product/worker/transport/SDK gate와 FaceReview 11 suites(실패/차단 0건)가 포함된다. 이는 해당 SHA의 증거이며 새 Topic 변경을 포함한 통합 SHA의 전체 회귀, FaceReview 원본 25경로 전체 동등성 또는 1.0 출시를 대신하지 않는다. Topic.delete, Post.hide/unhide/delete, 원본 retention 및 전체 F01–F17은 계속 open이다.
+
 ## 2026-11-06 Topic publish·unhide와 서버 선택 효과 대상 검증
 
 집중 [42139333310](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42139333310), 실제 checkout `46e33d3df3b768787fbf7a0381fde874d8bcc8ce`에서 컴파일러 계약 2건, 실제 PostgreSQL의 선택 대상·부재 rollback 회귀 1건(apply/bundle/compose), 앱 HTTP/PG 8건이 통과했다. `Post.publish`는 Topic의 마지막 글 포인터와 날짜도 같은 트랜잭션에서 갱신한다. `Topic.unhide`는 Topic 포인터·날짜를 보존하고, Forum이 비었거나 Topic 날짜가 엄격히 더 최신일 때만 Topic 작성자·이름·제목·날짜를 복원하며 첫 글의 숨김 메타데이터를 함께 해제한다. 과거 타입 오류는 nullable literal을 필드 타입이 있는 전이 후 값으로 복사해 교정했다.
 
-서버 선택 `latest`는 단일 효과의 대상 조건에도 사용할 수 있다. 선택 부재는 전체 전이를 거부·rollback하며 SERIALIZABLE을 요구한다. 필수 필드에 nullable 값을 대입하거나 잘못된 참조 타입을 쓰는 정의는 계속 거부한다. Topic 숨김·삭제, Post 숨김·복원·삭제와 전체 원본 동등성은 이 성공 범위에 포함되지 않는다.
+서버 선택 `latest`는 단일 효과의 대상 조건에도 사용할 수 있다. 선택 부재는 전체 전이를 거부·rollback하며 SERIALIZABLE을 요구한다. 필수 필드에 nullable 값을 대입하거나 잘못된 참조 타입을 쓰는 정의는 계속 거부한다. 이전 46e33d3 실행에는 Topic 숨김·삭제, Post 숨김·복원·삭제와 전체 원본 동등성이 포함되지 않았다. Topic 숨김의 후속 검증은 위 a695d40 실행을 따른다.
 
 ## 2026-11-06 승인된 historical PostOrder SQL·실DB 경계 검증
 
