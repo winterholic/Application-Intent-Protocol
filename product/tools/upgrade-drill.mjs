@@ -16,8 +16,7 @@ import { requireTestDatabase } from "../test-support/postgres-guard.mjs";
 
 const productDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoDir = resolve(productDir, "..");
-const testDb = requireTestDatabase();
-const database = testDb.raw;
+let database;
 const issuer = "https://issuer.example";
 const audience = "aip-api";
 
@@ -131,11 +130,53 @@ async function call(base, token, fingerprint, path, body) {
 
 const summarize = (response) => (response?.ok === true ? response.rows.map((row) => `${row.id}:${row.checked}`).join(",") : `error:${response?.code}`);
 
+export async function rollbackBinaryOutcome(reverted, {call: request = call, token, oldFingerprint} = {}) {
+  if (reverted.started) {
+    const base = `http://${reverted.address}`;
+    const seen = await request(base, token, oldFingerprint, "/read", eventQuery);
+    const sawRows = summarize(seen) === "11:true,12:true";
+    const replayOld = await request(base, token, oldFingerprint, "/apply", {request: markRequest("12"), key: "drill-write-2"});
+    const outcome = {started: true, readsUpgradedData: sawRows, replaysNewBinaryWrite: replayOld.ok === true && replayOld.replayed === true};
+    assert(sawRows && outcome.replaysNewBinaryWrite, "rollback-binary", `the old binary started but disagrees with the data: ${JSON.stringify({seen, replayOld}).slice(0, 400)}`);
+    return outcome;
+  }
+
+  const refusal = String(reverted.errors ?? "").match(/"code":"([^"]+)"/u)?.[1] ?? reverted.code;
+  assert(refusal === "WIRE.SCHEMA_MISMATCH", "rollback-binary", `the old binary must fail closed with WIRE.SCHEMA_MISMATCH, got ${describe(reverted)}`);
+  return {started: false, failedClosedWith: refusal};
+}
+
+export async function finalizeDrill(report, {stopServer, cleanup, cleanupInfra, removeWorkDir}) {
+  const cleanupFailures = [];
+  const actions = [
+    ["cleanup-service", stopServer],
+    ["cleanup-schema", cleanup],
+    ["cleanup-infra-schema", cleanupInfra],
+    ["cleanup-tempdir", removeWorkDir],
+  ];
+  for (const [stage, action] of actions) {
+    if (typeof action !== "function") continue;
+    try {
+      await action();
+    } catch (error) {
+      cleanupFailures.push({stage: error?.stage ?? stage, message: String(error?.message ?? error)});
+    }
+  }
+  if (cleanupFailures.length) {
+    report.cleanupFailed = cleanupFailures;
+    report.ok = false;
+    report.failure ??= cleanupFailures[0];
+  }
+  report.exitCode = report.ok ? 0 : 1;
+  return report;
+}
+
 const eventQuery = { query: { read: "Event", select: ["id", "checked"] } };
 const markRequest = (id) => ({ apply: "Event.mark", target: { ids: [id] } });
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  database = requireTestDatabase().raw;
   const schema = `aip_drill_${randomUUID().replaceAll("-", "")}`;
   const infra = infraSchema(schema);
   const workDir = await mkdtemp(join(tmpdir(), "aip-upgrade-drill-"));
@@ -268,20 +309,8 @@ async function main() {
 
     // 4. Rollback A: only the binary goes back. The old binary meets a schema the new one has already touched.
     const reverted = await startService(options.oldBin, options.app, configPath, "rollback-binary");
-    let rollbackBinary;
-    if (reverted.started) {
-      const revertedBase = `http://${reverted.address}`;
-      const seen = await call(revertedBase, token, oldFingerprint, "/read", eventQuery);
-      const sawRows = summarize(seen) === "11:true,12:true";
-      const replayOld = await call(revertedBase, token, oldFingerprint, "/apply", { request: markRequest("12"), key: "drill-write-2" });
-      rollbackBinary = { started: true, readsUpgradedData: sawRows, replaysNewBinaryWrite: replayOld.ok === true && replayOld.replayed === true };
-      assert(sawRows && rollbackBinary.replaysNewBinaryWrite, "rollback-binary", `the old binary started but disagrees with the data: ${JSON.stringify({ seen, replayOld }).slice(0, 400)}`);
-      await stopService(reverted.child);
-    } else {
-      const refusal = String(reverted.errors ?? "").match(/"code":"([^"]+)"/u)?.[1] ?? reverted.code;
-      assert(refusal && refusal !== "START_TIMEOUT" && refusal !== "EXITED_WITHOUT_OUTPUT", "rollback-binary", `the old binary neither served nor failed closed: ${describe(reverted)}`);
-      rollbackBinary = { started: false, failedClosedWith: refusal };
-    }
+    const rollbackBinary = await rollbackBinaryOutcome(reverted, {token, oldFingerprint});
+    if (reverted.started) await stopService(reverted.child);
     report.stages.rollbackBinaryOnly = rollbackBinary;
 
     // 5. Rollback B: restore the pre-upgrade dump and serve with the old binary.
@@ -304,17 +333,17 @@ async function main() {
     report.ok = false;
     report.failure = error instanceof DrillFailure ? { stage: error.stage, message: error.message } : { message: String(error?.message ?? error) };
   } finally {
-    if (server) await stopService(server.child);
-    try {
-      sql(`DROP SCHEMA IF EXISTS ${schema} CASCADE`, "cleanup");
-      sql(`DROP SCHEMA IF EXISTS ${infra} CASCADE`, "cleanup");
-    } catch {
-      report.cleanupFailed = true;
-    }
-    await rm(workDir, { recursive: true, force: true });
+    await finalizeDrill(report, {
+      stopServer: () => server ? stopService(server.child) : undefined,
+      cleanup: () => {
+        sql(`DROP SCHEMA IF EXISTS ${schema} CASCADE`, "cleanup-schema");
+      },
+      cleanupInfra: () => sql(`DROP SCHEMA IF EXISTS ${infra} CASCADE`, "cleanup-infra-schema"),
+      removeWorkDir: () => rm(workDir, {recursive: true, force: true}),
+    });
   }
   console.log(JSON.stringify(report, null, 2));
-  process.exit(report.ok ? 0 : 1);
+  process.exit(report.exitCode);
 }
 
-await main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
