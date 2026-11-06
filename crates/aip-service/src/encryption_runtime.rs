@@ -250,16 +250,16 @@ pub async fn verify_rekey_inventory(db: &Client, schema: &str, options: &RekeyOp
         return Err(Error::Database("deployment facts digest 불일치".into()));
     }
 
-    let declared = aip_migrate::adopt::encrypted_columns(schema, &facts).map_err(|error| {
+    let declared = aip_migrate::verify::encrypted_columns(schema, &facts).map_err(|error| {
         Error::InvalidConfig(format!("정의 metadata encrypted inventory 오류: {}", error["message"].as_str().unwrap_or("잘못된 정의")))
     })?;
     let selected = match options.scope_kind.as_str() {
-        "service" => declared.into_iter().filter(|column| matches!(&column.scope, aip_migrate::adopt::ScopeSpec::Service)).collect::<Vec<_>>(),
+        "service" => declared.into_iter().filter(|column| matches!(&column.scope, aip_migrate::verify::ScopeSpec::Service)).collect::<Vec<_>>(),
         "ref" => {
             let scope_resource = options.scope_resource.as_deref().expect("validated ref scope_resource");
             declared
                 .into_iter()
-                .filter(|column| matches!(&column.scope, aip_migrate::adopt::ScopeSpec::Ref { target, .. } if target == scope_resource))
+                .filter(|column| matches!(&column.scope, aip_migrate::verify::ScopeSpec::Ref { target, .. } if target == scope_resource))
                 .collect::<Vec<_>>()
         }
         _ => unreachable!("validate rejects unsupported scope kinds"),
@@ -291,13 +291,13 @@ pub async fn verify_rekey_inventory(db: &Client, schema: &str, options: &RekeyOp
         .await?;
 
         let scope = match &column.scope {
-            aip_migrate::adopt::ScopeSpec::Service => {
+            aip_migrate::verify::ScopeSpec::Service => {
                 if options.scope_kind != "service" {
                     return Err(Error::InvalidConfig("caller scope와 선언 service scope 불일치".into()));
                 }
                 Scope::service()
             }
-            aip_migrate::adopt::ScopeSpec::Ref { target, column: scope_column } => {
+            aip_migrate::verify::ScopeSpec::Ref { target, column: scope_column } => {
                 if options.scope_kind != "ref" || options.scope_resource.as_deref() != Some(target.as_str()) {
                     return Err(Error::InvalidConfig(format!("caller scope와 선언 ref scope 불일치: {target}")));
                 }
@@ -308,7 +308,7 @@ pub async fn verify_rekey_inventory(db: &Client, schema: &str, options: &RekeyOp
                 Scope::reference(target, &options.scope_id).map_err(|error| Error::InvalidConfig(format!("선언 ref scope 오류: {error:?}")))?
             }
         };
-        derived.push(RekeyTarget::new(&table, &column.column, "id", &column.resource, &column.field, scope));
+        derived.push(RekeyTarget::new(table, &column.column, "id", &column.resource, &column.field, scope));
     }
     derived.sort_by(|a, b| (&a.table, &a.column, &a.resource, &a.field).cmp(&(&b.table, &b.column, &b.resource, &b.field)));
     let mut actual = options.targets.clone();

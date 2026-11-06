@@ -66,6 +66,7 @@ PY
   service_test) run_command 'cargo test --locked -p aip-service --test encryption_runtime_test' cargo test --locked -p aip-service --test encryption_runtime_test ;;
   execution_test) run_command 'cargo test --locked -p aip-execution --test encryption_sealer_opener --test encryption_rekey' cargo test --locked -p aip-execution --test encryption_sealer_opener --test encryption_rekey ;;
   clippy) run_command 'cargo clippy --locked --all-targets -p aip-service -p aip-execution -p aip-cli -- -D warnings' cargo clippy --locked --all-targets -p aip-service -p aip-execution -p aip-cli -- -D warnings ;;
+  clippy_scoped) run_command 'cargo clippy --locked --all-targets --no-deps -p aip-service -p aip-execution -p aip-cli -- -D warnings' cargo clippy --locked --all-targets --no-deps -p aip-service -p aip-execution -p aip-cli -- -D warnings ;;
   cli_build) run_command 'cargo build --locked -p aip-cli' cargo build --locked -p aip-cli ;;
   cli_gate)
     config="$RUNNER_TEMP/crypto-repair-service.json"
