@@ -221,9 +221,9 @@ async fn readiness_rejects_a_malformed_key_set() {
 async fn readiness_rejects_private_key_material_and_oversized_jwks() {
     let idp = Idp::start(r#"{"keys":[{"kty":"RSA","kid":"private","alg":"RS256","use":"sig","n":"AQ","e":"AQAB","d":"not-output"}]}"#.into());
     let endpoint = format!("https://localhost:{}/.well-known/openid-configuration", idp.port);
-    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.err().expect("private material rejected").stage, "jwks");
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.expect_err("private material rejected").stage, "jwks");
     idp.publish(" ".repeat(MAX_JWKS_BYTES + 1));
-    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.err().expect("oversized response rejected").stage, "jwks");
+    assert_eq!(oidc_readiness_with_client(ISSUER, &endpoint, &idp.client()).await.expect_err("oversized response rejected").stage, "jwks");
 }
 
 #[tokio::test]
