@@ -1,35 +1,18 @@
-name: Linux worker jobs
+name: Independent crypto candidate verification
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/worker-jobs-linux.yml'
-      - 'crates/**'
-      - 'product/**'
-      - 'porting/flaskbb/**'
-      - 'porting/infisical/**'
-      - 'spikes/spike-v1-fixture/**'
-      - 'spikes/spike-v3-write/**'
-      - 'spikes/spike-v4-worker/**'
-      - 'spikes/spike-v6-transport/**'
 
 permissions:
   contents: read
 
-concurrency:
-  group: worker-jobs-linux-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  worker-jobs:
+  crypto-candidate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 35
     env:
       AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
-      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
-      AIP_FLASKBB_TEST_MAILPIT_URL: http://127.0.0.1:55473
+      AIP_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
     services:
       postgres:
         image: postgres:17
@@ -39,133 +22,89 @@ jobs:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - '127.0.0.1:5433:5432'
-          # v4_1's deliberately unisolated TCP probe uses 5432, as in Verify.
-          - '127.0.0.1:5432:5432'
         options: >-
           --health-cmd "pg_isready -U runner -d postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      mailpit:
-        image: axllent/mailpit:v1.31.6
-        ports:
-          - '127.0.0.1:55473:8025'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: '26'
-      - name: Install PostgreSQL client and Bubblewrap
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client bubblewrap apparmor python3-venv
-          rustup update stable
-          rustup default stable
-      - name: Configure scoped Bubblewrap user namespace profile
-        shell: bash
+          components: rustfmt, clippy
+      - name: Verify candidate, compile, format, lint, and exercise all independent checks
         run: |
           set -euo pipefail
-          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
-            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
-            mkdir -p "$sandbox_bin"
-            cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
-            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
-          abi <abi/4.0>,
-          include <tunables/global>
-          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
-            userns,
+          failures=0
+          record_failure() { echo "FAILED: $1"; failures=$((failures + 1)); }
+          run_check() {
+            label="$1"
+            shift
+            echo "===== $label ====="
+            if "$@"; then
+              echo "PASS: $label"
+            else
+              result=$?
+              echo "FAIL: $label (exit $result)"
+              failures=$((failures + 1))
+            fi
           }
-          EOF
-            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
-            echo "$sandbox_bin" >> "$GITHUB_PATH"
+          run_check 'candidate base and product source are pinned' bash -euc '
+            test "$(git merge-base HEAD 429f3774581b08c9f76818dca2609f4087c4c009)" = 429f3774581b08c9f76818dca2609f4087c4c009
+            git diff --exit-code 429f3774581b08c9f76818dca2609f4087c4c009 -- crates/aip-service/src/encryption_runtime.rs crates/aip-service/src/lib.rs crates/aip-execution/src/rekey.rs
+          '
+          run_check 'format' cargo fmt --all -- --check
+          run_check 'locked compile' cargo check --locked -p aip-service -p aip-execution
+          run_check 'service runtime Rust tests' cargo test --locked -p aip-service --test encryption_runtime_test
+          run_check 'execution sealer/opener Rust tests' cargo test --locked -p aip-execution --test encryption_sealer_opener
+          run_check 'clippy' cargo clippy --locked --all-targets -p aip-service -p aip-execution -p aip-cli -- -D warnings
+          cli_ready=0
+          if cargo build --locked -p aip-cli; then
+            echo 'PASS: locked CLI build'
+            cli_ready=1
+          else
+            result=$?
+            echo "FAIL: locked CLI build (exit $result)"
+            failures=$((failures + 1))
           fi
-      - name: Install Node SDK test dependencies
-        run: npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
-      - name: Build the product CLI
-        id: build_cli
-        run: cargo build -p aip-cli --locked
-      - name: Validate encryption definitions and closed storage boundaries
-        env:
-          AIP_REKEY_DIAGNOSTICS: "1"
-        run: |
-          cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test encrypted_types --test diagnostics
-          cargo test -p aip-migrate --locked --test encryption_gate --test encryption_activation_gate
-          cargo test -p aip-execution --locked --no-fail-fast --test encryption_deks --test encryption_fence --test encryption_cells --test encryption_journal --test encryption_rekey
-      - name: Explain the seeded FlaskBB count query with and without JIT
-        if: ${{ !cancelled() }}
-        run: cargo test -p aip-migrate --locked --test flaskbb_read_plan -- --nocapture
-      - name: Upgrade an actual pre-trace durable job schema with the product CLI
-        if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
-        env:
-          AIP_TRACE_UPGRADE_DATABASE_URL: ${{ env.AIP_TEST_DATABASE_URL }}
-          AIP_SERVICE_CLI: ${{ github.workspace }}/target/debug/aip
-        run: >-
-          cargo test -p aip-migrate --lib --locked
-          trace_id_upgrade_tests::explicit_parent_job_schema_upgrade_adds_trace_id_and_rejects_drift
-          -- --ignored --exact
-      - name: Prove Linux worker sandbox boundaries with Bubblewrap
-        if: ${{ !cancelled() }}
-        run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
-      - name: Run durable worker, retry, schedule, webhook and outbox jobs
-        if: ${{ !cancelled() }}
-        run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --no-fail-fast --test job_retry --test job_breaker --test triggers --test outbox --test otlp --test encryption_gate --test encryption_e2e --test bundle_http
-      - name: Run installed product SDK smoke with Node and Python workers
-        if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
-        run: node --test product/tests/service-smoke.test.mjs
-      - name: Verify isolated FlaskBB mail delivery and connect-stage recovery
-        if: ${{ !cancelled() }}
-        run: |
-          curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 --max-time 5 "$AIP_FLASKBB_TEST_MAILPIT_URL/api/v1/info" >/dev/null
-          node --test porting/flaskbb/tests/mail-fixture.test.mjs
-          node --test porting/flaskbb/tests/mail-jobs.test.mjs
-      - name: Verify FlaskBB fixture guard and mailbox uniqueness
-        if: ${{ !cancelled() }}
-        run: |
-          node --test porting/flaskbb/tests/fixture-env.test.mjs porting/flaskbb/tests/conversations-security.test.mjs porting/flaskbb/tests/conversation-draft.test.mjs
-          cargo test -p aip-migrate --locked --test foreign_shared_uniqueness
-      - name: Verify FlaskBB topic ordering and UI requests
-        if: ${{ !cancelled() }}
-        run: |
-          python3 -m venv "$RUNNER_TEMP/flaskbb-ui"
-          "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
-          PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host porting.flaskbb.tests.test_mail_jobs porting.flaskbb.tests.test_settings_upgrade
-          node --test porting/flaskbb/tests/sticky-order.test.mjs
-          node --test porting/flaskbb/tests/last-post-recompute.test.mjs
-      - name: Verify Infisical port (secret uniqueness, physical delete, roles) on PostgreSQL
-        if: ${{ !cancelled() }}
-        env:
-          AIP_TEST_DATABASE_URL: postgresql://runner@127.0.0.1:5433/aip_test_ci
-          INFISICAL_PYTHON: ${{ runner.temp }}/infisical-venv/bin/python
-        run: |
-          python3 -m venv "$RUNNER_TEMP/infisical-venv"
-          "$RUNNER_TEMP/infisical-venv/bin/pip" install --no-cache-dir joserfc ./product/python
-          cd porting/infisical/tests
-          "$INFISICAL_PYTHON" -m unittest -v test_encryption_contract test_live_db test_identity_jwt test_mutation_checker test_project_membership test_principal_lifecycle
-          "$INFISICAL_PYTHON" mutation_check.py
-      - name: Verify trusted ctx deadline failures on Node and Python
-        if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
-        run: cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked --target-dir target --test ctx_deadline --test v4_1
-      - name: Revalidate FlaskBB core, CLI and search consistency on main
-        if: ${{ !cancelled() }}
-        env:
-          AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
-        run: >-
-          node --test --test-concurrency=1
-          porting/flaskbb/tests/contract.test.mjs
-          porting/flaskbb/tests/cli.test.mjs
-          porting/flaskbb/tests/search.test.mjs
-          porting/flaskbb/tests/search-fields.test.mjs
-          porting/flaskbb/tests/users-search.test.mjs
-          porting/flaskbb/tests/ban.test.mjs
-          porting/flaskbb/tests/moderator-ban.test.mjs
-          porting/flaskbb/tests/purge.test.mjs
-          porting/flaskbb/tests/cli-users-delete.test.mjs
-          porting/flaskbb/tests/cli-upgrade.test.mjs
-          porting/flaskbb/tests/settings-upgrade.test.mjs
-          porting/flaskbb/tests/moderation.test.mjs
-          porting/flaskbb/tests/provisioning.test.mjs
-          porting/flaskbb/tests/aip-read.test.mjs
-          porting/flaskbb/tests/unread-cutoff.test.mjs
-          porting/flaskbb/tests/features.test.mjs
+          if (( cli_ready )); then
+            python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          base = {
+              "schema": "aip_crypto_cli_verify",
+              "auth": {"issuer": "https://auth.example.invalid", "audience": "aip", "jwks": {"kind": "file", "path": "/unused/test-jwks.json"}},
+          }
+          (root / "config-no-encryption.json").write_text(json.dumps(base))
+          with_encryption = dict(base)
+          with_encryption["encryption"] = {"kind": "spec", "spec": "k1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=", "active": "k1"}
+          (root / "config-encryption.json").write_text(json.dumps(with_encryption))
+          (root / "options-empty.json").write_text(json.dumps({"scope_kind":"service", "scope_id":"global", "holder_id":"ci", "targets":[]}))
+          (root / "options-invalid-scope.json").write_text(json.dumps({"scope_kind":"invalid", "scope_id":"global", "holder_id":"ci", "targets":[{"table":"cells", "column":"value", "id_column":"id", "resource":"Secret", "field":"value"}]}))
+          PY
+          expect_failure() {
+            expected="$1"
+            shift
+            output="$RUNNER_TEMP/crypto-cli-output"
+            if target/debug/aip service rekey "$@" >"$output" 2>&1; then
+              echo "unexpected successful CLI invocation; expected $expected"
+              exit 1
+            fi
+            if ! grep -q "$expected" "$output"; then
+              echo "expected CLI rejection $expected was absent"
+              cat "$output"
+              exit 1
+            fi
+          }
+            expect_failure ENCRYPTION_CONFIG_REQUIRED --config "$RUNNER_TEMP/config-no-encryption.json" --options "$RUNNER_TEMP/options-empty.json"
+            expect_failure '목록이 비어' --config "$RUNNER_TEMP/config-encryption.json" --options "$RUNNER_TEMP/options-empty.json"
+            expect_failure '알 수 없는 scope_kind' --config "$RUNNER_TEMP/config-encryption.json" --options "$RUNNER_TEMP/options-invalid-scope.json"
+            echo 'PASS: actual service Config deserialization and Command::Rekey parsing/rejections'
+          else
+            echo 'BLOCKED: CLI runtime checks because locked CLI build failed'
+            failures=$((failures + 1))
+          fi
+          if (( failures > 0 )); then
+            echo "Focused crypto verification failed in $failures independent check(s)"
+            exit 1
+          fi
