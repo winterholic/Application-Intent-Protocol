@@ -416,7 +416,8 @@ async fn metadata_inventory_rejects_missing_physical_column_and_wrong_scope_fore
 async fn metadata_inventory_rejects_nonunique_rekey_ids() {
     let (db, schema, options) = inventory_fixture(false, false).await;
     db.batch_execute(&format!(
-        "ALTER TABLE {schema}.secret DROP CONSTRAINT secret_pkey;
+        "INSERT INTO {schema}.team(id) VALUES (42);
+         ALTER TABLE {schema}.secret DROP CONSTRAINT secret_pkey;
          ALTER TABLE {schema}.secret ALTER COLUMN id SET NOT NULL;
          INSERT INTO {schema}.secret(id, team_id, value, backup) VALUES (7, 42, 'cipher-a', 'backup-a'), (7, 42, 'cipher-b', 'backup-b');"
     ))
@@ -452,11 +453,12 @@ async fn metadata_inventory_rejects_encrypted_target_ids_without_single_column_p
     db.batch_execute(&format!(
         "INSERT INTO {schema}.team(id) VALUES (42);
          ALTER TABLE {schema}.secret DROP CONSTRAINT secret_pkey;
+         ALTER TABLE {schema}.secret ADD CONSTRAINT secret_pkey PRIMARY KEY (id, value);
          INSERT INTO {schema}.secret(id, team_id, value, backup) VALUES
            (7, 42, 'first', 'first-backup'), (7, 42, 'second', 'second-backup');"
     ))
     .await
-    .expect("create duplicate encrypted target IDs after removing the ID primary key");
+    .expect("create duplicate encrypted target IDs protected only by a composite primary key");
     let error = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options)
         .await
         .expect_err("encrypted target ID without a single-column primary key must fail");
@@ -488,10 +490,9 @@ async fn metadata_inventory_rejects_encrypted_column_type_and_nullability_drift(
     db.batch_execute(&format!("ALTER TABLE {schema}.secret ALTER COLUMN value TYPE bigint USING 1::bigint"))
         .await
         .expect("change encrypted column type away from the declaration");
-    let wrong_type = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options)
-        .await
-        .expect_err("wrong encrypted column type must fail");
-    assert!(matches!(wrong_type, Error::Database(message) if message.contains("type=int8") && message.contains("expected_type=text")));
+    let wrong_type =
+        aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options).await.expect_err("wrong encrypted column type must fail");
+    assert!(matches!(wrong_type, Error::Database(message) if message.contains("type=bigint") && message.contains("expected_type=text")));
     drop_inventory_fixture(&db, &schema).await;
 
     let (db, schema, options) = inventory_fixture(false, false).await;
@@ -501,7 +502,9 @@ async fn metadata_inventory_rejects_encrypted_column_type_and_nullability_drift(
     let wrong_nullability = aip_service::encryption_runtime::verify_rekey_inventory(&db, &schema, &options)
         .await
         .expect_err("wrong encrypted column nullability must fail");
-    assert!(matches!(wrong_nullability, Error::Database(message) if message.contains("not_null=false") && message.contains("expected_not_null=true")));
+    assert!(
+        matches!(wrong_nullability, Error::Database(message) if message.contains("not_null=false") && message.contains("expected_not_null=true"))
+    );
     drop_inventory_fixture(&db, &schema).await;
 }
 
