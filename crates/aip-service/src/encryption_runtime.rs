@@ -303,7 +303,7 @@ pub async fn verify_rekey_inventory(db: &Client, schema: &str, options: &RekeyOp
                     return Err(Error::InvalidConfig(format!("caller scope와 선언 ref scope 불일치: {target}")));
                 }
                 let target_id_type = facts["resources"][target]["idKind"].as_str().unwrap_or("bigint");
-                let target_pg_type = if target_id_type == "uuid" { "uuid" } else { "int8" };
+                let target_pg_type = if target_id_type == "uuid" { "uuid" } else { "bigint" };
                 require_pg_column(db, schema, table, scope_column, target_pg_type, true, &format!("{}.{} scope", column.resource, target)).await?;
                 require_pg_reference(db, schema, table, scope_column, &spike_v2_read::sqlgen::snake(target)).await?;
                 Scope::reference(target, &options.scope_id).map_err(|error| Error::InvalidConfig(format!("선언 ref scope 오류: {error:?}")))?
@@ -354,7 +354,7 @@ async fn require_pg_column(
 ) -> Result<(), Error> {
     let row = db
         .query_opt(
-            "SELECT t.typname, a.attnotnull FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid \
+            "SELECT pg_catalog.format_type(a.atttypid, a.atttypmod), a.attnotnull FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid \
          JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_type t ON t.oid=a.atttypid \
          WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p') AND a.attname=$3 AND a.attnum>0 AND NOT a.attisdropped",
             &[&schema, &table, &column],
