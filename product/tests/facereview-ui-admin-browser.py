@@ -373,7 +373,7 @@ def main() -> int:
                         box = dot.bounding_box()
                         if box is None:
                             raise RuntimeError(f"{period}: chart point {index} has no layout box")
-                        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                        dot.hover(force=True)
                         tooltip = page.locator(".chart-panel__tooltip")
                         expect(tooltip).to_be_visible()
                         expect(tooltip).to_contain_text(f"신규가입 {point['count']}명")
