@@ -82,6 +82,8 @@ jobs:
           fi
       - name: Build the service
         run: cargo build -p aip-cli --locked
+      - name: Verify OIDC discovery and JWKS readiness validation
+        run: cargo test -p aip-auth --locked
       - name: Verify Origin, headers, request id, SSE and WebSocket through Caddy
         run: node product/tools/proxy-check.mjs
       - name: Verify the native fixture uses host loopback and owned TLS files
