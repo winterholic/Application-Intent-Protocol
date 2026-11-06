@@ -10,7 +10,7 @@ resource Topic {
     from hidden = true
     to hidden = false
     allow owner = actor
-    update Post when exists FirstPost where topic = this where id = latest FirstPost link where link.topic = this order by link.id select link.post { hidden = false }
+    update Post where id = latest FirstPost link where link.topic = this order by link.id select link.post { hidden = false }
   }
 }
 resource FirstPost {
@@ -27,7 +27,7 @@ fn latest_nullable_selection_can_match_a_required_effect_target() {
     let effect = &loaded.execution["resources"]["Topic"]["transitions"]["unhide"]["effects"][0];
     assert_eq!(effect["match"]["id"]["latest"]["resource"], "FirstPost");
     assert_eq!(effect["match"]["id"]["ty"], "Ref<Post>?");
-    assert_eq!(loaded.execution["resources"]["Topic"]["transitions"]["unhide"]["requiredIsolation"], "serializable");
+    assert_eq!(loaded.execution["resources"]["Topic"]["transitions"]["unhide"]["isolation"], "serializable");
 }
 
 #[test]
