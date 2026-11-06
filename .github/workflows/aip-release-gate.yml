@@ -68,7 +68,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo apt-get install -y postgresql-common ca-certificates
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get update
           sudo apt-get install -y postgresql-client-17 bubblewrap apparmor python3-venv
           test -x "$AIP_PG_BIN_DIR/psql"

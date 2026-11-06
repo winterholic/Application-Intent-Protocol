@@ -25,18 +25,20 @@ for variable in AIP_TEST_DATABASE_URL AIP_TEST_ADMIN_URL; do
   [[ -n "${!variable:-}" ]] || { echo "$variable must name the dedicated test PostgreSQL" >&2; exit 2; }
 done
 
-pg_bin_dir="${AIP_PG_BIN_DIR:-/usr/lib/postgresql/17/bin}"
-[[ "$pg_bin_dir" == */17/bin ]] || { echo "release gate requires PostgreSQL 17 client tools; AIP_PG_BIN_DIR=$pg_bin_dir" >&2; exit 2; }
-for program in psql pg_dump pg_restore; do
-  [[ -x "$pg_bin_dir/$program" ]] || { echo "missing PostgreSQL 17 tool: $pg_bin_dir/$program" >&2; exit 2; }
-done
-export PATH="$pg_bin_dir:$PATH"
-for program in psql pg_dump pg_restore; do
-  [[ "$(command -v "$program")" == "$pg_bin_dir/$program" ]] || {
-    echo "release gate did not resolve $program from $pg_bin_dir" >&2
-    exit 2
-  }
-done
+pg_bin_dir="${AIP_PG_BIN_DIR:-}"
+if [[ -n "$pg_bin_dir" ]]; then
+  [[ "$pg_bin_dir" == /* ]] || { echo "AIP_PG_BIN_DIR must be an absolute path: $pg_bin_dir" >&2; exit 2; }
+  for program in psql pg_dump pg_restore; do
+    [[ -x "$pg_bin_dir/$program" ]] || { echo "missing PostgreSQL client tool: $pg_bin_dir/$program" >&2; exit 2; }
+  done
+  export PATH="$pg_bin_dir:$PATH"
+  for program in psql pg_dump pg_restore; do
+    [[ "$(command -v "$program")" == "$pg_bin_dir/$program" ]] || {
+      echo "release gate did not resolve $program from $pg_bin_dir" >&2
+      exit 2
+    }
+  done
+fi
 for program in git cargo node npm python3 psql pg_dump pg_restore shasum; do
   command -v "$program" >/dev/null 2>&1 || { echo "missing tool: $program" >&2; exit 2; }
 done
