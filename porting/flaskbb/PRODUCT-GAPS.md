@@ -54,6 +54,8 @@ i18n은 기존 STATUS의 열린 항목 그대로다.
 
 ### source trigger·후보·projection 계약 (정렬만으로 닫지 않는다)
 
+2026-11-06 증분: `46e33d3` / [42139333310](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42139333310)의 실제 compiler 2건·PG 선택 대상 1건(apply/bundle/compose)·앱 HTTP/PG 8건에서 native publish의 Topic 포인터와 아래 Topic.unhide의 엄격 비교·Topic 작성자 projection·첫 글 metadata·동률/이전값 보존을 검증했다. 아래 다른 경로의 부족분은 계속 open이다.
+
 `HideableQuery`(`utils/database.py:85–121`)는 root entity에만 viewer의 `viewhidden`에 따라 `hidden != True`를 덧붙인다. `hidden`은 nullable이다. SQL `!= True`는 NULL을 포함하지 않는다. 조인한 Topic에 root Post의 숨김 조건이 자동 적용되는 것으로 해석하지 않는다. `fixtures/groups.py`의 Moderator 계열은 viewhidden=true이며 `forum/views.py:1005–1088`가 실제 hide/unhide 진입점이다. 따라서 일반 비로그인 모델 fixture와 moderator HTTP 경로는 같은 후보 집합이라고 단정할 수 없다.
 
 | 경로 / 원본 위치 | 원본 필수 의미 | 현재 app.aip와 후속 처리 |
@@ -64,7 +66,7 @@ i18n은 기존 STATUS의 열린 항목 그대로다.
 | Topic.hide, 718–776 | 숨기기 **전** visible Topic 상위 2개를 last_post_id desc로 읽는다. 2개 이상이고 top=self면 second로 교체; top!=self면 불변; 0/1개면 NULL. 후보 Topic.hidden!=True. projection은 후보 Topic의 **user/username/last_updated**와 title, last_post다. | Post를 고르는 현재 구현과 다르다. candidate.last_post.source_order 기준으로 Topic 순서를 보존한다. nullable last_post의 PostgreSQL DESC 기본 NULL-first도 별도 fixture 필요; 현재 latest의 NULL-last를 그대로 쓰지 않는다. first_post.hidden/hidden_by/hidden_at도 함께 변경한다. |
 | Topic.delete, 696–715 → Forum.update_last_post 925–961 | Topic 및 자식 물리삭제/autoflush 뒤, Forum.last_post_id가 NULL이거나 삭제 Topic.last_post_id와 같을 때만 재계산. root Post query(+viewer 기본 필터), Topic join, 같은 forum, date_created desc. 같은 last_post면 projection은 갱신하지 않는다. | tombstone은 물리삭제의 후보 부재를 표현하도록 `Post.deleted/Topic.deleted`를 제외한다. 삭제 안 된 hidden Topic을 무조건 제외하지 않는다. timestamp 동률은 원본 미정; 특정 UUID 승자를 동등성 기대값으로 고정하지 않고 동률 집합 membership+projection 일치로 판정한다. |
 | Post.unhide, 277–289·369–398 | hidden 아닐 때 no-op, first면 Topic 위임. 자기 제외 같은 Topic의 `Post.hidden!=True` 첫 후보(명시 order 없음)보다 복원 Post.date가 엄격히 클 때 Topic.last_post 변경. 그 안에서 Topic이 visible이고 Forum 없거나 그 last_post.date보다 엄격히 클 때만 Forum 변경. **Topic.last_updated를 쓰지 않음.** | 현재 양쪽 무조건 latest/last_updated 변경은 다르다. 첫 후보가 하나인 결정적 fixture와 여러 후보인 미정 fixture를 분리한다. `_restore_post_to_topic`의 `self.second_last_post=…`는 Post instance 속성 대입이며 Topic property 갱신이 아니다. |
-| Topic.unhide, 735–747·808–830 | hidden 해제·first_post 숨김 metadata 동기화. Forum 없거나 Forum.last_post_created < Topic.last_updated일 때만 Topic projection 복원. Topic.last_post/last_updated 자체는 보존. | timestamp 동률이면 Forum 불변. 조회된 최신 Post의 작성자로 바꾸지 않는다. |
+| Topic.unhide, 735–747·808–830 | hidden 해제·first_post 숨김 metadata 동기화. Forum 없거나 Forum.last_post_created < Topic.last_updated일 때만 Topic projection 복원. Topic.last_post/last_updated 자체는 보존. | 2026-11-06 `46e33d3` 실제 HTTP/PG에서 older/tie/newer/empty 4경계·권한 거부·동일 키 재전송·무관 행 보존 검증. timestamp 동률이면 Forum 불변이며 Topic 작성자(Nullable 포함)를 사용한다. |
 | 포팅 staging / physical absence | 원본에는 published/deleted 플래그가 없다. | published=true는 저장된 원본 Post/Topic의 대응 집합을 정하는 포팅 접착 조건, deleted 제외는 원본 물리 부재 대응이다. 이를 무조건 원본 버그 차이로 세지 않는다. hidden 필터 추가와 무조건 재계산은 위 source 계약 차이다. tombstone·IdP/actor 정책 자체는 이번에 바꾸지 않는다. |
 
 ### 필요한 generic effect 보완·첫 구현 순서
