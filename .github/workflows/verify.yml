@@ -127,6 +127,7 @@ jobs:
         if: ${{ !inputs.member_ui_diagnostic }}
         env:
           AIP_VERIFY_FAILURE_FILE: ${{ runner.temp }}/aip-facereview-browser/verify-failure.txt
+          AIP_VERIFY_CLIPPY_OUTPUT_DIR: ${{ runner.temp }}/aip-verify-clippy
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -219,6 +220,14 @@ jobs:
         with:
           name: facereview-ui-browser-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/aip-facereview-browser
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Preserve workspace Clippy diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: workspace-clippy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aip-verify-clippy
           if-no-files-found: warn
           retention-days: 7
       - name: Show native fixture logs on failure

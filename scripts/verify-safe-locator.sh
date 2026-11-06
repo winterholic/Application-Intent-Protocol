@@ -39,6 +39,29 @@ aip_verify_stage() {
   aip_verify_locator_write "$AIP_VERIFY_STAGE" "pending" "pending"
 }
 
+aip_verify_capture_command() {
+  local output_dir="$1"
+  shift
+  mkdir -p "$output_dir"
+  local previous_umask
+  previous_umask="$(umask)"
+  umask 077
+  printf '%q ' "$@" | sed 's/ $//' > "$output_dir/command.txt"
+  printf '\n' >> "$output_dir/command.txt"
+
+  local status
+  if "$@" > "$output_dir/stdout.txt" 2> "$output_dir/stderr.txt"; then
+    status=0
+  else
+    status=$?
+  fi
+  cat "$output_dir/stdout.txt"
+  cat "$output_dir/stderr.txt" >&2
+  printf '%s\n' "$status" > "$output_dir/exit_status.txt"
+  umask "$previous_umask"
+  return "$status"
+}
+
 if [[ -n "${AIP_VERIFY_FAILURE_FILE:-}" ]]; then
   AIP_VERIFY_RECORDED=0
   aip_verify_locator_write "${AIP_VERIFY_STAGE:-workflow_started}" "not_started" "pending"

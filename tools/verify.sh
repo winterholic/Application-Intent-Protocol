@@ -48,7 +48,11 @@ verify_independent() {
   fi
 }
 verify_independent "Rust formatting" cargo fmt --all --check
-verify_independent "workspace library and binary clippy" cargo clippy --workspace --lib --bins --locked -- -D warnings
+if [[ -n "${AIP_VERIFY_CLIPPY_OUTPUT_DIR:-}" ]]; then
+  verify_independent "workspace library and binary clippy" aip_verify_capture_command "$AIP_VERIFY_CLIPPY_OUTPUT_DIR" cargo clippy --workspace --lib --bins --locked -- -D warnings
+else
+  verify_independent "workspace library and binary clippy" cargo clippy --workspace --lib --bins --locked -- -D warnings
+fi
 verify_independent "auth migrate service all-target clippy" cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked -- -D warnings
 # The PoC runtime is an optional aip-cli package; its end-to-end tests only build with the feature.
 verify_independent "PoC runtime all-target clippy" cargo clippy -p aip-cli --features poc-runtime --all-targets --locked -- -D warnings

@@ -691,6 +691,39 @@ class BrowserEvidenceTests(unittest.TestCase):
             self.assertNotIn("stdout", content)
             self.assertNotIn("stderr", content)
 
+    def test_clippy_capture_preserves_stdout_stderr_command_and_failure_status(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "clippy"
+            script = (
+                f"export AIP_VERIFY_CLIPPY_OUTPUT_DIR='{output_dir}'; "
+                f"source '{repo / 'scripts/verify-safe-locator.sh'}'; "
+                "cargo() { printf 'lint diagnostic on stdout\\n'; "
+                "printf 'lint diagnostic on stderr\\n' >&2; return 23; }; "
+                "aip_verify_capture_command \"$AIP_VERIFY_CLIPPY_OUTPUT_DIR\" "
+                "cargo clippy --workspace --lib --bins --locked -- -D warnings"
+            )
+            result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 23)
+            self.assertIn("lint diagnostic on stdout", result.stdout)
+            self.assertIn("lint diagnostic on stderr", result.stderr)
+            self.assertEqual((output_dir / "stdout.txt").read_text(), "lint diagnostic on stdout\n")
+            self.assertEqual((output_dir / "stderr.txt").read_text(), "lint diagnostic on stderr\n")
+            self.assertEqual((output_dir / "exit_status.txt").read_text(), "23\n")
+            self.assertIn("cargo clippy --workspace --lib --bins --locked -- -D warnings",
+                          (output_dir / "command.txt").read_text())
+
+    def test_verify_workflow_always_uploads_captured_workspace_clippy_output(self):
+        repo = Path(__file__).resolve().parents[2]
+        verify_script = (repo / "tools/verify.sh").read_text()
+        workflow = (repo / ".github/workflows/verify.yml").read_text()
+        self.assertIn('verify_independent "workspace library and binary clippy" aip_verify_capture_command',
+                      verify_script)
+        self.assertIn("AIP_VERIFY_CLIPPY_OUTPUT_DIR: ${{ runner.temp }}/aip-verify-clippy", workflow)
+        artifact = workflow.split("      - name: Preserve workspace Clippy diagnostics\n", 1)[1]
+        self.assertIn("if: always()", artifact)
+        self.assertIn("path: ${{ runner.temp }}/aip-verify-clippy", artifact)
+
     def test_safe_failure_locator_records_guarded_preflight_exit(self):
         repo = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as tmp:
