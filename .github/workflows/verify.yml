@@ -215,6 +215,9 @@ jobs:
           # The pinned admin UI's own build (tsc -b && vite build) against the generated binding and the installed SDK.
           npx tsc -b
           VITE_AIP_URL=http://127.0.0.1:1 npx vite build
+          python3 -m venv "$RUNNER_TEMP/aip-browser"
+          "$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0
+          "$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium
       - name: Verify real HTTP to Node and Python workers to MySQL
         env:
           AIP_E2E_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}

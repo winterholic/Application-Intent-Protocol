@@ -816,6 +816,9 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertIn('node product/tools/build-sdk.mjs --out "$sdk"', admin_step)
         self.assertIn('npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"', admin_step)
         self.assertIn('apply-admin-ui-overlay.sh "$admin" "$definition"', admin_step)
+        self.assertIn('python3 -m venv "$RUNNER_TEMP/aip-browser"', admin_step)
+        self.assertIn('"$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0', admin_step)
+        self.assertIn('"$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium', admin_step)
 
     def test_profile_browser_trace_init_script_executes_instead_of_only_declaring_arrow(self):
         source = Path(__file__).with_name("facereview-ui-profile-browser.py").read_text()
