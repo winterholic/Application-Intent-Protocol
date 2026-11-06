@@ -82,6 +82,8 @@ jobs:
         run: cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test latest_effect_match
       - name: Verify active FlaskBB native ordering and the legacy allocation fence
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
+        env:
+          AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
         run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs porting/flaskbb/tests/last-post-recompute.test.mjs porting/flaskbb/tests/aip-read.test.mjs
       - name: Verify FlaskBB UI atomic publish requests
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
