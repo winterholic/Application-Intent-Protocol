@@ -37,7 +37,6 @@ jobs:
       AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
       AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
       AIP_BINARY: ${{ github.workspace }}/target/debug/aip
-      FLASKBB_EVIDENCE_DIR: ${{ runner.temp }}/flaskbb-post-order-evidence/${{ github.sha }}
     services:
       postgres:
         image: postgres:17

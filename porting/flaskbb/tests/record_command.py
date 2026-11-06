@@ -17,7 +17,9 @@ def main():
     if not command:
         parser.error("a command is required after --")
 
-    evidence_dir = Path(os.environ["FLASKBB_EVIDENCE_DIR"])
+    evidence_dir = (Path(os.environ["RUNNER_TEMP"]) /
+                    "flaskbb-post-order-evidence" /
+                    os.environ["GITHUB_SHA"])
     evidence_dir.mkdir(parents=True, exist_ok=True)
     try:
         completed = subprocess.run(command, text=True, stdout=subprocess.PIPE,
