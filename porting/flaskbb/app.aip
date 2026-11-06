@@ -282,8 +282,8 @@ resource Topic {
     to hidden = false, hidden_at = null, hidden_by = null
     update Post where topic = this.id and id = latest TopicFirstPost first where first.topic = this order by first.id select first.post {
       hidden = false
-      hidden_at = null
-      hidden_by = null
+      hidden_at = this.hidden_at
+      hidden_by = this.hidden_by
     }
     update Forum when this.forum.last_post = null or this.forum.last_post_created < this.last_updated where id = this.forum {
       last_post = this.last_post
