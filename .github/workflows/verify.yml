@@ -192,7 +192,17 @@ jobs:
           aip_verify_stage "prepare pinned FaceReview admin console browser journey"
           set -euo pipefail
           admin="$RUNNER_TEMP/aip-facereview-admin-ui"
+          sdk="$RUNNER_TEMP/aip-facereview-admin-sdk"
+          definition="$RUNNER_TEMP/aip-facereview-admin.aip"
+          mkdir -p "$RUNNER_TEMP/aip-facereview-browser"
+          cat product/tests/fixtures/facereview-mysql/facereview.aip > "$definition"
+          printf '\n' >> "$definition"
+          cat product/tests/fixtures/facereview-auth/operations.aip >> "$definition"
+          echo "AIP_FACEREVIEW_DEFINITION_FILE=$definition" >> "$GITHUB_ENV"
+          echo "AIP_FACEREVIEW_DEFINITION_SHA256=$(sha256sum "$definition" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
           pinned=ab0386c878a5ba5c7c079a262b987c10d211d22d
+          node product/tools/build-sdk.mjs --out "$sdk"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"
           git clone --quiet --filter=blob:none --no-checkout --depth=1 \
             https://github.com/winterholic/new-facereview-admin-front.git "$admin"
           git -C "$admin" fetch --quiet --depth=1 origin "$pinned"

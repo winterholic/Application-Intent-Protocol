@@ -808,6 +808,14 @@ class BrowserEvidenceTests(unittest.TestCase):
         fixture_step = workflow.split("      - name: Start native driver fixtures\n", 1)[1].split("      - name:", 1)[0]
         self.assertIn('if [[ "${{ inputs.admin_metrics_diagnostic }}" == "true" ]]; then\n            stores+=(redis)', fixture_step)
 
+    def test_admin_diagnostic_prepares_its_own_definition_and_sdk(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
+        admin_step = workflow.split("      - name: Prepare the pinned FaceReview admin console browser journey\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn('definition="$RUNNER_TEMP/aip-facereview-admin.aip"', admin_step)
+        self.assertIn('echo "AIP_FACEREVIEW_DEFINITION_FILE=$definition" >> "$GITHUB_ENV"', admin_step)
+        self.assertIn('node product/tools/build-sdk.mjs --out "$sdk"', admin_step)
+        self.assertIn('npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"', admin_step)
+
     def test_profile_browser_trace_init_script_executes_instead_of_only_declaring_arrow(self):
         source = Path(__file__).with_name("facereview-ui-profile-browser.py").read_text()
         tree = ast.parse(source)
