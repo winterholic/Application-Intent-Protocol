@@ -90,3 +90,6 @@ cargo test -p aip-execution --test cloud_storage minio_https_actual_object_and_m
 
 # Per-owner quota and expired-upload cleanup through the real server (needs the dedicated test PostgreSQL, see VALIDATION.md).
 cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test object_ledger_s3 --locked -- --ignored --nocapture
+
+# Independent WBS 8.20 probe: real PG ledger and TLS MinIO listing boundary.
+cargo test -p aip-execution --test object_ledger_scan_minio --locked -- --ignored --nocapture
