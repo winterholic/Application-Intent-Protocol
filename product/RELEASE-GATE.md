@@ -15,6 +15,14 @@
 | artifact-checksums·binary·smoke | `shasum -a 256 -c SHA256SUMS`, 묶음의 `bin/aip`, `product/tools/smoke.mjs --bin … --sdk-package … --workers python` | 묶음의 실행 파일과 SDK가 실제 서버·JWT·PostgreSQL·두 wire·Python worker로 동작한다 |
 | baseline-build·upgrade-drill | `product/tools/upgrade-drill.mjs --old-bin <이전 릴리스> --new-bin <묶음의 bin/aip>` | 이전 릴리스가 만든 schema의 업그레이드와 두 가지 롤백 |
 
+## main CI 실행 연결
+
+`.github/workflows/aip-release-gate.yml`의 `AIP 1.0 release gate` workflow가 main의 제품·빌드·검증 변경에서 위 게이트 스크립트를 호출한다. checkout은 `fetch-depth: 0`으로 이전 기준 commit을 포함하고, 검증 대상은 이벤트의 정확한 `$GITHUB_SHA`다.
+
+실행 명령은 `bash scripts/release-gate.sh --baseline 4c27040c6d4a2a2931321e1980842be79512bdb0 --ref "$GITHUB_SHA" --out "$RUNNER_TEMP/aip-release-gate"`다. 이 한 번의 명령이 새 checkout의 SDK toolchain 설치, full regression, release binary와 SDK package 생성, tarball 설치·실행 smoke, checksum 확인, 이전 binary 기준 upgrade 및 두 rollback을 순서대로 실행한다. `summary.txt`와 단계별 로그는 SHA 이름의 workflow artifact로 보존한다.
+
+이 연결은 실행 지점만 제공한다. 해당 main SHA의 workflow 성공, artifact의 source SHA, 독립 검증 및 1.0 출시는 별도 증거가 필요하다.
+
 ## 실행 기록 (2026-10-18)
 
 - 후보: `4e78ddbdacd14e2d5a89f999d0d0d15089a9acc8`. 기준 릴리스(업그레이드 출발점): `4c27040`(2026-10-15, 8.x 작업 이전).
