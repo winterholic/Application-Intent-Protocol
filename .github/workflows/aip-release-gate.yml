@@ -36,6 +36,7 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
       AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+      AIP_PG_BIN_DIR: /usr/lib/postgresql/17/bin
       AIP_TEST_MONGO_URL: mongodb://aip_test_slice13a:local_fixture_only_13a@127.0.0.1:15441/aip_test_slice13a?authSource=admin
       AIP_TEST_MONGO_UUID_URL: mongodb://127.0.0.1:25443/aip_test_uuid_ci
       AIP_TEST_REDIS_URL: redis://:local_fixture_only_13a@127.0.0.1:15442/
@@ -66,14 +67,23 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          sudo apt-get install -y postgresql-common ca-certificates
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
           sudo apt-get update
-          sudo apt-get install -y postgresql-client bubblewrap apparmor python3-venv
+          sudo apt-get install -y postgresql-client-17 bubblewrap apparmor python3-venv
+          test -x "$AIP_PG_BIN_DIR/psql"
+          test -x "$AIP_PG_BIN_DIR/pg_dump"
+          test -x "$AIP_PG_BIN_DIR/pg_restore"
+          echo "$AIP_PG_BIN_DIR" >> "$GITHUB_PATH"
           rustup update stable
           rustup default stable
           rustup component add rustfmt clippy
           python3 -m venv "$RUNNER_TEMP/aip-python-checks"
           "$RUNNER_TEMP/aip-python-checks/bin/pip" install --no-cache-dir mypy==2.4.0 setuptools wheel
           echo "$RUNNER_TEMP/aip-python-checks/bin" >> "$GITHUB_PATH"
+      - name: Check release PostgreSQL toolchain guard
+        shell: bash
+        run: node --test product/tests/release-gate-postgres-toolchain.test.mjs
       - name: Configure CI Bubblewrap user namespace policy
         shell: bash
         run: |
@@ -100,6 +110,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          export PATH="$AIP_PG_BIN_DIR:$PATH"
           source scripts/verify-safe-locator.sh
           aip_verify_stage "AIP 1.0 release package, install, upgrade and rollback gate"
           bash scripts/release-gate.sh \
