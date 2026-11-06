@@ -1030,13 +1030,24 @@ def _schema_name(value: Any) -> str:
     return value if isinstance(value, str) and _SAFE_SCHEMA_NAME.match(value) else "unrecognized"
 
 
-def admin_request_evidence(path: str, body: Any) -> dict[str, str]:
+def admin_request_evidence(path: str, body: Any) -> dict[str, object]:
     """Names only for the admin console: the resource, aggregate, extension, operation or transition a request names. Never a value."""
     if not isinstance(body, dict):
         return {}
     if path == "/read" and isinstance(body.get("query"), dict):
         query = body["query"]
-        return {"aggregate": _schema_name(query.get("aggregate"))} if "aggregate" in query else {"read": _schema_name(query.get("read"))}
+        if "aggregate" in query:
+            result: dict[str, object] = {"aggregate": _schema_name(query.get("aggregate"))}
+            aggregate_input = query.get("input")
+            if isinstance(aggregate_input, dict) and query.get("aggregate") == "Video.categoryViews":
+                result["category"] = _schema_name(aggregate_input.get("category"))
+            elif isinstance(aggregate_input, dict) and query.get("aggregate") == "User.signupCount":
+                for key in ("from", "to"):
+                    value = aggregate_input.get(key)
+                    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z", value):
+                        result[f"aggregate_{key}"] = value
+            return result
+        return {"read": _schema_name(query.get("read"))}
     if path == "/extension":
         return {"extension": _schema_name(body.get("extension"))}
     if path == "/jobs/enqueue":
@@ -1057,6 +1068,45 @@ def aggregate_count(envelope: Any) -> int | None:
         return None
     value = rows[0]
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def admin_signup_trend_evidence(period: str, actual: Any, expected: Any) -> dict[str, object]:
+    """Compare every dashboard signup bucket with fixture-derived date/count pairs."""
+    def normalize(value: Any) -> list[dict[str, object]] | None:
+        if not isinstance(value, list):
+            return None
+        points = []
+        for row in value:
+            if (not isinstance(row, dict) or not isinstance(row.get("date"), str)
+                    or not isinstance(row.get("count"), int) or isinstance(row.get("count"), bool)):
+                return None
+            points.append({"date": row["date"], "count": row["count"]})
+        return points
+
+    actual_points, expected_points = normalize(actual), normalize(expected)
+    mismatches = []
+    if actual_points is None or expected_points is None:
+        mismatches.append({"index": None, "expected": "date/count point list", "actual": "invalid shape"})
+        actual_points = actual_points or []
+        expected_points = expected_points or []
+    for index in range(max(len(actual_points), len(expected_points))):
+        got = actual_points[index] if index < len(actual_points) else None
+        want = expected_points[index] if index < len(expected_points) else None
+        if got != want:
+            mismatches.append({"index": index, "expected": want, "actual": got})
+    actual_total = sum(point["count"] for point in actual_points)
+    expected_total = sum(point["count"] for point in expected_points)
+    return {
+        "period": period,
+        "expected_buckets": len(expected_points),
+        "actual_buckets": len(actual_points),
+        "expected_total": expected_total,
+        "actual_total": actual_total,
+        "expected_points": expected_points,
+        "actual_points": actual_points,
+        "verified": not mismatches and len(actual_points) == len(expected_points),
+        "mismatches": mismatches,
+    }
 
 
 def safe_page_error_name(error: Any) -> str:

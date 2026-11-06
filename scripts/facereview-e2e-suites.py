@@ -52,31 +52,37 @@ def run_suite(suite):
     if missing:
         return {"status": "blocked", "stage": "prerequisite", "missing": missing}
     args = ["cargo", "test", "--locked", "-p", "aip-cli", "--features", "mysql", "--test", suite.binary]
-    status, found = run_command(args + ["--", "--list", "--ignored"], [suite.test + ": test"], exact=True)
+    discovery = args + ["--", "--list", "--ignored"]
+    status, found = run_command(discovery, [suite.test + ": test"], exact=True)
     if status or not found:
-        return {"status": "failed", "stage": "discovery", "exit_status": status, "test_found": found}
+        return {"status": "failed", "stage": "discovery", "discovery_command": discovery, "exit_status": status, "test_found": found}
     markers = ["test result: ok. 1 passed; 0 failed;", *suite.markers]
     if suite.name == "adminui" and os.environ.get("AIP_FACEREVIEW_ADMIN_UI_DIR"):
         markers.append("React admin console journey: SUPER_ADMIN login")
-    status, found = run_command(args + ["--", "--ignored", "--exact", suite.test, "--nocapture", "--test-threads=1"], markers)
+    execution = args + ["--", "--ignored", "--exact", suite.test, "--nocapture", "--test-threads=1"]
+    status, found = run_command(execution, markers)
     return {"status": "passed" if status == 0 and found else "failed", "stage": "execution",
+            "discovery_command": discovery, "execution_command": execution,
             "exit_status": status, "required_markers_present": found}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("run-ci", "run-ci-member"))
+    parser.add_argument("mode", choices=("run-ci", "run-ci-member", "run-ci-admin"))
     parser.add_argument("--output", type=Path, required=True)
     options = parser.parse_args()
     options.output.mkdir(parents=True, exist_ok=True)
-    suites = SUITES if options.mode == "run-ci" else SUITES[:2]
-    summary = {"mode": options.mode, "suites": {}}
+    suites = SUITES if options.mode == "run-ci" else SUITES[:2] if options.mode == "run-ci-member" else tuple(s for s in SUITES if s.name in {"admin", "adminui"})
+    summary = {"mode": options.mode, "source_sha": os.environ.get("GITHUB_SHA", "local-unset"),
+               "runner_command": f"bash scripts/verify-mysql-worker-e2e.sh {options.mode}", "suites": {}}
     for suite in suites:
         print(f"=== FaceReview E2E suite: {suite.name} ===", flush=True)
         summary["suites"][suite.name] = run_suite(suite)
         # Preserve partial results on runner cancellation/timeout without implying completion.
         (options.output / "suites.json").write_text(json.dumps(summary, indent=2) + "\n")
     failures = [(name, result) for name, result in summary["suites"].items() if result["status"] != "passed"]
+    summary["exit_status"] = 1 if failures else 0
+    (options.output / "suites.json").write_text(json.dumps(summary, indent=2) + "\n")
     if failures:
         locator = os.environ.get("AIP_E2E_FAILURE_FILE") or os.environ.get("AIP_VERIFY_FAILURE_FILE")
         if locator:

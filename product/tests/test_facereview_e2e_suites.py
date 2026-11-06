@@ -84,6 +84,22 @@ else:
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(set(summary["suites"]), {"write", "auth"})
 
+    def test_admin_metrics_diagnostic_runs_original_and_browser_admin_suites_only(self):
+        result, summary, receipt = self.run_runner(mode="run-ci-admin")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(set(summary["suites"]), {"admin", "adminui"})
+        self.assertTrue(all("--exact" in args for args in receipt if "--list" not in args))
+        self.assertEqual(summary["runner_command"], "bash scripts/verify-mysql-worker-e2e.sh run-ci-admin")
+        self.assertEqual(summary["exit_status"], 0)
+
+    def test_admin_metrics_diagnostic_collects_failures_and_still_runs_browser_suite(self):
+        result, summary, receipt = self.run_runner(fail="mysql_facereview_admin", mode="run-ci-admin")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(summary["suites"]["admin"]["status"], "failed")
+        self.assertEqual(summary["suites"]["adminui"]["status"], "passed")
+        self.assertEqual(summary["exit_status"], 1)
+        self.assertTrue(any("mysql_facereview_admin_ui" in args and "--exact" in args for args in receipt))
+
     def test_full_gate_requires_all_suites(self):
         result, summary, _ = self.run_runner()
         self.assertEqual(result.returncode, 0, result.stderr)

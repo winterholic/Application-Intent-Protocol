@@ -40,6 +40,23 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_admin_signup_trend_evidence_checks_every_bucket_and_names_wrong_date(self):
+        from product.tests.facereview_ui_browser_evidence import admin_signup_trend_evidence
+
+        expected = [{"date": "2026-11-01", "count": 3}, {"date": "2026-11-02", "count": 0}]
+        self.assertEqual(admin_signup_trend_evidence("7d", expected, expected), {
+            "period": "7d", "expected_buckets": 2, "actual_buckets": 2,
+            "expected_total": 3, "actual_total": 3, "expected_points": expected, "actual_points": expected,
+            "verified": True, "mismatches": [],
+        })
+        changed = [{"date": "2026-11-01", "count": 2}, {"date": "2026-11-02", "count": 1}]
+        result = admin_signup_trend_evidence("7d", changed, expected)
+        self.assertFalse(result["verified"])
+        self.assertEqual(result["mismatches"], [
+            {"index": 0, "expected": {"date": "2026-11-01", "count": 3}, "actual": {"date": "2026-11-01", "count": 2}},
+            {"index": 1, "expected": {"date": "2026-11-02", "count": 0}, "actual": {"date": "2026-11-02", "count": 1}},
+        ])
+
     def test_recommend_form_request_requires_member_and_exact_deduplicated_fixture(self):
         from product.tests import facereview_ui_browser_evidence as evidence
         member_recommend_request_matches = getattr(evidence, 'member_recommend_request_matches', None)
@@ -627,7 +644,7 @@ class BrowserEvidenceTests(unittest.TestCase):
                 self.assertFalse(member_logout_evidence([row], {**cleared, key: False})["verified"])
         self.assertFalse(member_logout_evidence([row], {})["verified"])
 
-    def test_workflow_uses_full_e2e_unless_member_diagnostic_is_explicit(self):
+    def test_workflow_uses_only_the_selected_admin_or_member_diagnostic(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
         step = workflow.split("      - name: Verify real HTTP to Node and Python workers to MySQL\n", 1)[1].split("      - name:", 1)[0]
         run = step.split("        run:", 1)[1].strip("\n")
@@ -635,10 +652,11 @@ class BrowserEvidenceTests(unittest.TestCase):
             command = "\n".join(line.removeprefix("          ") for line in run.splitlines()[1:])
         else:
             command = run.strip()
-        for value, expected in [("", "run-ci"), ("false", "run-ci"), ("true", "run-ci-member")]:
-            with self.subTest(member_ui_diagnostic=value):
+        for member, admin, expected in [("", "", "run-ci"), ("false", "false", "run-ci"),
+                                        ("true", "false", "run-ci-member"), ("false", "true", "run-ci-admin")]:
+            with self.subTest(member_ui_diagnostic=member, admin_metrics_diagnostic=admin):
                 # Execute the workflow's actual shell branch without starting its database fixtures.
-                shell = 'bash() { printf "%s\\n" "$2"; };\n' + command.replace("${{ inputs.member_ui_diagnostic }}", value)
+                shell = 'bash() { printf "%s\\n" "$2"; };\n' + command.replace("${{ inputs.member_ui_diagnostic }}", member).replace("${{ inputs.admin_metrics_diagnostic }}", admin)
                 result = subprocess.run(["bash", "-eu", "-c", shell], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), expected)
@@ -776,13 +794,13 @@ class BrowserEvidenceTests(unittest.TestCase):
         workflow = (repo / ".github/workflows/verify.yml").read_text()
         script = (repo / "scripts/verify-mysql-worker-e2e.sh").read_text()
         self.assertIn("scripts/verify-mysql-worker-e2e.sh run-ci-member", workflow)
-        self.assertIn("run | run-ci | run-ci-member | down", script)
+        self.assertIn("run | run-ci | run-ci-member | run-ci-admin | down", script)
         self.assertLess(script.index('AIP_VERIFY_FAILURE_FILE="$AIP_E2E_FAILURE_FILE"'),
                         script.index('source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-safe-locator.sh"'))
         # Scope/failure behavior is executed by test_facereview_e2e_suites; here
         # retain only the shell/workflow wiring contract after extracting it.
         self.assertIn('python3 "$repo/scripts/facereview-e2e-suites.py" "$mode"', script)
-        self.assertGreaterEqual(script.count('if [[ "$mode" == run-ci || "$mode" == run-ci-member ]]; then'), 2)
+        self.assertGreaterEqual(script.count('if [[ "$mode" == run-ci || "$mode" == run-ci-member || "$mode" == run-ci-admin ]]; then'), 2)
         self.assertIn('scripts/verify-mysql-worker-e2e.sh run-ci', script)
 
     def test_profile_browser_trace_init_script_executes_instead_of_only_declaring_arrow(self):
