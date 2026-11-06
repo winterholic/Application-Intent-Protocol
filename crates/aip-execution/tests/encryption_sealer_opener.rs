@@ -1,17 +1,11 @@
 //! Boundary and contract tests for `WriteCellSealer` and `ReadCellOpener`.
 
 use aip_crypto::cell::MAX_CELL_BYTES;
-use aip_crypto::provider::LocalProvider;
 use aip_execution::{
     encryption::{DekStore, Error as StoreError},
     read_opener::{OpenCell, StoreOpener},
     write_sealer::{SealCell, StoreSealer},
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-
-fn test_provider() -> LocalProvider {
-    LocalProvider::from_spec("k1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=", "k1").unwrap()
-}
 
 #[test]
 fn seal_cells_rejects_oversized_payloads_with_wire_bad_value() {

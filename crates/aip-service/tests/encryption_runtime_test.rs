@@ -317,7 +317,7 @@ fn dek_store_accepts_valid_schema_and_rejects_bad_schema() {
 fn config_deserializes_with_optional_encryption_block() {
     let json = r#"{
         "schema": "aip_prod",
-        "auth": {"issuer": "https://auth.example.com", "audience": "aip", "jwks_url": "https://auth.example.com/.well-known/jwks.json"},
+        "auth": {"issuer": "https://auth.example.com", "audience": "aip", "jwks": {"kind": "https", "url": "https://auth.example.com/.well-known/jwks.json"}},
         "encryption": {
             "kind": "spec",
             "spec": "k1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
@@ -335,7 +335,7 @@ fn config_deserializes_with_optional_encryption_block() {
 fn config_deserializes_without_encryption_block_by_default() {
     let json = r#"{
         "schema": "aip_prod",
-        "auth": {"issuer": "https://auth.example.com", "audience": "aip", "jwks_url": "https://auth.example.com/.well-known/jwks.json"}
+        "auth": {"issuer": "https://auth.example.com", "audience": "aip", "jwks": {"kind": "https", "url": "https://auth.example.com/.well-known/jwks.json"}}
     }"#;
     let config: aip_service::Config = serde_json::from_str(json).expect("valid config without encryption");
     assert!(config.encryption.is_none());
