@@ -37,6 +37,7 @@ jobs:
       AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
       AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
       AIP_BINARY: ${{ github.workspace }}/target/debug/aip
+      FLASKBB_EVIDENCE_DIR: ${{ runner.temp }}/flaskbb-post-order-evidence/${{ github.sha }}
     services:
       postgres:
         image: postgres:17
@@ -59,6 +60,8 @@ jobs:
         with:
           node-version: '26'
       - name: Install fixture tools
+        id: fixture-tools
+        continue-on-error: true
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
@@ -68,43 +71,94 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/flaskbb-ui"
           "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
       - name: Run pinned FlaskBB ORM against an isolated PostgreSQL schema
+        id: setup-upstream-python
+        continue-on-error: true
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.8'
-      - name: Install pinned FlaskBB ORM dependencies and run PostgreSQL regressions
+      - name: Create pinned ORM virtual environment
+        id: upstream-venv
+        if: ${{ always() && steps.setup-upstream-python.outcome == 'success' }}
+        continue-on-error: true
+        run: python3 porting/flaskbb/tests/record_command.py --name upstream-venv -- python3 -m venv "$RUNNER_TEMP/flaskbb-upstream"
+      - name: Bootstrap pinned ORM installer
+        id: upstream-installer
+        if: ${{ always() && steps.upstream-venv.outcome == 'success' }}
+        continue-on-error: true
+        run: python3 porting/flaskbb/tests/record_command.py --name upstream-installer -- "$RUNNER_TEMP/flaskbb-upstream/bin/pip" install --upgrade 'pip<24' 'setuptools<68' 'wheel<0.43'
+      - name: Prepare upstream requirements
+        id: upstream-requirements
+        if: ${{ always() && steps.upstream-installer.outcome == 'success' }}
+        continue-on-error: true
+        run: >-
+          python3 porting/flaskbb/tests/record_command.py --name upstream-requirements --
+          bash -euo pipefail -c 'cd porting/flaskbb/upstream && sed -e "/^git+https:\/\/github.com\/justanr\/flask-allows.git/d" -e "s|^-e \\.\$|-e $GITHUB_WORKSPACE/porting/flaskbb/upstream|" requirements.txt > "$RUNNER_TEMP/flaskbb-upstream-requirements.txt"'
+      - name: Install pinned FlaskBB ORM dependencies
+        id: upstream-install
+        if: ${{ always() && steps.upstream-requirements.outcome == 'success' }}
+        continue-on-error: true
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: '1'
           PYTHONDONTWRITEBYTECODE: '1'
-        run: |
-          python3 -m venv "$RUNNER_TEMP/flaskbb-upstream"
-          "$RUNNER_TEMP/flaskbb-upstream/bin/pip" install --upgrade 'pip<24' 'setuptools<68' 'wheel<0.43'
-          cd porting/flaskbb/upstream
-          sed -e '/^git+https:\/\/github.com\/justanr\/flask-allows.git/d' \
-            -e "s|^-e \\.$|-e $GITHUB_WORKSPACE/porting/flaskbb/upstream|" \
-            requirements.txt > "$RUNNER_TEMP/flaskbb-upstream-requirements.txt"
-          cd "$GITHUB_WORKSPACE"
-          "$RUNNER_TEMP/flaskbb-upstream/bin/pip" install --no-cache-dir \
-            -r "$RUNNER_TEMP/flaskbb-upstream-requirements.txt" \
-            -r porting/flaskbb/compat/requirements.extra.txt
-          psql "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA flaskbb_orm_oracle'
-          FLASKBB_ORACLE_DATABASE_URI='postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle' \
-            PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/porting/flaskbb/upstream" \
-            "$RUNNER_TEMP/flaskbb-upstream/bin/python" -m unittest porting.flaskbb.tests.test_post_oracle_gap -v
-          for mutant in date-sort topic-filter; do
-            case "$mutant" in
-              date-sort) test_name=test_wrong_date_sort_negative_control; expected='negative control: date sort must be rejected' ;;
-              topic-filter) test_name=test_wrong_visibility_filter_negative_control; expected='negative control: Topic visibility filter must be rejected' ;;
-            esac
-            if FLASKBB_ORACLE_NEGATIVE_CONTROL="$mutant" FLASKBB_ORACLE_DATABASE_URI='postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle' PYTHONPATH="$GITHUB_WORKSPACE/porting/flaskbb/upstream" "$RUNNER_TEMP/flaskbb-upstream/bin/python" -m unittest "porting.flaskbb.tests.test_post_oracle_gap.PostOracleGap.$test_name" > "$RUNNER_TEMP/$mutant.log" 2>&1; then
-              echo "negative control unexpectedly passed: $mutant"
-              exit 1
-            fi
-            grep -F "$expected" "$RUNNER_TEMP/$mutant.log"
-            echo "NEGATIVE_CONTROL $mutant rejected as expected"
-          done
-      - name: Remove the isolated FlaskBB ORM schema
+        run: >-
+          python3 porting/flaskbb/tests/record_command.py --name upstream-install --
+          "$RUNNER_TEMP/flaskbb-upstream/bin/pip" install --no-cache-dir
+          -r "$RUNNER_TEMP/flaskbb-upstream-requirements.txt"
+          -r porting/flaskbb/compat/requirements.extra.txt
+      - name: Import original FlaskBB app and pinned ORM
+        id: upstream-import
+        if: ${{ always() && steps.upstream-install.outcome == 'success' }}
+        continue-on-error: true
+        run: >-
+          python3 porting/flaskbb/tests/record_command.py --name upstream-import --
+          env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/porting/flaskbb/upstream"
+          "$RUNNER_TEMP/flaskbb-upstream/bin/python" -c
+          'import sqlalchemy; from flaskbb import create_app; assert create_app.__module__ == "flaskbb.app"; assert sqlalchemy.__version__ == "1.3.10"; print("APP_IMPORT", create_app.__module__, "SQLALCHEMY", sqlalchemy.__version__)'
+      - name: Create dedicated FlaskBB ORM schema
+        id: oracle-schema
         if: ${{ always() }}
-        run: psql "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA IF EXISTS flaskbb_orm_oracle CASCADE'
+        continue-on-error: true
+        run: python3 porting/flaskbb/tests/record_command.py --name oracle-schema-create -- psql "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA flaskbb_orm_oracle'
+      - name: Run actual ORM regression suite on PostgreSQL
+        id: oracle-regression
+        if: ${{ always() && steps.upstream-install.outcome == 'success' && steps.oracle-schema.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          FLASKBB_ORACLE_DATABASE_URI: postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle
+          PYTHONDONTWRITEBYTECODE: '1'
+          PYTHONPATH: ${{ github.workspace }}/porting/flaskbb/upstream
+        run: python3 porting/flaskbb/tests/record_command.py --name oracle-regression -- "$RUNNER_TEMP/flaskbb-upstream/bin/python" -m unittest porting.flaskbb.tests.test_post_oracle_gap -v
+      - name: Reject date ordering negative control
+        id: negative-date
+        if: ${{ always() && steps.upstream-install.outcome == 'success' && steps.oracle-schema.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          FLASKBB_ORACLE_DATABASE_URI: postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle
+          FLASKBB_ORACLE_NEGATIVE_CONTROL: date-sort
+          PYTHONPATH: ${{ github.workspace }}/porting/flaskbb/upstream
+        run: >-
+          python3 porting/flaskbb/tests/record_command.py --name negative-date-sort
+          --expect-failure-marker 'negative control: date sort must be rejected' --
+          "$RUNNER_TEMP/flaskbb-upstream/bin/python" -m unittest
+          porting.flaskbb.tests.test_post_oracle_gap.PostOracleGap.test_wrong_date_sort_negative_control_is_detected
+      - name: Reject Topic visibility negative control
+        id: negative-topic-visibility
+        if: ${{ always() && steps.upstream-install.outcome == 'success' && steps.oracle-schema.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          FLASKBB_ORACLE_DATABASE_URI: postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle
+          FLASKBB_ORACLE_NEGATIVE_CONTROL: topic-filter
+          PYTHONPATH: ${{ github.workspace }}/porting/flaskbb/upstream
+        run: >-
+          python3 porting/flaskbb/tests/record_command.py --name negative-topic-visibility
+          --expect-failure-marker 'negative control: Topic visibility filter must be rejected' --
+          "$RUNNER_TEMP/flaskbb-upstream/bin/python" -m unittest
+          porting.flaskbb.tests.test_post_oracle_gap.PostOracleGap.test_wrong_visibility_filter_negative_control_is_detected
+      - name: Remove the isolated FlaskBB ORM schema
+        id: oracle-schema-cleanup
+        if: ${{ always() }}
+        continue-on-error: true
+        run: python3 porting/flaskbb/tests/record_command.py --name oracle-schema-drop -- psql "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA IF EXISTS flaskbb_orm_oracle CASCADE'
       - name: Build the product CLI
         id: product-build
         run: cargo build -p aip-cli --locked
@@ -127,3 +181,28 @@ jobs:
       - name: Verify FlaskBB UI atomic publish requests
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host
+      - name: Upload stage-by-stage FlaskBB evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: flaskbb-post-order-evidence-${{ github.run_id }}-${{ github.sha }}
+          path: ${{ runner.temp }}/flaskbb-post-order-evidence/${{ github.sha }}
+          if-no-files-found: warn
+      - name: Preserve ORM and fixture failures as a nonzero workflow result
+        if: ${{ always() }}
+        env:
+          FIXTURE_TOOLS: ${{ steps.fixture-tools.outcome }}
+          SETUP_PYTHON: ${{ steps.setup-upstream-python.outcome }}
+          VENV: ${{ steps.upstream-venv.outcome }}
+          INSTALLER: ${{ steps.upstream-installer.outcome }}
+          REQUIREMENTS: ${{ steps.upstream-requirements.outcome }}
+          INSTALL: ${{ steps.upstream-install.outcome }}
+          IMPORT: ${{ steps.upstream-import.outcome }}
+          SCHEMA: ${{ steps.oracle-schema.outcome }}
+          REGRESSION: ${{ steps.oracle-regression.outcome }}
+          NEGATIVE_DATE: ${{ steps.negative-date.outcome }}
+          NEGATIVE_TOPIC_VISIBILITY: ${{ steps.negative-topic-visibility.outcome }}
+          SCHEMA_CLEANUP: ${{ steps.oracle-schema-cleanup.outcome }}
+        run: >-
+          python3 porting/flaskbb/tests/record_command.py --name stage-outcomes --
+          python3 -c 'import os,sys; keys=("FIXTURE_TOOLS","SETUP_PYTHON","VENV","INSTALLER","REQUIREMENTS","INSTALL","IMPORT","SCHEMA","REGRESSION","NEGATIVE_DATE","NEGATIVE_TOPIC_VISIBILITY","SCHEMA_CLEANUP"); results={key:os.environ.get(key,"missing") for key in keys}; print("FLASKBB_STAGE_OUTCOMES", results); failed=[key for key,value in results.items() if value != "success"]; sys.exit(1 if failed else 0)'

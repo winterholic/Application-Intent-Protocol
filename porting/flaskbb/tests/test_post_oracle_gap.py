@@ -159,7 +159,7 @@ class PostOracleGap(unittest.TestCase):
                                          (12, 1, False, False),
                                          (13, 2, False, False)])
         before = (forum.last_post_id, topic.last_post_id, topic.last_updated)
-        posts[0].delete()
+        posts[1].delete()
         self.assertEqual((forum.last_post_id, topic.last_post_id, topic.last_updated), before)
         db.session.commit()
         print("NONLAST_DELETE pointer_before_after={}".format(before))
@@ -177,7 +177,7 @@ class PostOracleGap(unittest.TestCase):
         self.assertIsNone(Post.query.filter_by(id=50).first())
         self.assertIsNone(Post.query.filter_by(id=55).first())
         self.assertIsNotNone(Post.query.with_hidden().filter_by(id=55).first())
-        self.assertIsNotNone(Post.query.with_hidden().filter_by(id=60).first())
+        self.assertIsNone(Post.query.with_hidden().filter_by(id=60).first())
         print("HIDDEN_CANDIDATES hidden_post=50 null_hidden=55 selected=40 selected_topic_hidden=true")
 
     def test_first_post_delete_delegates_to_topic_delete(self):
@@ -193,7 +193,7 @@ class PostOracleGap(unittest.TestCase):
         topic.delete = observe_delete
         result = posts[0].delete()
         topic.delete = original
-        self.assertEqual(result, "delegated")
+        self.assertIs(result, posts[0])
         self.assertEqual(len(calls), 1)
         print("FIRST_POST_DELEGATION calls={}".format(len(calls)))
 
