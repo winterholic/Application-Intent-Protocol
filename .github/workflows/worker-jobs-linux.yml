@@ -226,6 +226,9 @@ jobs:
       - name: Run related Clippy targets
         if: ${{ always() }}
         run: scripts/crypto-ci-capture.sh clippy
+      - name: Run changed-package Clippy without dependency linting
+        if: ${{ always() }}
+        run: scripts/crypto-ci-capture.sh clippy_scoped
       - name: Build product CLI
         id: cli_build
         if: ${{ always() }}
