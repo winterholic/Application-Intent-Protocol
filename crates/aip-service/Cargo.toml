@@ -12,6 +12,7 @@ mysql = ["aip-execution/mysql", "aip-migrate/mysql"]
 
 [dependencies]
 aip-auth = { path = "../aip-auth" }
+aip-crypto = { path = "../aip-crypto" }
 aip-execution = { path = "../aip-execution" }
 aip-migrate = { path = "../aip-migrate" }
 clap = { version = "4", features = ["derive"] }

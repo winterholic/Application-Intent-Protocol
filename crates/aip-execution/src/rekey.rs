@@ -52,7 +52,7 @@ impl RekeyTarget {
 }
 
 /// Statistics for a single target column rekey operation.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RekeyTargetReport {
     pub table: String,
     pub column: String,
@@ -66,7 +66,7 @@ pub struct RekeyTargetReport {
 }
 
 /// High-level report for a DEK rekey cycle across multiple targets.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RekeyReport {
     pub old_dek_id: String,
     pub old_version: u32,

@@ -1,5 +1,6 @@
 //! Product assembly reuses the validated definition, authorization, SQL and SDK engines.
 mod brokers;
+pub mod encryption_runtime;
 mod infrastructure;
 mod rag;
 mod triggers;
@@ -92,6 +93,13 @@ pub enum Command {
     Provision {
         #[arg(long)]
         config: PathBuf,
+    },
+    /// Execute a durable rekey cycle for encrypted fields
+    Rekey {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        options: PathBuf,
     },
     /// Serve a previously initialized deployment behind a TLS reverse proxy
     Serve {
@@ -286,6 +294,8 @@ pub struct Config {
     pub object_transfer_lifetime_ms: u64,
     pub database_ca_file: Option<PathBuf>,
     pub rag: Option<rag::Config>,
+    #[serde(default)]
+    pub encryption: Option<encryption_runtime::KekConfig>,
     #[serde(default)]
     pub schedules: Vec<triggers::ScheduleConfig>,
     #[serde(default)]
@@ -1074,6 +1084,7 @@ pub async fn run(command: Command) -> Result<Value, Value> {
             }
         }
         Command::Provision { config } => provision(configuration(&config)?).await,
+        Command::Rekey { config, options } => rekey_cli(configuration(&config)?, options).await,
         #[cfg(feature = "mysql")]
         Command::Serve { file, config } if mysql_selected(&config)? => mysql_service::serve(&file, configuration_for_runtime(&config)?).await,
         Command::Serve { file, config } => serve(&file, configuration(&config)?).await,
@@ -1113,6 +1124,55 @@ async fn provision(config: Config) -> Result<Value, Value> {
     })
     .await
     .map_err(|_| error("PROVISION_FAILED", "인프라 생성이 기한 안에 끝나지 않음"))?
+}
+
+async fn rekey_cli(config: Config, options_path: PathBuf) -> Result<Value, Value> {
+    let kek_config = config
+        .encryption
+        .as_ref()
+        .ok_or_else(|| error("ENCRYPTION_CONFIG_REQUIRED", "rekey를 실행하려면 service.json에 encryption 설정이 필요함"))?;
+    kek_config.validate().map_err(|e| error("INVALID_ENCRYPTION_CONFIG", &e.to_string()))?;
+
+    let options_data = fs::read_to_string(&options_path)
+        .map_err(|e| error("INVALID_OPTIONS", &format!("rekey options 파일({options_path:?})을 읽을 수 없음: {e}")))?;
+    let options: encryption_runtime::RekeyOptions =
+        serde_json::from_str(&options_data).map_err(|e| error("INVALID_OPTIONS", &format!("rekey options JSON 형식 오류: {e}")))?;
+
+    // 1. Validate options structure BEFORE any database connection
+    options.validate().map_err(|e| error("INVALID_OPTIONS", &e.to_string()))?;
+
+    // 2. Reject unverified/partial inventory to prevent retiring the scope's DEK with un-rekeyed columns:
+    options.assert_complete_inventory().map_err(|e| error("INCOMPLETE_REKEY_INVENTORY", &e.to_string()))?;
+
+    // 3. Operational gate: reject execution until authoritative schema inventory equivalence verification is integrated
+    if !encryption_runtime::rekey_operational_inventory_verified(&config.schema, &options) {
+        return Err(error(
+            "REKEY_OPERATIONAL_GATE_CLOSED",
+            "운영 rekey CLI 차단: 정의 메타데이터 기반 전수 인벤토리 동등성 검증 엔진이 아직 제품에 연결되지 않음 (DB 변경 전 차단)",
+        ));
+    }
+
+    let db_url = migrate_database_url(&config)?;
+    let mut db = tokio::time::timeout(std::time::Duration::from_secs(5), spike_v2_read::connect_owned_with_url(&db_url))
+        .await
+        .map_err(|_| error("DB_CONNECT", "DB 연결 기한 초과"))?
+        .map_err(|e| error("DB_CONNECT", &format!("DB 연결 실패: {e}")))?;
+
+    let mut budget = tokio::time::timeout(std::time::Duration::from_secs(5), spike_v2_read::connect_owned_with_url(&db_url))
+        .await
+        .map_err(|_| error("DB_CONNECT", "예산 DB 연결 기한 초과"))?
+        .map_err(|e| error("DB_CONNECT", &format!("예산 DB 연결 실패: {e}")))?;
+
+    let reports = encryption_runtime::execute_rekey(&mut db, &mut budget, &config.schema, kek_config, &options)
+        .await
+        .map_err(|e| error("REKEY_FAILED", &e.to_string()))?;
+
+    Ok(json!({
+        "ok": true,
+        "schema": config.schema,
+        "scope_kind": options.scope_kind,
+        "reports": reports,
+    }))
 }
 
 const AUDIT_BAD_QUERY: &str = "via는 apply·extension·job, limit은 1에서 500, since는 RFC 3339 시각(예: 2026-10-01T00:00:00Z)이어야 함";

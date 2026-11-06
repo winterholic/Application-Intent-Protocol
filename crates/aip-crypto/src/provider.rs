@@ -7,7 +7,7 @@ use aes_gcm::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use hkdf::Hkdf;
 use sha2::Sha256;
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 use zeroize::Zeroizing;
 
 #[derive(Clone)]
@@ -29,6 +29,16 @@ pub type ProviderFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Outpu
 pub trait KekProvider: Send + Sync {
     fn wrap<'a>(&'a self, context: &'a WrapContext<'_>, dek: &'a [u8; 32]) -> ProviderFuture<'a, WrappedDek>;
     fn unwrap<'a>(&'a self, context: &'a WrapContext<'_>, wrapped: &'a WrappedDek) -> ProviderFuture<'a, Zeroizing<[u8; 32]>>;
+}
+
+impl<T: KekProvider + ?Sized> KekProvider for Arc<T> {
+    fn wrap<'a>(&'a self, context: &'a WrapContext<'_>, dek: &'a [u8; 32]) -> ProviderFuture<'a, WrappedDek> {
+        self.as_ref().wrap(context, dek)
+    }
+
+    fn unwrap<'a>(&'a self, context: &'a WrapContext<'_>, wrapped: &'a WrappedDek) -> ProviderFuture<'a, Zeroizing<[u8; 32]>> {
+        self.as_ref().unwrap(context, wrapped)
+    }
 }
 
 pub struct LocalProvider {
