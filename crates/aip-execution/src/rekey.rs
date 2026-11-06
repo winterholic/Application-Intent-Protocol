@@ -11,6 +11,7 @@
 use crate::encryption::{CellLocation, Dek, DekStore, Error as StoreError, Scope, WriteDek};
 use aip_crypto::cell;
 use aip_crypto::provider::KekProvider;
+use std::future::Future;
 use tokio_postgres::{Client, GenericClient};
 use uuid::Uuid;
 
@@ -346,6 +347,23 @@ pub async fn rekey_target_column(
     ctx: &RekeyContext<'_>,
     target: &RekeyTarget,
 ) -> Result<RekeyTargetReport, StoreError> {
+    rekey_target_column_with_page_hook(db, budget, ctx, target, || async {}).await
+}
+
+/// Test synchronization seam invoked after a non-empty page is selected and before its first row
+/// is processed. The production entry point always supplies a no-op; this is not runtime config.
+#[doc(hidden)]
+pub async fn rekey_target_column_with_page_hook<F, Fut>(
+    db: &mut Client,
+    budget: &mut Client,
+    ctx: &RekeyContext<'_>,
+    target: &RekeyTarget,
+    mut after_page_selected: F,
+) -> Result<RekeyTargetReport, StoreError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = ()>,
+{
     let mut report = RekeyTargetReport { table: target.table.clone(), column: target.column.clone(), ..Default::default() };
     let target_key = target.target_key();
     let infra = ctx.store.infrastructure_schema();
@@ -382,6 +400,7 @@ pub async fn rekey_target_column(
             .await
             .map_err(|error| rekey_database_error("target_page_query", error))?;
         if !rows.is_empty() {
+            after_page_selected().await;
             for row in &rows {
                 let id: String = row.try_get(0)?;
                 let frame: String = row.try_get(1)?;

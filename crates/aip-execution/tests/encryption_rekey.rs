@@ -2,14 +2,23 @@
 use aip_crypto::provider::LocalProvider;
 use aip_execution::{
     encryption::{CellLocation, DekStore, Scope},
-    rekey::{RekeyContext, RekeyReport, RekeyTarget, RekeyTargetReport, rekey_target_column},
+    rekey::{RekeyContext, RekeyReport, RekeyTarget, RekeyTargetReport, rekey_target_column, rekey_target_column_with_page_hook},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    future::Future,
+    sync::{
+        Arc, Barrier,
+        atomic::{AtomicU64, Ordering},
+    },
+};
+use tokio::sync::oneshot;
 use tokio_postgres::{Client, NoTls};
 
 const DB: &str = aip_test_support::test_database_url!();
 static NEXT: AtomicU64 = AtomicU64::new(0);
+const OLD_KEY: &str = "rekey-old";
+const NEW_KEY: &str = "rekey-new";
 
 async fn connect() -> Client {
     let (db, driver) = tokio_postgres::connect(DB, NoTls).await.unwrap();
@@ -21,6 +30,68 @@ async fn connect() -> Client {
 
 fn provider(spec: &str, active: &str) -> LocalProvider {
     LocalProvider::from_spec(spec, active).unwrap()
+}
+
+struct RekeyFixture {
+    db: Client,
+    budget: Client,
+    store: DekStore,
+    scope: Scope,
+    old_dek: aip_execution::encryption::Dek,
+    old_provider: LocalProvider,
+    new_provider: LocalProvider,
+}
+
+fn rekey_store(name: &str) -> DekStore {
+    DekStore::new(&format!("aip_rekey_{name}_{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))).unwrap()
+}
+
+async fn rekey_fixture(store: DekStore, scope: Scope) -> RekeyFixture {
+    let mut db = connect().await;
+    db.batch_execute(&store.ddl()).await.unwrap();
+    db.batch_execute(&format!("CREATE SCHEMA {}", store.deployment_schema())).await.unwrap();
+    let keys = format!("{OLD_KEY}:{},{NEW_KEY}:{}", STANDARD.encode([7; 32]), STANDARD.encode([8; 32]));
+    let old_provider = provider(&keys, OLD_KEY);
+    let new_provider = provider(&keys, NEW_KEY);
+    let tx = db.transaction().await.unwrap();
+    let old_dek = store.ensure_active_in(&tx, &scope, &old_provider).await.unwrap();
+    tx.commit().await.unwrap();
+    RekeyFixture { db, budget: connect().await, store, scope, old_dek, old_provider, new_provider }
+}
+
+impl RekeyFixture {
+    async fn seal(&mut self, id: &str, plaintext: &[u8]) -> String {
+        let location = CellLocation::new("Secret", "value", id).unwrap();
+        let mut reservation = self.store.reserve_for_write(&mut self.budget, &self.scope, 1).await.unwrap();
+        let tx = self.db.transaction().await.unwrap();
+        let frame = self.store.seal_in(&tx, &mut reservation, &location, plaintext, &self.old_provider).await.unwrap();
+        tx.commit().await.unwrap();
+        frame
+    }
+
+    async fn promote(&mut self) -> aip_execution::encryption::WriteDek {
+        let tx = self.db.transaction().await.unwrap();
+        let epoch = self.store.active_for_write_in(&tx, &self.scope).await.unwrap().epoch();
+        let active = self.store.promote_in(&tx, &self.scope, epoch, &self.new_provider).await.unwrap();
+        tx.commit().await.unwrap();
+        active
+    }
+}
+
+async fn with_rekey_cleanup<F, Fut>(store: DekStore, extra_schemas: Vec<String>, body: F)
+where
+    F: FnOnce(DekStore) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let cleanup_schemas =
+        [store.deployment_schema().to_owned(), store.infrastructure_schema().to_owned()].into_iter().chain(extra_schemas).collect::<Vec<_>>();
+    let result = tokio::spawn(body(store)).await;
+    let cleanup = connect().await;
+    cleanup.batch_execute("SET lock_timeout='2s'; SET statement_timeout='5s'").await.unwrap();
+    for schema in cleanup_schemas {
+        cleanup.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await.unwrap();
+    }
+    result.expect("rekey counterexample body panicked after cleanup");
 }
 
 #[test]
@@ -216,4 +287,238 @@ async fn rekey_resumes_from_the_persisted_cursor_after_worker_restart() {
 
     db.batch_execute(&format!("DROP SCHEMA {} CASCADE", store.deployment_schema())).await.unwrap();
     db.batch_execute(&format!("DROP SCHEMA {} CASCADE", store.infrastructure_schema())).await.unwrap();
+}
+
+#[tokio::test]
+async fn rekey_schema_shadow_changes_only_the_intended_schema() {
+    let scope = Scope::service();
+    let store = rekey_store("schema_shadow");
+    let decoy = format!("{}_decoy", store.deployment_schema());
+    with_rekey_cleanup(store.clone(), vec![decoy.clone()], move |store| async move {
+        let mut fixture = rekey_fixture(store.clone(), scope.clone()).await;
+        fixture
+            .db
+            .batch_execute(&format!(
+                "CREATE SCHEMA {decoy};
+             CREATE TABLE {}.cells(id bigint PRIMARY KEY, value text NOT NULL, note text NOT NULL);
+             CREATE TABLE {decoy}.cells(id bigint PRIMARY KEY, value text NOT NULL, note text NOT NULL);
+             SET search_path TO {decoy},{},public",
+                store.deployment_schema(),
+                store.deployment_schema()
+            ))
+            .await
+            .unwrap();
+        let old_frame = fixture.seal("1", b"schema-shadow-secret").await;
+        for schema in [store.deployment_schema(), decoy.as_str()] {
+            fixture.db.execute(&format!("INSERT INTO {schema}.cells VALUES(1,$1,'preserve-this-column')"), &[&old_frame]).await.unwrap();
+        }
+        let active = fixture.promote().await;
+        let target = RekeyTarget::new("cells", "value", "id", "Secret", "value", scope.clone());
+        let context = RekeyContext {
+            store: &store,
+            old_dek: &fixture.old_dek,
+            active_dek: &active,
+            holder_id: "schema-shadow-worker",
+            provider: &fixture.new_provider,
+        };
+        let report = rekey_target_column(&mut fixture.db, &mut fixture.budget, &context, &target).await.unwrap();
+        let intended: String =
+            fixture.db.query_one(&format!("SELECT value FROM {}.cells WHERE id=1", store.deployment_schema()), &[]).await.unwrap().get(0);
+        let decoy_after: String = fixture.db.query_one(&format!("SELECT value FROM {decoy}.cells WHERE id=1"), &[]).await.unwrap().get(0);
+        let intended_note: String =
+            fixture.db.query_one(&format!("SELECT note FROM {}.cells WHERE id=1", store.deployment_schema()), &[]).await.unwrap().get(0);
+        let decoy_note: String = fixture.db.query_one(&format!("SELECT note FROM {decoy}.cells WHERE id=1"), &[]).await.unwrap().get(0);
+        let intended_rows: i64 =
+            fixture.db.query_one(&format!("SELECT count(*) FROM {}.cells", store.deployment_schema()), &[]).await.unwrap().get(0);
+        let decoy_rows: i64 = fixture.db.query_one(&format!("SELECT count(*) FROM {decoy}.cells"), &[]).await.unwrap().get(0);
+        let mut violations = Vec::new();
+        if !aip_crypto::cell::parse_header(&intended).is_ok_and(|h| h.dek_id == active.dek().id()) {
+            violations.push("intended frame not on active DEK");
+        }
+        if decoy_after != old_frame {
+            violations.push("decoy frame bytes changed");
+        }
+        if intended_note != "preserve-this-column" || decoy_note != "preserve-this-column" {
+            violations.push("unrelated column changed");
+        }
+        if intended_rows != 1 || decoy_rows != 1 || report.rekeyed != 1 {
+            violations.push("row count or selected work count changed");
+        }
+        assert!(
+            violations.is_empty(),
+            "schema shadow counterexample: {violations:?}; intended_frame_changed={}; decoy_frame_changed={}",
+            intended != old_frame,
+            decoy_after != old_frame
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn rekey_ref_scope_ignores_other_refs_and_preserves_their_frame_bytes() {
+    let scope = Scope::reference("Team", "42").unwrap();
+    let store = rekey_store("ref_scope");
+    with_rekey_cleanup(store.clone(), vec![], move |store| async move {
+        let mut fixture = rekey_fixture(store.clone(), scope.clone()).await;
+        fixture
+            .db
+            .batch_execute(&format!(
+                "CREATE TABLE {}.teams(id bigint PRIMARY KEY);
+             INSERT INTO {}.teams VALUES(42),(99);
+             CREATE TABLE {}.secrets(id bigint PRIMARY KEY, team_id bigint NOT NULL REFERENCES {}.teams(id), value text);
+             SET search_path TO {},public",
+                store.deployment_schema(),
+                store.deployment_schema(),
+                store.deployment_schema(),
+                store.deployment_schema(),
+                store.deployment_schema()
+            ))
+            .await
+            .unwrap();
+        let team42 = fixture.seal("1", b"team-42-secret").await;
+        let malformed_team99 = "malformed-frame-preserve-bytes".to_owned();
+        fixture
+            .db
+            .execute(
+                &format!("INSERT INTO {}.secrets VALUES(1,42,$1),(2,99,$2),(3,99,NULL)", store.deployment_schema()),
+                &[&team42, &malformed_team99],
+            )
+            .await
+            .unwrap();
+        let active = fixture.promote().await;
+        let target = RekeyTarget::new("secrets", "value", "id", "Secret", "value", scope.clone());
+        let context = RekeyContext {
+            store: &store,
+            old_dek: &fixture.old_dek,
+            active_dek: &active,
+            holder_id: "ref-scope-worker",
+            provider: &fixture.new_provider,
+        };
+        let report = rekey_target_column(&mut fixture.db, &mut fixture.budget, &context, &target).await.unwrap();
+        let rows = fixture.db.query(&format!("SELECT team_id,value FROM {}.secrets ORDER BY id", store.deployment_schema()), &[]).await.unwrap();
+        let team42_frame: String = rows[0].get(1);
+        let team99_id: i64 = rows[1].get(0);
+        let team99_frame: String = rows[1].get(1);
+        let null_team_id: i64 = rows[2].get(0);
+        let team99_null: Option<String> = rows[2].get(1);
+        let mut violations = Vec::new();
+        if report.scanned != 1 || report.rekeyed != 1 || report.failed_count != 0 {
+            violations.push("report includes rows outside Team 42");
+        }
+        if !aip_crypto::cell::parse_header(&team42_frame).is_ok_and(|h| h.dek_id == active.dek().id()) {
+            violations.push("Team 42 frame was not rekeyed");
+        }
+        if rows.len() != 3 || team99_id != 99 || team99_frame != malformed_team99 || null_team_id != 99 || team99_null.is_some() {
+            violations.push("Team 99 rows or frame/NULL bytes changed");
+        }
+        assert!(
+            violations.is_empty(),
+            "mixed-ref counterexample: {violations:?}; scanned={} failed_count={} unrelated_frame_preserved={}",
+            report.scanned,
+            report.failed_count,
+            team99_frame == malformed_team99
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn rekey_ref_change_after_select_is_rejected_by_cas_scope() {
+    let scope = Scope::reference("Team", "42").unwrap();
+    let store = rekey_store("ref_cas");
+    let deployment_schema = store.deployment_schema().to_owned();
+    with_rekey_cleanup(store.clone(), vec![], move |store| async move {
+        let mut fixture = rekey_fixture(store.clone(), scope.clone()).await;
+        fixture
+            .db
+            .batch_execute(&format!(
+                "CREATE TABLE {}.teams(id bigint PRIMARY KEY);
+             INSERT INTO {}.teams VALUES(42),(99);
+             CREATE TABLE {}.secrets(id bigint PRIMARY KEY, team_id bigint NOT NULL REFERENCES {}.teams(id), value text NOT NULL);
+             SET search_path TO {},public",
+                store.deployment_schema(),
+                store.deployment_schema(),
+                store.deployment_schema(),
+                store.deployment_schema(),
+                store.deployment_schema()
+            ))
+            .await
+            .unwrap();
+        let old_frame = fixture.seal("1", b"scope-race-secret").await;
+        fixture.db.execute(&format!("INSERT INTO {}.secrets VALUES(1,42,$1)", store.deployment_schema()), &[&old_frame]).await.unwrap();
+        let active = fixture.promote().await;
+        let target = RekeyTarget::new("secrets", "value", "id", "Secret", "value", scope.clone());
+        let barrier = Arc::new(Barrier::new(2));
+        let rekey_barrier = barrier.clone();
+        let (done_tx, mut done_rx) = oneshot::channel();
+        let rekey_task = tokio::spawn(async move {
+            let context = RekeyContext {
+                store: &store,
+                old_dek: &fixture.old_dek,
+                active_dek: &active,
+                holder_id: "ref-cas-worker",
+                provider: &fixture.new_provider,
+            };
+            let result = rekey_target_column_with_page_hook(&mut fixture.db, &mut fixture.budget, &context, &target, move || {
+                let barrier = rekey_barrier.clone();
+                async move {
+                    barrier.wait().await;
+                    barrier.wait().await;
+                }
+            })
+            .await;
+            let _ = done_tx.send(());
+            (fixture, result)
+        });
+        let mut mutator = connect().await;
+        tokio::select! {
+            _ = barrier.wait() => {},
+            result = &mut done_rx => panic!("rekey returned before the SELECT barrier: {result:?}"),
+        }
+        let mutation = mutator.execute(&format!("UPDATE {deployment_schema}.secrets SET team_id=99 WHERE id=1"), &[]).await;
+        tokio::select! {
+            _ = barrier.wait() => {},
+            result = &mut done_rx => panic!("rekey returned before the CAS barrier: {result:?}"),
+        }
+        let (fixture, result) = rekey_task.await.unwrap();
+        mutation.unwrap();
+        let report = result.unwrap();
+        let row = fixture.db.query_one(&format!("SELECT team_id,value FROM {deployment_schema}.secrets WHERE id=1"), &[]).await.unwrap();
+        let team_id: i64 = row.get(0);
+        let frame: String = row.get(1);
+        let violations = [
+            (team_id == 99, "barrier did not move the ref"),
+            (frame == old_frame, "CAS changed the frame after its selected ref changed"),
+            (report.raced == 1, "stale selected row was not reported as raced"),
+        ]
+        .into_iter()
+        .filter_map(|(ok, message)| (!ok).then_some(message))
+        .collect::<Vec<_>>();
+        assert!(
+            violations.is_empty(),
+            "ref/CAS barrier counterexample: {violations:?}; ref={team_id} frame_changed={} raced={}",
+            frame != old_frame,
+            report.raced
+        );
+    })
+    .await;
+}
+
+#[test]
+fn rekey_checkpoint_identity_does_not_bind_deployment_schema() {
+    let scope = Scope::reference("Team", "42").unwrap();
+    let target_a = RekeyTarget::new("secrets", "value", "id", "Secret", "value", scope.clone());
+    let target_b = RekeyTarget::new("secrets", "value", "id", "Secret", "value", scope);
+    let store_a = DekStore::new("aip_rekey_identity_a").unwrap();
+    let store_b = DekStore::new("aip_rekey_identity_b").unwrap();
+    assert_ne!(store_a.deployment_schema(), store_b.deployment_schema());
+    assert_eq!(target_a.target_key(), target_b.target_key(), "existing target identity has no deployment schema input");
+}
+
+#[test]
+fn rekey_existing_api_accepts_ref_scope_without_a_ref_column_selector() {
+    let scope = Scope::reference("Team", "42").unwrap();
+    let target = RekeyTarget::new("secrets", "value", "id", "Secret", "value", scope);
+    assert_eq!(target.id_column, "id");
+    assert!(target.target_key().starts_with("rekey-target-v2:"));
 }
