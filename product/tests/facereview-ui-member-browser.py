@@ -47,6 +47,8 @@ from product.tests.facereview_ui_browser_evidence import (
     member_comment_evidence,
     member_search_request_matches,
     member_search_evidence,
+    member_recommend_request_matches,
+    member_recommend_evidence,
     bookmark_listing_request_matches,
     bookmark_listing_response_evidence,
     bookmark_listing_evidence,
@@ -59,6 +61,7 @@ VIDEO_YOUTUBE_ID = "dQw4w9WgXcQ"
 COMMENT_CREATED = "AIP 원본 UI 댓글 등록 표본"
 COMMENT_EDITED = "AIP 원본 UI 댓글 수정 표본"
 SEARCH_ABSENT = "AIP-no-match-7be19b92"
+RECOMMEND_VIDEO_IDS = ["AipForm0001", "AipForm0002"]
 MEMBER_ID = "77777777-7777-4777-8777-777777777777"
 
 
@@ -164,7 +167,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ui", type=Path, required=True)
     parser.add_argument("--api", required=True)
-    parser.add_argument("--phase", choices=("search", "add", "remove", "comment-create", "comment-edit", "comment-delete"), required=True)
+    parser.add_argument("--phase", choices=("search", "recommend", "add", "remove", "comment-create", "comment-edit", "comment-delete"), required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     email = os.environ["AIP_FACEREVIEW_JOURNEY_EMAIL"]
@@ -235,6 +238,8 @@ def main() -> int:
     like_evidence: dict[str, object] = {}
     comment_evidence: dict[str, object] = {}
     search_evidence: dict[str, object] = {}
+    recommend_checks: list[dict[str, object]] = []
+    recommend_failures: list[dict[str, str]] = []
     bookmark_listing_checks: list[dict[str, object]] = []
     bookmark_listing_failures: list[dict[str, str]] = []
     bookmark_api_row_count: int | None = None
@@ -334,6 +339,10 @@ def main() -> int:
             row.update(extension_response_evidence(str(extension_request["extension"]), envelope, VIDEO_ID))
             if extension_request['extension'] == 'Video.homeBookmark':
                 row.update(bookmark_listing_response_evidence(envelope, VIDEO_ID))
+        if 'recommend_input_matches' in row:
+            extension_output = envelope.get('output') if isinstance(envelope, dict) else None
+            requested = extension_output.get('requested') if isinstance(extension_output, dict) else None
+            row['requested_count'] = requested if type(requested) is int else None
         if entry["bookmark_read"]:
             row["bookmark_read_observation"] = {
                 "corr": row["corr"],
@@ -372,6 +381,8 @@ def main() -> int:
                     row["comment_content_matches"] = comment_action == "delete" or request["values"]["content"] == COMMENT_EDITED
         if parsed.path == "/extension":
             payload = response.request.post_data_json
+            if isinstance(payload, dict) and payload.get('extension') == 'VideoRequest.recommend':
+                row['recommend_input_matches'] = member_recommend_request_matches(payload, MEMBER_ID, RECOMMEND_VIDEO_IDS)
             if isinstance(payload, dict) and payload.get('extension') == 'Video.homeBookmark':
                 row['bookmark_listing_input_matches'] = bookmark_listing_request_matches(payload)
             if isinstance(payload, dict) and payload.get("extension") == "Video.homeSearch":
@@ -697,7 +708,57 @@ def main() -> int:
                     screenshot = output / f"{args.phase}-member-video-list.png"
                     page.screenshot(path=str(screenshot), full_page=True)
                     screenshot_names.append(screenshot.name)
-                    if args.phase == "search":
+                    if args.phase == "recommend":
+                        # Independent accept/refusal observations share only their intended fixture rows.
+                        # A failure here is collected before the next attempt and later Rust journeys.
+                        for accepted in (True, False):
+                            stage = 'submit' if accepted else 'duplicate'
+                            journey_stage = f'member_recommend_{stage}'
+                            try:
+                                deadline = time.monotonic() + 15
+                                while unfinished_requests() or pending_bodies:
+                                    if time.monotonic() >= deadline:
+                                        raise AssertionError('API requests did not settle before recommend navigation')
+                                    page.wait_for_timeout(50)
+                                page.goto(f'http://localhost:{ui_port}/main', wait_until='domcontentloaded')
+                                page.wait_for_load_state('networkidle', timeout=10000)
+                                page.get_by_role('button', name='영상 추천 요청', exact=True).click()
+                                modal = page.locator('.video-register-modal-container')
+                                expect(modal).to_be_visible()
+                                confirm = modal.get_by_role('button', name='확인', exact=True)
+                                expect(confirm).to_be_disabled()
+                                field = modal.get_by_role('textbox')
+                                field.fill('not-a-youtube-link')
+                                expect(modal.get_by_role('button', name='영상 추가', exact=True)).to_be_disabled()
+                                expect(confirm).to_be_disabled()
+                                field.fill('https://youtu.be/AipForm0001 AipForm0001')
+                                modal.get_by_role('button', name='영상 추가', exact=True).click()
+                                expect(modal.locator('.main-page-modal-thumbnail-registered')).to_have_count(1)
+                                field.fill('https://www.youtube.com/watch?v=AipForm0002')
+                                expect(confirm).to_be_enabled()
+                                baseline = len(api_paths)
+                                confirm.click()
+                                if accepted:
+                                    expect(page.get_by_text('영상 등록 요청을 접수했습니다.', exact=True)).to_be_visible(timeout=30000)
+                                    expect(modal).to_have_count(0)
+                                else:
+                                    expect(page.get_by_text('영상 추천 요청에 실패했습니다.', exact=True)).to_be_visible(timeout=30000)
+                                    expect(modal).to_be_visible()
+                                deadline = time.monotonic() + 15
+                                while True:
+                                    check = member_recommend_evidence(api_paths[baseline:], accepted, True)
+                                    if check['verified'] and not unfinished_requests() and not pending_bodies:
+                                        break
+                                    if time.monotonic() >= deadline:
+                                        raise AssertionError('recommend form response, fixture payload and visible outcome did not agree')
+                                    page.wait_for_timeout(50)
+                                recommend_checks.append({'stage': stage, **check})
+                                screenshot = output / f'recommend-{stage}.png'
+                                page.screenshot(path=str(screenshot), full_page=True)
+                                screenshot_names.append(screenshot.name)
+                            except Exception as error:
+                                recommend_failures.append({'stage': stage, 'failure_type': safe_browser_failure_type(error)})
+                    elif args.phase == "search":
                         for kind, keyword in (("found", VIDEO_TITLE), ("empty", SEARCH_ABSENT)):
                             for reloaded in (False, True):
                                 journey_stage = f"member_search_{kind}_{'reload' if reloaded else 'submit'}"
@@ -1015,7 +1076,7 @@ def main() -> int:
         bookmark_api_paths = api_paths[:bookmark_api_row_count] if bookmark_api_row_count is not None else api_paths
         observed_paths = {row["path"] for row in bookmark_api_paths}
         required_paths = {"/auth/check-email", "/auth/login", "/extension"}
-        if args.phase != "search":
+        if args.phase not in {"search", "recommend"}:
             required_paths.add("/apply")
         if not required_paths.issubset(observed_paths):
             raise RuntimeError("browser did not issue the expected real AIP API requests")
@@ -1043,13 +1104,15 @@ def main() -> int:
                 "React bookmark /read never reached a terminal request event: "
                 + json.dumps({"failed": failed_bookmark_reads, "unfinished_corr": unfinished_bookmark_reads})
             )
+        if args.phase == 'recommend' and (recommend_failures or len(recommend_checks) != 2 or unfinished_requests() or api_request_failures):
+            raise AssertionError('recommend form checks failed: ' + json.dumps(recommend_failures))
         if bookmark_listing_failures:
             raise AssertionError('bookmark listing checks failed: ' + json.dumps(bookmark_listing_failures))
         if page_errors:
             raise RuntimeError("browser reported an unhandled React page error")
         if fixture_thumbnail_redirect_count < 1 or 200 not in fixture_thumbnail_response_statuses:
             raise RuntimeError("the local fixture thumbnail did not load successfully")
-        if args.phase != "search" and youtube_player_api_fixture_count < 1:
+        if args.phase not in {"search", "recommend"} and youtube_player_api_fixture_count < 1:
             raise RuntimeError("the local no-op player API fixture was not used")
 
         report = {
@@ -1072,6 +1135,8 @@ def main() -> int:
             "member_like": like_evidence,
             "member_comment": comment_evidence,
             "member_search": search_evidence,
+            "member_recommend": recommend_checks,
+            "recommend_failures": recommend_failures,
             "member_bookmark_listing": bookmark_listing_checks,
             "bookmark_listing_failures": bookmark_listing_failures,
             "failure_type": failure_type,
@@ -1121,6 +1186,8 @@ def main() -> int:
             "member_like": like_evidence,
             "member_comment": comment_evidence,
             "member_search": search_evidence,
+            "member_recommend": recommend_checks,
+            "recommend_failures": recommend_failures,
             "member_bookmark_listing": bookmark_listing_checks,
             "bookmark_listing_failures": bookmark_listing_failures,
             "failure_type": failure_type,

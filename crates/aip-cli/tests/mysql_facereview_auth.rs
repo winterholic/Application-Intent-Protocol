@@ -1016,6 +1016,59 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         }
         println!("React browser journeys attempted: member lists, bookmark on/off and logout; DB verdicts collected");
 
+        // The recommendation form is an independent original UI journey. Accept two
+        // new IDs, then refuse their duplicate; preserve all prior request rows and the
+        // ten unrelated business tables, including every column rather than only counts.
+        type RequestRow = (String, String, String, String, String, Option<String>, String, String);
+        let requests_sql = "SELECT video_request_id, user_id, youtube_url, youtube_full_url, status, admin_comment, CAST(created_at AS CHAR), CAST(updated_at AS CHAR) FROM video_request ORDER BY video_request_id";
+        let requests_before: Vec<RequestRow> = setup.query(requests_sql).await.unwrap();
+        let request_markers = ["AipForm0001", "AipForm0002"];
+        let request_markers_absent = requests_before.iter().all(|row| !request_markers.contains(&row.2.as_str()));
+        let recommend_before = business_snapshot(&mut setup).await;
+        let recommend = run_facereview_ui_browser_journey(&address, &fingerprint, "recommend", &browser_root, None);
+        let recommend_after = business_snapshot(&mut setup).await;
+        let requests_after: Vec<RequestRow> = setup.query(requests_sql).await.unwrap();
+        let new_requests: Vec<_> = requests_after.iter().filter(|row| request_markers.contains(&row.2.as_str())).collect();
+        let previous_requests: Vec<_> = requests_after.iter().filter(|row| !request_markers.contains(&row.2.as_str())).cloned().collect();
+        let request_rows_match = request_markers.iter().all(|id| {
+            let rows: Vec<_> = new_requests.iter().filter(|row| row.2 == *id).collect();
+            rows.len() == 1
+                && rows[0].1 == LEGACY
+                && rows[0].3 == format!("https://www.youtube.com/watch?v={id}")
+                && rows[0].4 == "PENDING"
+                && rows[0].5.is_none()
+        });
+        // business_snapshot uses the fixed table order above; video_request is entry9.
+        assert_eq!(recommend_before.len(), 11);
+        assert_eq!(recommend_after.len(), 11);
+        let recommend_others_preserved =
+            recommend_before.iter().zip(&recommend_after).enumerate().all(|(index, (before, after))| index == 9 || before == after);
+        let recommend_db_ok = request_markers_absent
+            && request_rows_match
+            && new_requests.len() == 2
+            && previous_requests == requests_before
+            && recommend_others_preserved;
+        let recommend_dir = Path::new(&browser_output).join("recommend");
+        std::fs::create_dir_all(&recommend_dir).unwrap();
+        let recommend_db_result = json!({
+            "journey": "member_recommend_form",
+            "browser_status": if recommend.status.success() { "success" } else { "failure" },
+            "database_status": if recommend_db_ok { "success" } else { "failure" },
+            "fixture_markers_started_absent": request_markers_absent,
+            "new_request_count": new_requests.len(), "new_rows_match_owner_url_status": request_rows_match,
+            "previous_request_rows_preserved": previous_requests == requests_before,
+            "unrelated_business_table_count": 10, "unrelated_business_rows_preserved": recommend_others_preserved
+        });
+        std::fs::write(recommend_dir.join("recommend-db-result.json"), serde_json::to_vec_pretty(&recommend_db_result).unwrap()).unwrap();
+        println!("recommend form browser/DB: {recommend_db_result}");
+        print!("{}", String::from_utf8_lossy(&recommend.stdout));
+        if !recommend.status.success() {
+            journey_failures.push(format!("recommend form browser journey failed: {}", String::from_utf8_lossy(&recommend.stderr)));
+        }
+        if !recommend_db_ok {
+            journey_failures.push("recommend form rows or unrelated business data preservation failed".to_owned());
+        }
+
         // Each original comment UI action runs in a fresh browser, with a DB checkpoint
         // before the next action. Compare every unrelated row, including other members'
         // content/flags/timestamps; a matching count alone would miss an overwritten row.

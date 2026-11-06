@@ -847,6 +847,31 @@ def member_search_evidence(requests: list[dict[str, object]], empty: bool, rende
             "verified": bool(accepted and matches and rendered is True)}
 
 
+def member_recommend_request_matches(body: Any, member: str, video_ids: list[str]) -> bool:
+    if not isinstance(body, dict) or body.get('extension') != 'VideoRequest.recommend':
+        return False
+    inputs = body.get('input')
+    if not isinstance(inputs, dict) or set(inputs) != {'user', 'youtube_url_list'} or inputs['user'] != member:
+        return False
+    try:
+        return isinstance(inputs['youtube_url_list'], str) and json.loads(inputs['youtube_url_list']) == video_ids
+    except (TypeError, ValueError):
+        return False
+
+
+def member_recommend_evidence(api_rows: list[dict[str, object]], accepted: bool, rendered: bool) -> dict[str, object]:
+    rows = [row for row in api_rows if row.get('path') == '/extension' and 'recommend_input_matches' in row]
+    complete = (len(rows) == 1 and type(rows[0].get('status')) is int and rows[0]['status'] == 200
+                and all(rows[0].get(key) is True for key in
+                        ('body_captured', 'recommend_input_matches', 'contract_matches_runtime')))
+    expected = (len(rows) == 1 and rows[0].get('ok') is accepted
+                and (type(rows[0].get('requested_count')) is int and rows[0]['requested_count'] == 2 if accepted
+                     else rows[0].get('code') == 'WIRE.ALREADY_EXISTS'))
+    return {'response_count': len(rows), 'expected_accepted': accepted, 'request_complete': bool(complete),
+            'outcome_matches': bool(expected), 'render_matches': rendered,
+            'verified': bool(complete and expected and rendered is True)}
+
+
 def bookmark_listing_request_matches(body: Any) -> bool:
     if not isinstance(body, dict) or body.get('extension') != 'Video.homeBookmark':
         return False
