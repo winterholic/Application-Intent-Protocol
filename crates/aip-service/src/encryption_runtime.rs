@@ -277,6 +277,7 @@ pub async fn verify_rekey_inventory(db: &Client, schema: &str, options: &RekeyOp
         }
         let id_type = column.id_kind;
         require_pg_column(db, schema, table, "id", id_type, true, &format!("{}.id", column.resource)).await?;
+        require_pg_primary_key(db, schema, table, "id", &format!("{}.id", column.resource)).await?;
         let field_type = facts["resources"][&column.resource]["fields"][&column.field]["ty"]
             .as_str()
             .ok_or_else(|| Error::InvalidConfig(format!("{}.{} 선언 타입 누락", column.resource, column.field)))?;
@@ -374,11 +375,36 @@ async fn require_pg_column(
     Ok(())
 }
 
-async fn require_pg_reference(db: &Client, schema: &str, table: &str, column: &str, target_table: &str) -> Result<(), Error> {
-    let exists: bool = db
+async fn require_pg_primary_key(db: &Client, schema: &str, table: &str, column: &str, label: &str) -> Result<(), Error> {
+    let valid: bool = db
         .query_one(
             "SELECT EXISTS (
-           SELECT 1 FROM pg_catalog.pg_constraint c
+           SELECT 1
+           FROM pg_catalog.pg_constraint c
+           JOIN pg_catalog.pg_class t ON t.oid=c.conrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+           JOIN pg_catalog.pg_attribute a ON a.attrelid=t.oid AND a.attname=$3 AND a.attnum>0 AND NOT a.attisdropped
+           JOIN pg_catalog.pg_index i ON i.indexrelid=c.conindid AND i.indrelid=t.oid
+           WHERE n.nspname=$1 AND t.relname=$2 AND c.contype='p' AND c.convalidated
+             AND c.conkey=ARRAY[a.attnum]::smallint[]
+             AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts=1
+         )",
+            &[&schema, &table, &column],
+        )
+        .await
+        .map_err(|_| Error::Database(format!("PostgreSQL metadata {label} primary key catalog 조회 실패")))?
+        .try_get(0)
+        .map_err(|_| Error::Database(format!("PostgreSQL metadata {label} primary key catalog 형식 오류")))?;
+    if !valid {
+        return Err(Error::Database(format!("PostgreSQL metadata {label} id primary key 불일치: single-column unique primary key required")));
+    }
+    Ok(())
+}
+
+async fn require_pg_reference(db: &Client, schema: &str, table: &str, column: &str, target_table: &str) -> Result<(), Error> {
+    let validated: bool = db
+        .query_one(
+            "SELECT COALESCE(bool_or(c.convalidated), false) FROM pg_catalog.pg_constraint c
            JOIN pg_catalog.pg_class source ON source.oid=c.conrelid
            JOIN pg_catalog.pg_namespace source_ns ON source_ns.oid=source.relnamespace
            JOIN pg_catalog.pg_attribute source_col ON source_col.attrelid=source.oid AND source_col.attnum=c.conkey[1]
@@ -387,16 +413,15 @@ async fn require_pg_reference(db: &Client, schema: &str, table: &str, column: &s
            JOIN pg_catalog.pg_attribute target_col ON target_col.attrelid=target.oid AND target_col.attnum=c.confkey[1]
            WHERE c.contype='f' AND source_ns.nspname=$1 AND source.relname=$2 AND source_col.attname=$3
              AND target_ns.nspname=$1 AND target.relname=$4 AND target_col.attname='id'
-             AND array_length(c.conkey,1)=1 AND array_length(c.confkey,1)=1
-         )",
+             AND array_length(c.conkey,1)=1 AND array_length(c.confkey,1)=1",
             &[&schema, &table, &column, &target_table],
         )
         .await
         .map_err(|_| Error::Database(format!("PostgreSQL scope FK metadata {}.{}.{column} 조회 실패", schema, table)))?
         .try_get(0)
         .map_err(|_| Error::Database(format!("PostgreSQL scope FK metadata {}.{}.{column} 형식 오류", schema, table)))?;
-    if !exists {
-        return Err(Error::Database(format!("PostgreSQL scope FK 불일치: {}.{}.{column} must reference {target_table}.id", schema, table)));
+    if !validated {
+        return Err(Error::Database(format!("PostgreSQL scope FK 불일치: {}.{}.{column} must reference validated {target_table}.id", schema, table)));
     }
     Ok(())
 }
