@@ -1,7 +1,7 @@
 # AIP 의미론 안정화 결과 — 통합 검증 중
 
 - 작성 기준일: 2026-11-16 (KST)
-- 상태: 정책 회귀와 retry 수정은 main에 반영됐다. main 68df3be의 Verify와 release gate는 동일한 테스트 import 포맷 차이로 실패했다. 이를 8337e384edbb56c08b409ca3c4acbb4690c2ad76에서 교정하고 일반 push했다. 새 전체 CI 결과는 미확인이다. 최종 전체 완료와 1.0 출시를 선언하지 않는다.
+- 상태: main8337e38 Verify43815434509는 success다. release43815434522는 full-regression·release-build·package·checksums·binary·artifact-smoke·baseline-build까지 PASS한 뒤 upgrade-drill/new-job-result에서 WIRE.DEPLOYMENT_CHANGED로 실패했다. 기존 결과 보존과 새 배포에서의 결과 접근을 혼동한 검증기를 bd54d919dad3a1a83b79220b207d9e37cc0d5510으로 교정해 main에 일반 push했다. 새 Verify43820299403/release43820299455 결과는 미확인이다. 최종 전체 완료와 1.0 출시를 선언하지 않는다.
 - 근거: A 데이터 감사(audit/semantic-a-data-20261116의 commit c1059eaa8d25e4ac6fc05e5880c7f06db7be536a에서 plan-docs/reviews/2026-11-16-semantic-audit-a-data.md를 git show로 읽음), C 정책 감사, B/D 트랜잭션·확장 감사, 원본 .aip-harness/state/aggregate-empty-nullability-20261116.json 및 task handoff.
 
 ## 결론
@@ -14,7 +14,7 @@
 
 | 구분 | 기준 및 상태 | 해석 |
 |---|---|---|
-| live main | 8337e384edbb56c08b409ca3c4acbb4690c2ad76; 부모가 일반 push 후 원격 SHA 일치 확인 | Core 6917e476 → 서비스 데이터 0518f31 → retry 341208c → 정책 회귀 68df3be → import 포맷 교정 8337e38. 341208c 제품 patch-id와 검증 C6 소스 일치, 68df3be 테스트 blob과 원본 2ecb937 일치를 부모가 확인했다. CI 성공과 소스 통합을 구별한다. |
+| live main | bd54d919dad3a1a83b79220b207d9e37cc0d5510; 부모가 일반 push 후 원격 SHA 일치 확인 | Core 6917e476 → 서비스 데이터 0518f31 → retry 341208c → 정책 회귀 68df3be → import 포맷 교정 8337e38 → upgrade job 결과 검증기 교정 bd54d91. 마지막 변경은 검증 도구·단위 테스트·기존 동작 문서이며 runtime/인가 구현은 바꾸지 않았다. 341208c 제품 patch-id와 검증 C6 소스 일치, 68df3be 테스트 blob과 원본 2ecb937 일치를 부모가 확인했다. CI 성공과 소스 통합을 구별한다. |
 | release checkout | c4a0f469c6921b645d6f2ac17cec5d5cfec0fa57, dirty | 원래 /Users/winterholic/development/projects/aip/aip checkout이다. 기존 dirty/untracked를 보존했다. 초안에서 편집·reset·stash·빌드·테스트하지 않았다. |
 | 현재 감사 브랜치 | audit/semantic-bd-tx-ext-20261116, 시작 HEAD e9011f3 | 문서 전용 커밋 d9096b9, e9011f3를 기존 이력으로 유지한다. 한 커밋으로 합치지 않는다. |
 | PR / release | 2026-11-16 복원 시 GitHub API 재조회: open PR [], GitHub releases [] | release branch는 여전히 c4a0f469다. GitHub releases가 비어 있다는 사실은 git tag/설치본 부재를 뜻하지 않는다. |
@@ -118,6 +118,14 @@ S-01/S-17 성공은 spike-v2-read 엔진과 PostgreSQL fixture 범위다.
 | D6 | outbox/webhook 전달 | main8337e38 outbox 실행, 중복 허용 | worker CI43815434485의 outbox 2건이 통과했다. local mock webhook 1건은 여전히 revision 미상 baseline 기록이다. exactly-once consumer delivery나 현 main 전체 검증을 뜻하지 않는다. |
 | D7 | 보상·복구 | 계약별 범위, 조합 미검증 | Mongo/Redis write extension saga log, WIRE.COMPENSATION_FAILED 및 수동 복구 경로. 일반 durable job saga compensation과 모든 provider lookup은 보장으로 세지 않는다. |
 
+### 업그레이드 job 결과 검증기 결함
+
+- 재현: PG17 release gate43815434522는 baseline4c27040에서 main8337e38로 migration/provision한 뒤 이전 SUCCEEDED job의 `/jobs/status`를 조회했지만 `/jobs/result`는 WIRE.DEPLOYMENT_CHANGED였다. `product/tools/upgrade-drill.mjs`의 무조건 output.length=3 단언이 실패했다.
+- 분류·원인: Verification Gap/검증기 구현 결함. [durable result guard](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/spikes/spike-v6-transport/src/durable.rs#L684)는 수락 당시 deployment/contract digest가 현재 정의와 다르면 결과 노출을 거부한다. 이 guard는 최초 durable 구현 cf28f0f부터 존재한다. 영속 보존을 다른 배포에서의 접근 허용과 같게 취급한 gate가 경계를 빠뜨렸다. 최초 실패 artifact에는 어느 지문이 달랐는지는 없어 추정하지 않는다.
+- 영향·수정: 검증 도구가 배포 전후 DB의 job id/owner/operation/state/input/output/deployment/contract/attempt를 대조하고, 현재 DB marker·생성 계약과 일치하면 원래 결과를 요구하며 불일치하면 정확한 거부 코드와 output 부재를 요구한다. 새 배포 job의 결과 조회와 백업 복원 뒤 이전 job 결과 조회도 추가했다. runtime·인가 guard·마이그레이션은 수정하지 않았다. 소비처 검색에서 oldJobReadable은 이 도구 한 곳뿐이어서 보고 형식을 보존/접근/거부별 필드로 바꿨다.
+- 회귀: 기존 단언을 함수로 추출한 뒤 실제 거부 응답에서 RED(2 failed/5 passed)를 확인했다. 변경 후 `node --test product/tests/upgrade-drill.test.mjs product/tests/release-gate-postgres-toolchain.test.mjs`는 14 passed/0 failed/skipped다. changed deployment, changed contract, 잘못된 오류, 거부 응답의 output 노출, DB output/state/binding 변조, unchanged binding의 결과를 구분한다. node --check 및 git diff --check exit0.
+- 상태: [수정 bd54d91](https://github.com/winterholic/Application-Intent-Protocol/commit/bd54d919dad3a1a83b79220b207d9e37cc0d5510)은 main에 push·원격 SHA 대조했다. 교정된 실제 PG 업그레이드/두 rollback 결과는 새 release43820299455에서 확인해야 하므로 아직 미검증이다.
+
 ## 세 앱의 선언형/확장 경계와 호환 영향
 
 | 앱 | 선언형 | 공식 확장 | 미검증/호환 경계 |
@@ -154,10 +162,14 @@ S-01/S-17 성공은 spike-v2-read 엔진과 PostgreSQL fixture 범위다.
 | CI 43810795517, head f2cad274a5871781ff66b0bc23db4b35636736a1 | Ubuntu + PG17.12; cargo test -p aip-cli --test service_flow --locked -- --nocapture | completed/success; identity/data/policy 3 passed/0 failed/0 ignored/0 filtered out; readiness 1 | [Actions 43810795517](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43810795517), /tmp/aip-orch-proof-668d5d6c/policy-43810795517/service-flow.log. generated SDK 호출은 아님. |
 | Retry/policy main integration | git ls-remote; git patch-id --stable; git rev-parse commit:path | retry 341208c 제품 diff 일치; 정책 68df3be 테스트 blob 일치; main 반영 확인 | 부모의 영속 계약 revision29 및 .aip-harness/state/aip-bounded-owned-retry-main-20261116.json, aip-policy-service-main-20261116.json. |
 | main 68df3be 전체 CI 8개 | GitHub API run/job 조회 및 job logs, release artifact 원문 다운로드 | DB contracts, Linux worker, cgroup, external brokers, object storage, app packages 6개 success. Verify43811829023와 release43811829006 failure: 둘 다 audit_bd_lock_order.rs import 순서 3줄로 Rust formatting exit1. 이후 runtime 전체·패키지/설치/업그레이드/rollback은 실행되지 않음. | [Verify](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43811829023), [release gate](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43811829006). 현재 Run outbox ci-evidence의 job-133115075550.log 및 release-43811829006/logs/full-regression.log. |
-| main 8337e384edbb56c08b409ca3c4acbb4690c2ad76 | cargo fmt --all --check; git diff --check; 단일 파일 3+/3- 확인; 일반 push 및 ls-remote | 로컬 fmt/diff exit0; 원격 SHA 일치. 새 Verify43815434509/release43815434522 등 자동 CI 시작 확인. 완료 결과는 미확인. | [포맷 수정](https://github.com/winterholic/Application-Intent-Protocol/commit/8337e384edbb56c08b409ca3c4acbb4690c2ad76). 기존 실패를 취소하거나 green으로 바꾸지 않았다. |
+| main 8337e384edbb56c08b409ca3c4acbb4690c2ad76 | cargo fmt --all --check; git diff --check; 단일 파일 3+/3- 확인; 일반 push 및 ls-remote | 로컬 fmt/diff exit0; 원격 SHA 일치. 후속 Verify43815434509는 success. release43815434522는 전체회귀·build/package/smoke PASS 뒤 upgrade job 결과 검증기에서 실패했으며 아래 행에 별도 기록했다. | [포맷 수정](https://github.com/winterholic/Application-Intent-Protocol/commit/8337e384edbb56c08b409ca3c4acbb4690c2ad76). 기존 실패를 취소하거나 green으로 바꾸지 않았다. |
 | main8337e38 worker CI43815434485 | V6 cargo test --locked --target-dir target --no-fail-fast --test job_retry --test job_breaker --test triggers --test outbox --test otlp --test encryption_gate --test encryption_e2e --test bundle_http | worker-jobs job133126299447 success. 해당 8개 suite는 각각 1/2/3/2/9/3/1/1 passed, 모두 failed/ignored/filtered 0. 같은 run의 crypto-compile-repair job133126301306은 skipped이며 통과로 세지 않는다. | [Linux worker jobs](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43815434485). 전체 job에는 다른 검증도 있지만 이 행은 명시 suite만 센다. |
 | main8337e38 brokers CI43815434511 | cargo test -p aip-execution --features external-brokers --test brokers_live --locked -- --ignored; cargo test -p aip-service --features external-brokers --locked broker_worker_recovers -- --ignored | live brokers 2 passed/0 failed, worker recovery 1 passed/0 failed/47 filtered. 뒤 별도 test binaries의 0 tests는 추가 통과 건수로 세지 않는다. | [External brokers](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43815434511). Kafka/RabbitMQ CI fixture 경계다. |
 | main8337e38 기타 완료 CI | cgroup43815434626 / object storage43815434543 / app packages43815434606의 run/job/head와 원문 회수 | 모두 success. cgroup 명시 실행 14+2 passed, 각각59/71 filtered. Object storage 로그에는 unit 2 ignored가 있어 전체0 ignored라고 하지 않는다. app packages Node 검사는73+1+1 passed/0 failed/0 skipped. | [cgroup](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43815434626), [object storage](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43815434543), [app packages](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43815434606). app packages 성공은 전체 release install/upgrade/rollback 성공과 별개다. |
+
+| main8337e38 Verify43815434509 / job133126299705 | gh run view 및 job logs API 원문 직접 회수 | completed/success. compiler/runtime/product/worker/transport/SDK 검증 단계와 HTTP→Node/Python→MySQL 단계 success. focused UI diagnostic build와 failure-log 단계는 skipped로 유지한다. | [Verify](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43815434509); 현재 Run ci-evidence/verify-133126299705.log. |
+| main8337e38 release43815434522 / job133126299590 | scripts/release-gate.sh --baseline 4c27040c6d4a2a2931321e1980842be79512bdb0 --ref 8337e384edbb56c08b409ca3c4acbb4690c2ad76; PG17.12/Linux/rustc1.100.0/Node26.13.1/Python3.12.3 | full-regression·release-build·package·artifact-checksums·artifact-binary·artifact-smoke·baseline-build PASS, upgrade-drill FAIL at new-job-result/WIRE.DEPLOYMENT_CHANGED. 두 rollback은 해당 실행에서 미도달. | [release](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/43815434522); artifact14203662861의 summary 및 logs/upgrade-drill.log. 전체 실패를 보존한다. |
+| mainbd54d91 검증기 교정 | node --test product/tests/upgrade-drill.test.mjs product/tests/release-gate-postgres-toolchain.test.mjs; node --check; git diff --check; 일반 push/ls-remote | 14 passed/0 failed/skipped, 문법·diff exit0, main SHA 일치. 자동 Verify43820299403/release43820299455 시작만 확인했고 완료 결과는 미확인. | [수정](https://github.com/winterholic/Application-Intent-Protocol/commit/bd54d919dad3a1a83b79220b207d9e37cc0d5510), .aip-harness/state/aip-upgrade-job-fence-20261116.json. |
 
 ## 우선순위와 최종 판단
 
@@ -165,19 +177,19 @@ S-01/S-17 성공은 spike-v2-read 엔진과 PostgreSQL fixture 범위다.
 |---|---|---|
 | P1 | generated SDK에서 service 정책 wire 보존 및 고위험 조합 | CI43810795517의 service HTTP/PG 직접 검증은 확보했다. generated TS/Python SDK 호출과 모든 조합은 아직 미검증이다. |
 | P1 | hidden-only row 비간섭: to-many, aggregate, filter/sort/page 및 callerFilter | aggregate source policy 자동 상속 없음. where/sourceAccess와 aggregate access가 선택한 실제 집합 확인 필요. |
-| P1 | main8337e38 전체 검사 완료 결과·실패 교정 | main 통합은 확인했다. 기존 main68df3be 전체 검사 중 2개가 formatting으로 실패했고 8337e38에서 교정했으나 새로운 전체 결과는 미확인이다. |
+| P1 | mainbd54d91의 교정된 upgrade/rollback gate 결과 | main8337e38 Verify 및 release 전체회귀·package/smoke는 통과했다. upgrade 검증기의 결과 접근 가정은 최소 교정했으나 새 실제 PG upgrade/rollback은 미검증이다. |
 | P2 | FaceReview production definition/facts/actor/access 및 GET detail/view 실패, EmotionSummary repeat/new-session/concurrency parity | 원본 oracle 비교·실행 전. |
 | P2 | Infisical G11 중간 실패; FlaskBB G6 order/projection parity | source/DB oracle 재현 전에는 제품 결함으로 승격하지 않는다. |
 | P2 | worker/service actor와 role/tenant/ownership race | 적용 시점과 actor semantics가 열려 있다. |
 | P3 | generic JSON envelope/graph-create/새 DSL primitive | 두 번째 독립 앱 수요 및 호환 영향 입증 전 보류. |
 
-**현재 신뢰할 수 있는 범위:** Core 6917e476의 NULL 의미 회귀, 서비스 PG17 HTTP+DB identity/data/policy 3건, owned retry와 인접 회귀 18건, engine latest·12연결 멱등 replay의 명시 assertion은 실행 증거가 있고 관련 변경은 main에 반영됐다. 같은 소스의 기존 검증은 재사용하되 서로 다른 revision의 결과를 현 main 전체 성공으로 합산하지 않는다. 전체 회귀·release package/install/upgrade/rollback, 모든 앱 parity, 모든 transaction 조합 및 generated SDK 전체 검증은 남아 있다.
+**현재 신뢰할 수 있는 범위:** Core 6917e476의 NULL 의미 회귀, 서비스 PG17 HTTP+DB identity/data/policy 3건, owned retry와 인접 회귀 18건, engine latest·12연결 멱등 replay의 명시 assertion은 실행 증거가 있고 관련 변경은 main에 반영됐다. 같은 소스의 기존 검증은 재사용하되 서로 다른 revision의 결과를 현 main 전체 성공으로 합산하지 않는다. main8337e38 Verify와 release full-regression·package·artifact-smoke도 통과했다. 교정된 mainbd54d91의 실제 upgrade/rollback, 모든 앱 parity, 모든 transaction 조합 및 이번 정책 회귀의 generated SDK 전체 검증은 남아 있다.
 
 **가장 위험한 미검증 의미 경계:** hidden row가 aggregate·to-many·sort·page를 통해 결과에 영향을 주지 않는다는 service policy 비간섭이다. aggregate source policy가 자동 상속되지 않아 명시 where/sourceAccess와 public access가 실제 /read/SDK에서 의도한 집합을 선택하는지 확인해야 한다. tenant 자동 보증 및 FaceReview 운영 definition parity도 열려 있다.
 
 ## 범위·자원 기록
 
-초안 013b45d는 문서 하나만 추가했다. 복원 후 부모가 오류를 교정했고 기존 전용 worktree에서 테스트 import 정렬만 8337e38로 main에 일반 push했다. dirty release c4a0f469와 다른 작업자의 캐시는 유지했다. 새 clone/target/DB/browser/container는 만들지 않았다. 기존 소유 자원은 .aip-harness/state/aip-semantic-lead-review-20261116.json 및 aip-rustfmt-lock-order-20261116.json에 기록했다. 현재 Run outbox의 ci-evidence에는 API로 직접 받은 원문을 보존한다. Core·C·B/D worker의 마지막 keychain_mismatch는 해당 worker Run 실패이며 AIP 제품 실패로 세지 않는다.
+초안 013b45d는 문서 하나만 추가했다. 복원 후 부모가 오류를 교정했고 기존 전용 worktree에서 테스트 import 정렬만 8337e38로 main에 일반 push했다. dirty release c4a0f469와 다른 작업자의 캐시는 유지했다. 새 clone/target/DB/browser/container는 만들지 않았다. 기존 소유 자원은 .aip-harness/state/aip-semantic-lead-review-20261116.json 및 aip-rustfmt-lock-order-20261116.json에 기록했다. 후속 bd54d91용 worktree /private/tmp/aip-upgrade-job-fence-20261116은 사전 여유450560000000 bytes/예산128MiB로 등록한 뒤 사용했다. 커밋의 원격 main 보존과 clean 확인 후 git worktree remove exit0·path 부재를 대조했다. 삭제 전 논리 크기는32608KiB이며 물리 회수량으로 환산하지 않는다. 새 build cache/DB는 만들지 않았다. 상세 영수증은 aip-upgrade-job-fence-20261116.json이다. 현재 Run outbox의 ci-evidence에는 API로 직접 받은 원문을 보존한다. Core·C·B/D worker의 마지막 keychain_mismatch는 해당 worker Run 실패이며 AIP 제품 실패로 세지 않는다.
 
 ## 보강한 검증과 남은 방법론 공백
 
