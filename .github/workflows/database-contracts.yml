@@ -24,7 +24,7 @@ concurrency:
 jobs:
   postgres-runtime-role:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
       # Disposable CI fixture credentials only. A wrong-password control proves trust auth is disabled.
       AIP_TEST_DATABASE_URL: host=127.0.0.1 port=55473 dbname=aip_test_ci user=runner password=ci_fixture_admin
@@ -57,8 +57,56 @@ jobs:
         run: |
           cargo test -p aip-test-support --locked
           cargo test -p aip-cli --test least_privilege --locked -- --nocapture
+      - name: Audit C aip-cli baseline on isolated PostgreSQL
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/aip-cli-readiness.log"
+          readiness_status=${PIPESTATUS[0]}
+          if (( readiness_status != 0 )); then exit "$readiness_status"; fi
+          cargo test -p aip-cli --locked --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/aip-cli.log"
+          test_status=${PIPESTATUS[0]}
+          echo "aip-cli baseline exit=$test_status"
+          exit "$test_status"
+      - name: Audit C spike-v2-read security_authorization
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/security-authorization-readiness.log"
+          readiness_status=${PIPESTATUS[0]}
+          if (( readiness_status != 0 )); then exit "$readiness_status"; fi
+          cargo test --manifest-path spikes/spike-v2-read/Cargo.toml --locked --test security_authorization --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/security-authorization.log"
+          test_status=${PIPESTATUS[0]}
+          echo "security_authorization exit=$test_status"
+          exit "$test_status"
+      - name: Audit C spike-v2-read negated_policy
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/negated-policy-readiness.log"
+          readiness_status=${PIPESTATUS[0]}
+          if (( readiness_status != 0 )); then exit "$readiness_status"; fi
+          cargo test --manifest-path spikes/spike-v2-read/Cargo.toml --locked --test negated_policy --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/negated-policy.log"
+          test_status=${PIPESTATUS[0]}
+          echo "negated_policy exit=$test_status"
+          exit "$test_status"
+      - name: Preserve policy C test logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: policy-c-postgres-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aip-policy-c
+          if-no-files-found: warn
+          retention-days: 7
 
   mysql-and-mariadb-fences:
+    if: github.ref != 'refs/heads/audit/semantic-c-policy-20261116'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
