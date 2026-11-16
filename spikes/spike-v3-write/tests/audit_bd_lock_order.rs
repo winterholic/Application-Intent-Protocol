@@ -73,6 +73,7 @@ async fn opposite_order_bundles_retry_deadlocks_then_return_one_business_refusal
         db.query(&format!("SELECT owner_id FROM {schema}.task ORDER BY id"), &[]).await.unwrap().iter().map(|row| row.get(0)).collect();
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
 
+    println!("LOCK_ORDER_EVIDENCE schema={schema} outcomes={outcomes:?} final_owner_ids_by_task_id={owners:?}");
     assert!(outcomes.iter().all(|(_, outcome)| !matches!(outcome, Err((_, true)))), "a retryable SQL concurrency outcome was returned: {outcomes:?}");
     assert_eq!(outcomes.iter().filter(|(_, outcome)| outcome.is_ok()).count(), 1, "exactly one bundle must win: {outcomes:?}");
     assert_eq!(
