@@ -74,8 +74,8 @@
 
 - `cargo fmt --all -- --check` — exit 0.
 - `git diff --check` — exit 0.
-- `AIP_TEST_DATABASE_URL='host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner' AIP_TEST_ADMIN_URL='host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner' cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --test audit_bd_lock_order --no-run` (PG* inherited env unset) — exit 0, executable 생성. DB 연결 및 assertion 실행 없음.
-- 같은 명시 DSN guard로 `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test audit_bd_idem_race --no-run` — exit 0, executable 생성. DB 연결 및 assertion 실행 없음.
+- `env -u PGHOST -u PGPORT -u PGDATABASE -u PGUSER -u PGPASSWORD -u PGSERVICE -u PGSERVICEFILE AIP_TEST_DATABASE_URL='host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner' AIP_TEST_ADMIN_URL='host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner' cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --test audit_bd_lock_order --no-run` — exit 0, executable 생성. DB 연결 및 assertion 실행 없음.
+- 같은 exact command의 manifest/test 인자만 `--manifest-path spikes/spike-v6-transport/Cargo.toml --test audit_bd_idem_race --no-run`로 바꿔 실행 — exit 0, executable 생성. DB 연결 및 assertion 실행 없음.
 - 첫 V3 `--no-run` compile은 test의 `&str` 비교에서 E0277을 찾아냈다. 참조 비교를 고친 뒤 재컴파일과 format 검사 모두 통과했다.
 
 ## 6. 수정안 (코드 변경 아님)
