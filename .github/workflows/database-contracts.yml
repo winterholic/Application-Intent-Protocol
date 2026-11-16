@@ -96,6 +96,58 @@ jobs:
           test_status=${PIPESTATUS[0]}
           echo "negated_policy exit=$test_status"
           exit "$test_status"
+      - name: Audit B+D spike-v3-write audit_bd_lock_order
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/audit-bd-lock-order-readiness.log"
+          readiness_status=${PIPESTATUS[0]}
+          if (( readiness_status != 0 )); then exit "$readiness_status"; fi
+          cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test audit_bd_lock_order -- --nocapture 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/audit-bd-lock-order.log"
+          test_status=${PIPESTATUS[0]}
+          echo "audit_bd_lock_order exit=$test_status"
+          exit "$test_status"
+      - name: Audit B+D spike-v6-transport audit_bd_idem_race
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/audit-bd-idem-race-readiness.log"
+          readiness_status=${PIPESTATUS[0]}
+          if (( readiness_status != 0 )); then exit "$readiness_status"; fi
+          cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test audit_bd_idem_race -- --nocapture 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/audit-bd-idem-race.log"
+          test_status=${PIPESTATUS[0]}
+          echo "audit_bd_idem_race exit=$test_status"
+          exit "$test_status"
+      - name: Audit baseline spike-v3-write latest_effect_values
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/latest-effect-values-readiness.log"
+          readiness_status=${PIPESTATUS[0]}
+          if (( readiness_status != 0 )); then exit "$readiness_status"; fi
+          cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test latest_effect_values -- --nocapture 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/latest-effect-values.log"
+          test_status=${PIPESTATUS[0]}
+          echo "latest_effect_values exit=$test_status"
+          exit "$test_status"
+      - name: Audit baseline spike-v3-write latest_nullable_projection
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/latest-nullable-projection-readiness.log"
+          readiness_status=${PIPESTATUS[0]}
+          if (( readiness_status != 0 )); then exit "$readiness_status"; fi
+          cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test latest_nullable_projection -- --nocapture 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/latest-nullable-projection.log"
+          test_status=${PIPESTATUS[0]}
+          echo "latest_nullable_projection exit=$test_status"
+          exit "$test_status"
       - name: Preserve policy C test logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
