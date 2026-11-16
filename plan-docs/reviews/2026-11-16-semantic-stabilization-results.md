@@ -26,6 +26,23 @@
 
 실행 검증은 해당 assertion의 실행 결과만 뜻한다. 코드 대조는 source/계약 비교이지 실행을 뜻하지 않는다. 미검증은 실패가 아니라 실행 증거가 없는 상태다. 수량을 신뢰도 백분율로 환산하지 않는다.
 
+## 확인한 코드 경로와 감사 원문
+
+다음 링크는 이동하는 main 대신 검토한 commit을 고정한다. Core 작성 언어→Semantic IR 경로와 서비스 .aip→facts 경로는 별개다. 두 경로가 같은 컴파일러를 통과한다고 가정하지 않았다.
+
+| 대상 | 고정 소스·테스트 | 이번 판단에 사용한 내용 |
+|---|---|---|
+| 제품 정의 로딩 | [aip-service load](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/crates/aip-service/src/lib.rs#L566) | load_checked로 서비스 정의를 검사한다. Core PoC compiler 검증으로 대체하지 않는다. |
+| 선택적 PoC 명령 | [CLI poc_runtime_disabled](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/crates/aip-cli/src/main.rs#L431) | feature로 분리된 PoC와 서비스 명령 경계를 확인한다. |
+| Core NULL 검사 | [Checker expr_may_be_null](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/crates/aip-sema/src/check.rs#L254) · [IR shape](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/crates/aip-sema/src/to_core.rs#L2237) | 연산별 NULL 의미와 binding/required 검사, 출력 shape에 같은 nullable 정보를 전달한다. |
+| SQL 소유 transaction | [bounded retry](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/spikes/spike-v3-write/src/lib.rs#L98) · [bundle](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/spikes/spike-v3-write/src/lib.rs#L1542) | apply/bundle/compose 소유 경로의 안전한 재시도와 caller-owned bundle_in 경계를 구분한다. |
+| HTTP apply | [V6 handle_apply](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/spikes/spike-v6-transport/src/lib.rs#L246) | SQL-only 소유 transaction의 retry를 확인한다. extension callback 전체 재실행은 추가하지 않았다. |
+| 서비스 데이터·정책 회귀 | [service_flow 데이터](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/crates/aip-cli/tests/service_flow.rs#L299) · [정책](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/crates/aip-cli/tests/service_flow.rs#L387) | 실제 JWT/HTTP/PG 상태 단언이다. generated SDK 직접 실행은 아니다. |
+| 집계 정책의 남은 경계 | [aggregate advisory](https://github.com/winterholic/Application-Intent-Protocol/blob/8337e384edbb56c08b409ca3c4acbb4690c2ad76/spikes/spike-v1-fixture/src/codes.rs#L638) | source rows read를 자동 상속하지 않는다는 현 계약을 확인했다. 공개 집계를 의도할 수도 있으므로 무조건 정보 유출 결함으로 단정하지 않는다. |
+| 상세 감사 A | [데이터 감사 c1059eaa](https://github.com/winterholic/Application-Intent-Protocol/blob/c1059eaa8d25e4ac6fc05e5880c7f06db7be536a/plan-docs/reviews/2026-11-16-semantic-audit-a-data.md) | 당시 재현·환경·정적 분석 기록이다. 이후 수정·CI 결과는 본 보고서를 우선한다. |
+| 상세 감사 C | [정책 감사 f2cad274](https://github.com/winterholic/Application-Intent-Protocol/blob/f2cad274a5871781ff66b0bc23db4b35636736a1/plan-docs/reviews/2026-11-16-semantic-audit-c-policy.md) | 정책 SQL/서비스/PoC 구분 및 당시 검증 공백을 기록한다. 후속 service_flow 성공은 아래 표에 있다. |
+| 상세 감사 B/D | [트랜잭션·확장 감사 e9011f3](https://github.com/winterholic/Application-Intent-Protocol/blob/e9011f31199a552260baefb1c7cd4e768668831b/plan-docs/reviews/2026-11-16-semantic-audit-bd-tx-ext.md) | §8의 세 앱 경계와 호환 분석을 포함한다. 초기 baseline 수치의 revision 공백과 후속 결과는 본 보고서에 구분한다. |
+
 ## A — 데이터 의미 9개 항목
 
 | # | 항목 | 판정 | 근거·경계 |
