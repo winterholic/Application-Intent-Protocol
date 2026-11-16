@@ -249,3 +249,38 @@ env -u PGHOST -u PGPORT AIP_TEST_DATABASE_URL='postgresql://test:unused@127.0.0.
 ```
 
 결과: exit 0, `Executable tests/service_flow.rs` 생성. DSN은 build guard 통과에만 쓰는 명시값이며 DB 연결은 하지 않았다. `cargo fmt --all --check`와 `git diff --check`도 exit 0. 따라서 SQL/schema/HTTP assertion 자체는 모두 미실행이다. 로컬 PostgreSQL 권한 차단에 대한 initdb 재시도나 대체 경로 접속은 하지 않았다.
+
+## 10. 기존 `latest` 실패와 제품 서비스 wrapper 도달성 (2026-11-16 후속)
+
+### 실패 증거와 공통 경계
+
+`/tmp/aip-baseline-engines.log`에서 확인한 결과는 다음과 같다.
+
+- `latest_effect_values`: `latest_effect_reads_latest_row_and_uses_fallback_in_postgres` 실패. 로그가 가리키는 `tests/latest_effect_values.rs:77`은 선택된 요약 행의 `created::text` 기대값 비교다. 직전 76행의 같은 선택 경로 `label` 단언은 통과했다.
+- `latest_nullable_projection`: `five_projections_preserve_one_nullable_candidate_and_fallback_only_for_absence`가 `apply, order 101, fallback=true`에서 실패. 테스트 루프상 이 지점 전에 `fallback=true, order 100`의 nullable selected row assertion은 통과했다. 125행은 이후 후보가 없는 order 101의 `actual` projection tuple과 기대 tuple을 비교한다. 이는 해당 실행에서 “선택된 NULL을 fallback으로 바꾸지 않기” 분기는 통과하고 “후보 부재 때 fallback” 분기에서 실패했음을 좁혀 준다.
+
+로그에는 두 실패 모두 `assertion left == right failed`만 있고 실제 left/right 값은 없다. 따라서 첫 실패의 값이 NULL, 다른 후보, 또는 timestamp text 차이인지, 두 번째 tuple에서 어느 projection이 달랐는지 확정할 수 없다.
+
+두 케이스는 공통 `latest` 표현식 lowering 경계를 쓰지만 검증 분기는 다르다. 첫 실패는 후보가 있는 행의 `created` projection 결과이며, 두 번째는 후보가 전혀 없을 때 `otherwise` fallback을 고르는 결과다. 따라서 **같은 primitive 주변의 nullable/선택 문제라는 가설은 가능하지만 단일 root cause로 확정할 증거는 없다.** 후보 선택 또는 nullable projection SQL 생성의 공통 문제와 fallback 부재 분기를 각각 후보로 둔다.
+
+코드상 Form A sema는 `latest`를 서버 update 효과의 값/대상 조건으로만 허용하고, `otherwise`의 타입 호환을 검사한다. 계약 설명은 fallback을 행 부재에만 적용하고, 선택한 행 필드의 NULL은 보존하며, 정렬 NULL 마지막·내림차순과 동률 id 내림차순을 명시한다 (`spikes/spike-v1-fixture/src/sema.rs:642-717`, `syntax_card.rs:206-207`). `spike-v2-read/src/sqlgen.rs:497-521`은 선택 subquery와 독립된 `EXISTS` presence 분기로 이 계약을 SQL로 내린다. 이는 소스 기반 설명이며 실패한 SQL의 실제 반환값은 아니다.
+
+### 현재 `aip service` 경로와 계약
+
+`latest`는 이 service에서 호출 불가능한 단순 spike 전용 기능이 아니다. 정적 호출 경로는 다음과 같다.
+
+1. `crates/aip-service/src/lib.rs::serve`는 `.aip` definition에서 `output.execution` facts를 만들고, `require_supported_runtime`을 통과시킨다. 현재 gate는 encrypted fields를 막을 뿐 `latest`를 거부하지 않는다.
+2. `serve`는 같은 facts를 PostgreSQL `spike-v6-transport::server::listen_with_infrastructure`에 전달한다. 서버는 활성 facts와 wire로 contract fingerprint를 계산하고 `/apply` 요청에 계약 헤더를 요구한다.
+3. `/apply` handler는 동일 facts로 `handle_apply` → `run_write` → `spike_v3_write::apply_in_with_wire`를 호출한다. 그래서 기존 엔진 테스트와 제품 wrapper는 같은 v3 write primitive·v2 SQL expression compiler를 공유한다. wrapper는 별도로 인증된 caller, idempotency, wire 계약을 적용한다.
+4. `spike-v1-fixture/src/isolation.rs`는 `latest`가 포함된 transition facts에 `serializable` marker를 넣는다. wrapper의 `write_needs_serializable` → `apply_attempt`가 이 marker를 읽어 실제 `/apply` transaction isolation을 고른다.
+
+따라서 기존 실패는 AIP service에서도 실행될 수 있는 DSL/primitive의 문제 후보를 다룬다. 다만 두 원래 테스트는 `spike_v3_write::apply`와 직접 PostgreSQL 연결을 사용하므로 HTTP 인증·active fingerprint·service transaction wrapper를 통과하지 않는다. 이번 A `service_flow` matrix definition에도 `latest`는 들어 있지 않다. 기존 latest projection 조건을 그 matrix에 다시 복제하지 않았다.
+
+### 남은 확인 범위
+
+- 현재 자료로 확인한 것은 call graph와 active DSL 계약까지다. 서비스 HTTP wrapper를 통과한 `latest` DB 결과는 아직 assertion 실행 증거가 없다.
+- 첫 실패의 timestamp 실제값, 두 번째 실패 tuple의 실제값, 두 실패가 같은 SQL 결함인지 여부는 미확인이다.
+- service wrapper의 fingerprint/auth/idem 경계가 이 두 데이터 결과를 바꾸는지, product deployment에서 같은 현상이 발생하는지는 미확인이다.
+- 로컬 DB를 재시도하지 않았다. C에 전달된 격리 CI full-output 결과가 오면 left/right와 wrapper 미검증 범위를 반영한다.
+
+이 후속 정적 조사는 테스트 추가나 기능 변경을 하지 않았다. 다음 A matrix 변경은 이미 있는 low-level `latest` 조건을 반복하기보다 service wrapper에서만 관측 가능한 경계를 대상으로 해야 한다. 현재 자료로는 wrapper DB 결과를 확인했다고 주장하지 않는다.
