@@ -112,3 +112,86 @@
 - 단위 회귀는 READ COMMITTED와 SERIALIZABLE의 retryable marker를 기존 상한 안에서 허용하고, business refusal 및 상한 초과를 거부한다. 테스트 first RED에서 현재 조건의 결함을 확인한 뒤 구현을 바꿔 GREEN으로 전환했다.
 - no-DB 컴파일은 V3 `audit_bd_lock_order`, `latest_effect_values` 및 V6 `bundle_http`, `write_extension_atomic`, `commit_unknown_wire`를 `--no-run`으로 빌드한다. 이는 실제 DB 실행이나 assertion 통과를 뜻하지 않는다.
 - DB GREEN 미실행. 격리 CI용 필수 실행 대상은 다음과 같다: `cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --test audit_bd_lock_order`; 관련 pure DB 영향 회귀 `cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --test latest_effect_values`; HTTP 소유 경로 `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test bundle_http` 및 `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test absence_serializable_http`; 효과/commit 경계 `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test write_extension_atomic` 및 `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test commit_unknown_wire`. DB 대상은 C가 관리하는 격리 CI이며 이 checkout에서 실행하지 않는다.
+
+## 8. Phase4 — 선언형·확장 경계 감사 (2026-11-16)
+
+이 절은 기존 B/D §2–5의 당시 판정과 §7의 제한 재시도 구현을 덮어쓰지 않는 별도 감사다. 목표는 세 포팅 앱의 실제 사용 경로를 현재 live `main`의 선언·SDK·엔진 경계와 비교하는 것이며, 기능 추가나 DSL 변경 제안은 승인하지 않는다.
+
+### 기준 revision, 재사용 증거, 읽기 범위
+
+| 출처 | 확인한 revision·용도 | 재사용 한계 |
+|---|---|---|
+| live `main` | `git ls-remote origin refs/heads/main` → `6917e476e2037f649a6620ce422cbf0a9ebfb5cb`; 같은 commit object의 `git show -s`도 같은 SHA와 제목 `fix(sema): align nullability with SQL predicates`를 반환했다. 아래 제품 파일은 이 SHA에서 읽었다. | 정본 checkout은 `release/aip-1.0-resume-20261031`의 사용자/다른 작업 변경으로 dirty였고 HEAD는 `c4a0f469c6921b645d6f2ac17cec5d5cfec0fa57`였다. 그 checkout은 편집·빌드·테스트하지 않았다. `python3 .aip-harness/check.py`는 상태와 디스크를 출력했으며 `remote_check: not_run`이다. 따라서 live SHA의 source는 commit object로 검증하고, dirty checkout의 파일을 main 증거로 사용하지 않았다. |
+| B/D | 이 문서의 §2–6은 당시 실행/판정, §7은 branch 작업자의 제한된 SQL-owned retry 변경과 no-DB 컴파일을 보존한다. `audit/semantic-bd-tx-ext-20261116` 문서 HEAD는 `af52f1c2c1310911f6bf86a84e12cbf2dc044c94`; §7의 DB GREEN은 없고 C 소유 실행 대기다. | §7의 코드는 live main에 들어간 구현으로 취급하지 않는다. 그 CI 전 단계의 40P01 기록은 `22683321` 회차의 증거이며, retry 후 DB GREEN으로 확대하지 않는다. caller-owned transaction 및 외부 callback의 재실행 한계만 경계 판정에 재사용한다. |
+| A/C | A 문서는 `f1c6696` 기반에서 Core 집계 NULL 문제와 service/Core 경계·DB 미실행을 분리한다. C 문서는 `f1c6696` 기반의 별도 branch 기록과 GitHub Actions head `57655d1fdf63ce830ad8b356a37aef345c7a10f0`에서 S-01/S-17 및 CLI baseline 실행을 기록한다. | 그 CI는 명시된 branch head와 PostgreSQL fixture의 결과다. 현재 `6917e476`에서 다시 실행한 결과나 세 앱 전체 의미 동등성으로 세지 않는다. 제품 선언·호출 경로는 아래에 다시 대조했다. C의 “새 결함 0건”은 그 테스트 범위의 관측이지 전체 권한 보증이 아니다. |
+
+현재 main에서 대조한 핵심 제품 파일은 다음과 같다.
+
+- FaceReview: `porting/facereview/ui-overlay/src/api/{readAdapter,writeAdapter,adminAdapter,adminReadAdapter,aipClient}.ts`, `porting/facereview/ui-overlay/README.md`, test definition fixture `product/tests/fixtures/facereview-mysql/facereview.aip`, worker fixtures `product/tests/fixtures/facereview-mysql/extensions/`.
+- FlaskBB: `porting/flaskbb/app.aip`, `porting/flaskbb/ui/app.py`, `porting/flaskbb/mail/flaskbb_mail.py`, `product/python/aip_sdk/__init__.py`.
+- Infisical: `porting/infisical/app.aip`, `porting/infisical/workers/infisical_jobs.py`, `porting/infisical/tests/test_encryption_contract.py`, `plan-docs/porting/INFISICAL-GAPS.md`.
+- 제품 경계 확인: `crates/aip-service/src/lib.rs`, `crates/aip-service/src/mysql_jobs.rs`, TypeScript SDK `product/sdk/index.ts`, Python SDK `product/python/aip_sdk/__init__.py`. AIP service가 일부 `spike-*` 실행 모듈을 직접 의존한다는 사실은 제품 호출 경로 근거이며, `aip-cli` PoC/Core test를 service 실행 증거로 바꾸지 않는다.
+
+FaceReview의 `.aip` 선언은 main에 제품 정의 파일로 포함돼 있지 않다. 여기 인용한 `product/tests/fixtures/facereview-mysql/facereview.aip`는 서비스/확장 시험용 정의다. UI overlay의 실제 SDK 호출은 현재 main에서 확인했지만 그 호출이 운영 배포에 쓰인 정의와 정확히 같은지, 운영 authorization/facts와 DB driver까지 일치하는지는 이 checkout만으로 확인할 수 없다.
+
+### 다섯 판단 단계 적용
+
+아래 각 사례에서 ①기존 primitive 조합, ②primitive 결함, ③공식 확장 경계, ④반복되는 일반 패턴, ⑤신규 표준화 비용 순으로 판단했다. 이 읽기 전용 대조에서는 현재 live main의 Core/service primitive 결함을 새로 재현하지 않았다. “결함”은 현재 source에서 잘못된 동작이 확인된 경우에만 썼고, 미실행·외부 정의 누락은 설계 선택 또는 검증 공백으로 분리했다.
+
+#### FaceReview
+
+1. **기존 조합:** `readAdapter.ts`는 `Video.homeSearch`, `Video.homeVideoAll`, `Video.watchDetail` 같은 `client.extension(name,input)` 호출과 typed SDK `read`/`apply`를 함께 사용한다. `writeAdapter.ts`는 bookmark/like/comment CRUD에 `apply`와 `bundle({atomic:[...]})`, 추천 요청에 `writeExtension`을 사용한다. `adminAdapter.ts`는 선언 transition `apply`와 `approveVideoRequest` job의 `enqueue → status → result`를 나눈다. CRUD·상태 변경·atomic SQL bundle은 기존 primitive로 처리되고, UI의 기존 route envelope 재조립은 TS adapter에서 담당한다.
+2. **primitive 결함 판정:** AIP core primitive 결함을 새로 재현하진 않았다. `getVideoDetail`은 먼저 read extension으로 상세 응답을 만든 뒤 `Video.view` transition을 별도 요청으로 실행한다. 그 apply가 거절되거나 실패해도 adapter는 경고 후 상세 응답을 반환한다. 이는 코드에서 확인되는 두 요청·부분 성공 동작이며 원본 계약과의 차이다(원본 구현은 read 중 view count를 바꾸고 전체 요청 실패 가능성이 있다고 adapter 주석에 기록). 한 트랜잭션으로 합쳐야 한다는 결론은 아니다. 공개 상세 응답을 유지하면서 조회 수만 누락될 수 있는 호환 선택이며, P2 의미·운영 지표 검증 항목이다. `getEmotionSummary`는 GET 이름의 호출을 매번 새 idempotency key를 쓰는 `writeExtension('User.myEmotionSummary',...)`로 바꾸므로 캐시·재시도 때 누적 갱신 횟수가 달라질 수 있다. 이는 우연한 primitive 버그가 아니라 원본 GET의 mutation을 명시적으로 옮긴 계약 선택이다.
+3. **공식 확장:** fixture 선언은 `User.myEmotionSummary`의 write extension(선언 입력/출력과 worker implementation), 여러 `Video.*` read extension, `VideoRequest.recommend`, 그리고 `approveVideoRequest` durable job을 구별한다. TS 호출부는 `extension`, `writeExtension`, `jobs.enqueue/status/result`를 호출한다. 추천·개인화·Mongo 기반 감정 타임라인·외부 영상 provider처럼 relational read/transition만으로 대체할 수 없는 로직은 extension/job에 자연스럽다. 단, approve job 입력은 request id와 관리자가 제공한 제목/채널/길이/category이고 fixture access는 VideoRequest/Video 생성·accept와 Mongo capability다. adapter 주석대로 이 job은 YouTube API 호출을 포함하지 않는다. 운영 선언은 미확인이다.
+4. **반복 패턴:** 여러 읽기 함수가 서버 extension의 scalar output에서 JSON text(`videos`, `categories`, `body`, `timeline_data`)를 다시 파싱해 원래 UI DTO로 바꾼다. admin read adapter도 여러 aggregate/extension을 모아 기존 API envelope를 조립한다. 이는 app adapter 층에서 반복되지만 “모든 응답을 JSON scalar로 넣는” 일반 protocol 필요성은 이 사례만으로 입증되지 않는다. SDK typed `read`와 standalone `aggregate`를 이미 사용하는 경로는 별도 유지한다.
+5. **신규 표준화 비용:** 공통 DTO/JSON envelope wrapper를 core DSL에 넣으면 transport schema, 타입 생성, nullability, 오류 매핑, 기존 generated SDK 호환을 함께 바꿔야 한다. 현 증거는 한 앱의 route compatibility adapter에 집중돼 있어 비용 대비 이점이 낮다. 반복은 앱 adapter의 작은 helper로 관리하고, 두 번째 독립 앱에서 같은 shape 부족과 실제 소비를 확인하기 전 새 표준화를 P3/보류로 둔다.
+
+#### FlaskBB
+
+1. **기존 조합:** `app.aip`의 resource policy·`expose read/create`·transition·bounded multi-row effect·aggregate를 `ui/app.py`의 Python SDK `read/apply/bundle` 호출이 사용한다. 예를 들어 Topic/Post moderation과 Forum/Topic read projection은 선언형이다. 프로필 값 변경과 favorite genre 교체는 UI adapter가 현재 목록을 읽고 create/remove 연산을 한 atomic bundle에 넣는다. 관계·row policy 및 같은 DB 안의 원자성은 custom route를 proxy하지 않고 primitive로 다룬다.
+2. **primitive 결함 판정:** 현재 main의 primitive 결함은 재현되지 않았다. Infisical G11은 environment와 root folder를 원본에서는 함께 만들지만 현재 port에서 두 요청으로 나누는 사례다. 반면 FlaskBB `ui/app.py`는 Topic/Post id를 bundle 전에 준비한 뒤 두 related row를 한 atomic bundle에서 생성한다. 따라서 “parent-child 생성은 primitive가 없다”는 일반 결론은 성립하지 않는다. Infisical의 남은 차이는 생성된 Environment ID를 후속 Folder 생성에 전달하면서 한 작업으로 authorization·rollback·idempotency를 보존하는 구체 표현 문제다. 현재 live DB journey로 중간 실패를 재현하진 않아 설계 공백/검증 항목으로 분류한다. FlaskBB G-6의 source order/PostOrder mapping과 `latest` projection 다중 필드 선언은 “추상화가 덜 마음에 든다”는 이유만으로 결함 취급하지 않는다. 원본 정수 순서 보존 문제와 선언/테스트 mismatch가 별도 증명돼야 한다.
+3. **공식 확장:** `app.aip`의 `sendActivationEmail`·`sendPasswordResetEmail` job은 bounded input/output, `allow`에서 actor 본인 주소/사용자명을 제한하고, `access http.mail`, `effect managed`, deadline, `implementation`을 선언한다. `mail/flaskbb_mail.py`가 외부 메일 실행을 구현한다. 현재 main의 실제 SDK enqueue 호출은 `tests/mail-jobs.test.mjs`의 `alice.jobs.enqueue` journey에서 확인된다. `ui/app.py`에는 production UI에서 이 두 job을 enqueue하는 호출이 없어 운영 UI 연결은 미확인이다. 외부 메일은 SQL transaction에 원자적으로 묶이지 않는다. `effect managed`는 job 실행 경계·기록을 뜻하지 SMTP와 DB의 분산 원자성을 뜻하지 않는다. 이외 forum CRUD는 확장보다 선언형이 적절하다.
+4. **반복 패턴:** `ui/app.py`에는 같은 resource별 query/filter/response shaping 호출이 여러 route에서 반복되고 `.aip`에는 유사한 ownership/policy predicates와 per-resource budget이 있다. 이 반복은 typed client/helper와 도메인 predicate 재사용으로 줄일 수 있는 앱 계층 패턴이다. 이름만 다른 요청을 하나의 범용 DSL operation으로 합칠 근거는 아니다.
+5. **신규 표준화 비용:** FlaskBB가 보여 주듯 id를 caller가 미리 정할 수 있는 관련 생성은 현재 atomic bundle로 처리된다. Infisical의 G11은 server-generated Environment ID를 후속 Folder input으로 넘겨야 하는 사례여서, 일반 graph-create를 도입하면 임시 ID 참조, 각 row의 `allow`, create ordering, 실패 원자성, 반환 ID, 재시도·idempotency를 명세해야 한다. 현재 확인된 미충족 수요는 Infisical 한 곳이며 공통 primitive가 최소인지 입증되지 않았다. 우선순위 P2 source/DB 재현 조사, 즉시 primitive 추가/기존 호출 변경 없음.
+
+#### Infisical
+
+1. **기존 조합:** `app.aip`는 Org/Project/Environment/Folder/Secret/PersonalSecret 관계, `rows read`와 write predicates, uniqueness, CRUD transitions, 제한된 multi-row delete, read projection, `secretReminder` job을 선언한다. 이 구조·authorization slice는 기존 DSL로 표현된다. secret value 자체는 활성 정의에서 의도적으로 제외돼 있다.
+2. **primitive 결함 판정:** 실행 가능한 primitive 결함은 확인하지 않았다. G2의 암호화 저장·읽기·버전 이력·키 회전 통합은 구현되지 않았으며 main의 `test_encryption_contract.py`는 experimental encrypted fixture의 check advisory와 init/serve 차단, 금지된 modifier 거절을 확인하는 정적/경계 test다. 이는 암호 primitive 존재와 제품 feature 완료를 혼동하지 않는 명시적 scope다. G14의 임의 깊이 force-delete, G16의 시간 산술/position 재정렬은 현재 표현의 부족 또는 명시적 기능 미포팅이고, G11 root folder 두 번째 create는 부분상태 경계다. 이 셋은 본 감사에서 실행된 service DB 재현이 아니므로 결함으로 승격하지 않는다.
+3. **공식 확장:** `secretReminder`는 input `Secret.Id`, output count, actor/secret visibility `allow`, `access read.Secret, Secret.remind`, `effect managed`, deadline, Python implementation을 선언한다. 구현(`workers/infisical_jobs.py`)은 reminder 상태를 기록하는 흐름이며 주석의 선언대로 메일/Slack 전달은 포함하지 않는다. main의 enqueue 호출은 `tests/live_harness.py` 및 `tools/baseline_client.py`/live DB test harness에서 확인되고, 사용자 UI의 production enqueue 경로는 확인되지 않았다. secret value 암호화는 이 worker 확장이 해결하는 문제가 아니다. 값 저장·복호화는 data-plane에서 호출되는 provider/crypto capability와 인가·저장·감사·키 lifecycle 계약이 필요하며 별도 설계/통합 검증 범위다.
+4. **반복 패턴:** canReadProject/canWriteProject 같은 경계가 여러 resource와 transition에서 반복되고, project→environment→folder→secret 트리의 동일 authorization 조건이 누적된다. 공통 predicate 재사용은 선언 수준에서 이미 보인다. 반복 delete shapes(Secret + PersonalSecret 등)는 관계별 cascade와 보존 조건이 다르므로 단순 문법 축약의 대상이라고 단정하지 않는다.
+5. **신규 표준화 비용:** encryption primitive를 활성화하면 serialization, searchable/indexed 조회, 비밀값 노출 정책, 감사·journal 평문, unique 제약, rotation/retry, rollback 및 구버전 호환까지 영향을 받는다. 현재 `docs/design/13-field-encryption.md`는 Proposed이고 활성 정의는 runtime gate로 거부된다. 비용은 높고 파급이 커 P1은 설계 승인/위험 표면 닫기, P0 변경이나 gate 해제는 없음. 재귀 delete와 time arithmetic도 업무 의미·상한·복구를 먼저 정하지 않고 일반 연산자를 추가할 근거는 없다.
+
+### 확장 계약과 DSL 경계
+
+| 경로 | 입력·출력 | 인가 | 데이터베이스 범위·transaction | 외부 효과 |
+|---|---|---|---|---|
+| 선언형 `read`/`apply`/`bundle` | `.aip`의 resource field, filter, select, transition 입력·결과. TS/Python SDK가 wire 응답을 소비한다. | resource `rows read`, transition `allow/from`, operation의 명시 access. | service가 SQL 요청을 수행한다. `bundle`/owned apply의 DB 변경·audit/idempotency는 같은 요청 transaction 경계 안에서 처리한다. | 직접 외부 provider 호출을 뜻하지 않는다. |
+| read extension (FaceReview) | TS adapter가 이름·input을 보내고 scalar output을 JSON text로 풀어 기존 UI DTO에 맞춘다. fixture operation declaration은 테스트 정의다. | 정의의 `allow`/`access`가 경계여야 하나 production definition은 이 checkout에서 미확인이다. | fixture implementation은 relational DB 및 Mongo read 등 선언 capability를 쓸 수 있다. read와 별도 `apply`를 호출하는 watch count 경로는 한 transaction이 아니다. | 외부 YouTube/provider 호출 여부는 operation 별도. approve job 주석은 YouTube 호출을 제외한다. |
+| write extension (FaceReview) | `writeAdapter`/`readAdapter`가 input과 idempotency key를 보낸다. `myEmotionSummary`의 response `body`는 JSON text다. | 실제 운영 operation의 `allow`/`access`는 현재 checkout 미확인. UI의 member guard는 서버 인가 대체물이 아니다. | V6 HTTP extension 경로는 일반 owned `/apply` retry와 다르며 외부 callback을 통째로 재실행하지 않는다. DB callback atomicity는 구현 contract에 제한된다. | extension 내부 provider/aggregate effect별 별도. 키 재사용 시 같은 결과 재생 가능성이 GET mutation 의미와 충돌할 수 있다. |
+| durable job (FaceReview / FlaskBB / Infisical) | 선언의 typed input/output, deadline, implementation name. FaceReview admin client는 enqueue→status→result, Python은 SDK `jobs` client를 제공한다. | enqueue 가능한 operation과 worker access/principal은 별도 policy 계약이다. Fixture에서 admin/service 호출을 실제 운영 정의로 일반화하지 않는다. | job state/journal 및 worker 실행 tx는 DB 변경과 조정되지만 분리된 외부 시스템과 원자 commit이 되지 않는다. caller-owned transaction callback은 자동 재시도에서 제외한다(§7). | FlaskBB mail은 SMTP/provider 외부 효과. Infisical reminder는 outbox 상태 기록뿐이고 mail/Slack 전달은 하지 않는다. |
+
+따라서 DSL의 기본선은 관계·권한·조건부 상태 전이·요청 단위 SQL atomicity·제한된 aggregate/read 계획이다. 외부 provider, 비관계 계산, arbitrary legacy response 조립, 장기 실행 작업은 선언된 access/입출력/실행 효과 경계를 가진 공식 extension/job 쪽이 자연스럽다. Extension은 업무 controller를 무제한 proxy하는 통로가 아니며, 이름/input/output이 선언과 맞고 actor/access·deadline·idempotency·외부 효과의 재실행 특성을 별도로 검토해야 한다.
+
+SDK와 worker 언어도 구분한다. FaceReview overlay의 TypeScript와 FlaskBB/Infisical의 Python 코드는 공식 SDK client이며, worker implementation은 `.aip`의 `implementation` 이름으로 연결된다. current main `crates/aip-service/src/mysql_jobs.rs` worker bundle은 `.py`와 `.mjs`를 포함한다. 따라서 TS client 호출은 TS server extension implementation이 존재한다는 증거가 아니다. FlaskBB·Infisical은 Python worker 파일과 operation declaration을 확인했으며, FaceReview fixture의 worker implementations는 Python 파일이다.
+
+### 과도한 조합, 의미 통합 위험, 우선순위
+
+| 사례 | 분류 | 재현성·호환 영향 | 우선순위/현재 조치 |
+|---|---|---|---|
+| FaceReview GET 화면 호출 후 read+view apply 두 요청 | 실제 adapter 의미 차이, 고의 compatibility 선택 | source상 view apply 실패를 warning으로 삼키고 detail은 반환한다. DB 실행으로 실패 경로를 새로 검증하진 않았다. 사용자에게 상세는 보이되 조회수 집계가 누락될 수 있음. | P2: UI/지표 계약과 실패 로그 확인. 현행 경로 삭제·재설계 없음. |
+| FaceReview legacy GET의 `myEmotionSummary` write extension | 의미 경계 명시 필요 | source상 호출마다 새 key를 생성해 mutation을 실행한다. cache/retry가 count에 미치는 영향은 코드에서 예상 가능하지만 요청 재생을 이번에 실행하지 않았다. | P2: idempotency와 원본 GET parity 확인. GET 의미로 강제 변환하지 않음. |
+| Infisical Environment + root Folder 두 요청 | 앱 한 곳의 expressiveness/verification 후보 | existing G11은 중간 상태를 기록한다. FlaskBB의 Topic+Post bundle은 caller-preassigned id를 사용해 existing primitive로 원자 생성하는 반례다. 이번엔 Infisical current-main DB/SDK journey에서 두 번째 요청 실패를 재현하지 않았다. | P2 조사. generated-ID threading·Folder authorization·rollback·retry contract를 재현하기 전 새 compound primitive 없음. |
+| FlaskBB 다수 `latest`/projection 및 Infisical bounded multi-delete | 선언 조합의 복잡성, 현재 source상 의도 | 반복은 읽히기 어렵고 상한/순서/NULL 의미를 함께 담지만 특정 잘못된 SQL/결과를 현재 실행으로 재현하지 않았다. 단순 축약은 field별 기준·row policy·부분 삭제 거절을 합쳐 의미를 바꿀 수 있다. | P2 readability/source-map 및 계약 시험. 선언 제거/통합 없음. |
+| Infisical 암호화 미포함·G14 재귀 삭제·G16 시간/position 의미 | 범위 결정 또는 미충족 capability, 실행 결함으로 미확정 | encrypted runtime gate는 의도된 fail-closed 경로. 삭제·시각 산술은 적용 경로에서 실행해 parity를 검증하지 않았고, current docs는 proposed/unsupported로 분리한다. | G2는 P1 설계/제품 승인과 역호환 분석, G14/G16은 요구별 우선순위 산정. gate 해제·권한 완화 없음. |
+| C aggregate source policy, A Core aggregate NULL | 검증된 경계 주의와 이전 revision의 Core 결함 후보 | C S-01/S-17 실행은 정확한 branch head의 PG test다. A Core NULL 결과는 service path 결함으로 확인되지 않았다. `callerFilter` aggregate가 row policy를 자동 상속한다고 가정하지 말아야 하나 이번 단계에서 새 exploit/제품 결함을 재현하지 않았다. | P1 기존 C의 service `/read` aggregate matrix, A Core↔service 계약 비교. 선언을 한 의미로 자동 통합하지 않음. |
+
+현재 확인한 반복 패턴은 “새 범용 프레임워크”보다 앱 adapter/SDK helper에서 먼저 처리할 성격이다. Parent-child atomic creation 자체는 FlaskBB에서 기존 bundle로 확인됐지만 Infisical의 generated-ID 전달과 같은 의미라고 볼 수 없다. operation 결과 JSON을 richer type로 바꾸거나 extension을 일반 handler로 통합하는 변경은 generated SDK 및 기존 definition/wire 호환 영향을 조사하지 않아 이번 결론에서 제안하지 않는다.
+
+### 검증 및 미실행 범위
+
+- live main 대조: `git ls-remote origin refs/heads/main` 출력 SHA와 `git show -s --format='%H %s' 6917e476e2037f649a6620ce422cbf0a9ebfb5cb`의 commit SHA가 같다. 주요 제품 파일을 그 commit으로 `git show`/`git grep`하여 호출·선언 이름을 확인했다.
+- 문서의 과거 상태 대조: A/C 이전 head `f1c6696`, C CI head `57655d1…`, B/D 문서 head `af52f1c…`, B/D 후속 CI evidence head `22683321…`를 서로 다른 revision으로 기록했다. 과거 문서의 실행 결과를 `6917e476`의 신규 실행으로 옮기지 않았다.
+- 읽은 호출/선언: `readAdapter.ts`의 `Video.watchDetail`→`apply Video.view`, `User.myEmotionSummary` write extension; `writeAdapter.ts`의 atomic bundle 및 `VideoRequest.recommend`; `adminAdapter.ts`의 `approveVideoRequest`; FaceReview test fixture의 대응 operation/implementation; FlaskBB `ui/app.py`의 Topic+Post atomic bundle, mail job definition/implementation 및 `tests/mail-jobs.test.mjs`의 enqueue call; Infisical `secretReminder` definition/implementation 및 test/tool enqueue call; Infisical root folder G11과 G2/G14/G16 경계.
+- 실행하지 않은 것: 어떤 앱의 DB GREEN, service/HTTP/SDK journey, 브라우저, worker/provider, CI 재실행, `initdb`, clone/target/container/DB 생성 모두 미실행이다. DB GREEN은 C 소유로 남겼고 실행 중 CI를 조회·취소하지 않았다. source audit이므로 실행을 하지 않았으며, 구현 의도·production FaceReview definition 및 실제 운영 actor/access는 unverified다.
+- 제품 code, DSL 문법, main 및 dirty release checkout은 수정하지 않았다. 이 절은 감사 브랜치의 문서 전용 변경이다.
