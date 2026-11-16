@@ -17,6 +17,25 @@ use tokio::{
 
 const DB: &str = aip_test_support::test_database_url!();
 const APP: &str = include_str!("../../../prototype/example/app.aip");
+const SERVICE_POLICY_APP: &str = r#"
+resource Member { fields { id: Id; org: Text } rows read when true }
+actor Member
+resource Record {
+  fields { id: Id; org: Text; owner: Member; title: Text; secret: Text; checked: Bool }
+  // `org` is an ordinary user-defined field and row predicate, not a service tenant primitive.
+  rows read when org = actor.org
+  field secret read when owner = actor
+  transition edit { allow owner = actor; from true; patch title; to checked = checked }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose read { select id, org, owner, title, secret, checked; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+}
+resource Locked {
+  fields { id: Id; value: Text; checked: Bool }
+  transition edit { allow true; from true; patch value; to checked = checked }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose read { select id, value, checked; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+}
+"#;
 const SEMANTIC_DATA_APP: &str = r#"
 enum Phase { READY, DONE }
 resource Member {
@@ -359,6 +378,115 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         stop(child).await;
     }).catch_unwind().await;
     db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE; DROP SCHEMA IF EXISTS {undeclared_schema} CASCADE")).await.unwrap();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn service_policy_default_deny_redaction_and_hidden_target_invariants() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = format!("aip_policy_{}", uuid::Uuid::new_v4().simple());
+    let config = dir.path().join("service.json");
+    let file = dir.path().join("policy.aip");
+    std::fs::write(&file, SERVICE_POLICY_APP).unwrap();
+    let private = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
+    let public = private.to_public_key();
+    std::fs::write(
+        dir.path().join("jwks.json"),
+        json!({"keys":[{"kty":"RSA","kid":"current","alg":"RS256","use":"sig","n":URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())}]}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &config,
+        json!({"schema":schema,"database_url_env":"AIP_TEST_DATABASE","listen":"127.0.0.1:0","wire":"decimal","allowed_origins":["https://app.example.com"],"auth":{"issuer":"https://issuer.example","audience":"aip-api","jwks":{"kind":"file","path":"jwks.json"}}}).to_string(),
+    )
+    .unwrap();
+    command(&config, &["init", file.to_str().unwrap()]).await;
+    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
+    let outcome = AssertUnwindSafe(async {
+        db.batch_execute(&format!(
+            "INSERT INTO {schema}.member(id,org) VALUES (42,'red'),(99,'red'),(100,'blue'); \
+             INSERT INTO {schema}.record(id,org,owner_id,title,secret,checked) VALUES \
+             (1,'red',42,'mine','owner-secret',false),(2,'red',99,'peer-secret','redacted-secret',false),(3,'blue',99,'foreign','hidden-secret',false); \
+             INSERT INTO {schema}.locked(id,value,checked) VALUES (7,'locked-seed',false)"
+        ))
+        .await
+        .unwrap();
+        command(&config, &["principal", "bind", "--subject", "policy-user", "--actor", "42"]).await;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mut header = Header::new(Algorithm::RS256);
+        header.typ = Some("at+jwt".into());
+        header.kid = Some("current".into());
+        let key = EncodingKey::from_rsa_der(private.to_pkcs1_der().unwrap().as_bytes());
+        let token = encode(
+            &header,
+            &json!({"iss":"https://issuer.example","aud":"aip-api","sub":"policy-user","iat":now,"nbf":now,"exp":now+300}),
+            &key,
+        )
+        .unwrap();
+        let (child, listening) = start(&config, &file).await;
+        let address = listening["address"].as_str().unwrap();
+        let fingerprint = listening["fingerprint"].as_str().unwrap();
+
+        let locked_read = post(address, "/read", &token, fingerprint, json!({"query":{"read":"Locked","select":["id","value"]}})).await;
+        assert_eq!(locked_read["rows"], json!([]), "omitted rows read declaration defaults to no visible rows");
+        let locked_apply = post(
+            address,
+            "/apply",
+            &token,
+            fingerprint,
+            json!({"key":"locked-default-deny","request":{"apply":"Locked.edit","target":{"ids":["7"]},"values":{"value":"changed"}}}),
+        )
+        .await;
+        assert_eq!(locked_apply["code"], "WIRE.MISSING_TARGET", "a target without rows read is unavailable to apply");
+        let locked_value: String = db.query_one(&format!("SELECT value FROM {schema}.locked WHERE id=7"), &[]).await.unwrap().get(0);
+        assert_eq!(locked_value, "locked-seed", "default-denied apply leaves the row unchanged");
+
+        let query = json!({"query":{"read":"Record","select":["id","title","secret"],"sort":[{"field":"id","dir":"asc"}]}});
+        let visible = post(address, "/read", &token, fingerprint, query).await;
+        assert_eq!(visible["rows"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["1", "2"], "organization row policy filters the other organization's row");
+        assert_eq!(visible["rows"][0]["secret"], "owner-secret", "owner can read the protected field");
+        assert_eq!(visible["rows"][1]["secret"], Value::Null, "field policy redacts a same-organization peer's secret");
+
+        let visible_denied = post(
+            address,
+            "/apply",
+            &token,
+            fingerprint,
+            json!({"key":"visible-action-denied","request":{"apply":"Record.edit","target":{"ids":["2"]},"values":{"title":"forged"}}}),
+        )
+        .await;
+        assert_eq!(visible_denied["code"], "WIRE.FORBIDDEN", "visible same-organization row still requires transition authorization");
+        let hidden = post(
+            address,
+            "/apply",
+            &token,
+            fingerprint,
+            json!({"key":"hidden-target","request":{"apply":"Record.edit","target":{"ids":["3"]},"values":{"title":"forged"}}}),
+        )
+        .await;
+        let missing = post(
+            address,
+            "/apply",
+            &token,
+            fingerprint,
+            json!({"key":"missing-target","request":{"apply":"Record.edit","target":{"ids":["404"]},"values":{"title":"forged"}}}),
+        )
+        .await;
+        assert_eq!(hidden["code"], "WIRE.MISSING_TARGET", "row-read-hidden targets are reported as unavailable");
+        assert_eq!(hidden["code"], missing["code"], "hidden and nonexistent targets have the same wire error");
+        let titles = db.query(&format!("SELECT id,title FROM {schema}.record WHERE id IN (2,3) ORDER BY id"), &[]).await.unwrap();
+        assert_eq!(titles.iter().map(|row| row.get::<_, String>(1)).collect::<Vec<_>>(), vec!["peer-secret", "foreign"], "denied visible and hidden applies leave both target rows unchanged");
+
+        db.execute(&format!("UPDATE {schema}.member SET org='blue' WHERE id=42"), &[]).await.unwrap();
+        let after_policy_change = post(address, "/read", &token, fingerprint, json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"id","dir":"asc"}]}})).await;
+        assert_eq!(after_policy_change["rows"], json!([{"id":"3"}]), "the same JWT sees the updated actor policy on the next request");
+        stop(child).await;
+    })
+    .catch_unwind()
+    .await;
+    db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
