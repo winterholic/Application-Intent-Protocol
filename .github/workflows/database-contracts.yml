@@ -13,6 +13,12 @@ on:
       - 'spikes/spike-v6-transport/src/**'
       - '.github/workflows/database-contracts.yml'
   workflow_dispatch:
+    inputs:
+      service_semantics_only:
+        description: Run only the isolated PostgreSQL service data semantics matrix
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -67,11 +73,12 @@ jobs:
           echo "postgres diagnostics exit=$diagnostic_status"
           exit "$diagnostic_status"
       - name: Verify credential replacement and documented runtime grants under SCRAM
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.service_semantics_only != true }}
         run: |
           cargo test -p aip-test-support --locked
           cargo test -p aip-cli --test least_privilege --locked -- --nocapture
       - name: Audit C aip-cli baseline on isolated PostgreSQL
-        if: always()
+        if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.service_semantics_only == true) }}
         shell: bash
         run: |
           set -uo pipefail
@@ -84,7 +91,7 @@ jobs:
           echo "aip-cli baseline exit=$test_status"
           exit "$test_status"
       - name: Audit C service data semantics over HTTP and database state
-        if: always()
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.service_semantics_only == true) }}
         shell: bash
         run: |
           set -uo pipefail
@@ -97,7 +104,7 @@ jobs:
           echo "service data semantics exit=$test_status"
           exit "$test_status"
       - name: Audit C spike-v2-read security_authorization
-        if: always()
+        if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.service_semantics_only == true) }}
         shell: bash
         run: |
           set -uo pipefail
@@ -110,7 +117,7 @@ jobs:
           echo "security_authorization exit=$test_status"
           exit "$test_status"
       - name: Audit C spike-v2-read negated_policy
-        if: always()
+        if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.service_semantics_only == true) }}
         shell: bash
         run: |
           set -uo pipefail
@@ -123,7 +130,7 @@ jobs:
           echo "negated_policy exit=$test_status"
           exit "$test_status"
       - name: Audit B+D spike-v3-write audit_bd_lock_order
-        if: always()
+        if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.service_semantics_only == true) }}
         shell: bash
         run: |
           set -uo pipefail
@@ -136,7 +143,7 @@ jobs:
           echo "audit_bd_lock_order exit=$test_status"
           exit "$test_status"
       - name: Audit B+D spike-v6-transport audit_bd_idem_race
-        if: always()
+        if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.service_semantics_only == true) }}
         shell: bash
         run: |
           set -uo pipefail
@@ -149,7 +156,7 @@ jobs:
           echo "audit_bd_idem_race exit=$test_status"
           exit "$test_status"
       - name: Audit baseline spike-v3-write latest_effect_values
-        if: always()
+        if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.service_semantics_only == true) }}
         shell: bash
         run: |
           set -uo pipefail
@@ -162,7 +169,7 @@ jobs:
           echo "latest_effect_values exit=$test_status"
           exit "$test_status"
       - name: Audit baseline spike-v3-write latest_nullable_projection
-        if: always()
+        if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.service_semantics_only == true) }}
         shell: bash
         run: |
           set -uo pipefail
@@ -203,7 +210,7 @@ jobs:
           retention-days: 7
 
   mysql-and-mariadb-fences:
-    if: github.ref != 'refs/heads/audit/semantic-c-policy-20261116'
+    if: ${{ github.ref != 'refs/heads/audit/semantic-c-policy-20261116' && !(github.event_name == 'workflow_dispatch' && inputs.service_semantics_only == true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:

@@ -19,7 +19,11 @@ const DB: &str = aip_test_support::test_database_url!();
 const APP: &str = include_str!("../../../prototype/example/app.aip");
 const SEMANTIC_DATA_APP: &str = r#"
 enum Phase { READY, DONE }
-resource Member { fields { id: Id; name: Text } rows read when true }
+resource Member {
+  fields { id: Id; name: Text }
+  rows read when true
+  expose read { select id, name }
+}
 actor Member
 access visibleVotes(a: Member) = true
 resource Event {
@@ -27,7 +31,12 @@ resource Event {
   rows read when member = actor
   transition edit { allow member = actor; from true; patch title, note, amount; to checked = checked }
   expose apply edit { target id; bulk maxRows 1 }
-  expose read { select id, member, title, note, amount, phase, score, checked, voteCount; sort score; budget { rows 20; depth 2; deadline 2s; cost 1000 } }
+  expose read {
+    select id, member, title, note, amount, phase, score, checked, voteCount
+    traverse member { select id, name }
+    sort score
+    budget { rows 20; depth 2; deadline 2s; cost 1000 }
+  }
   aggregate voteCount: Int { source Vote; sourceAccess visibleVotes(actor); groupKey event; callerFilter none; rowOutput none; release count }
 }
 resource Vote { fields { id: Id; event: Event } rows read when true }
@@ -271,6 +280,7 @@ async fn product_identity_migration_and_restart_use_the_same_contract() {
 async fn service_data_semantics_hold_across_http_and_database_state() {
     let dir = tempfile::tempdir().unwrap();
     let schema = format!("aip_semantic_data_{}", uuid::Uuid::new_v4().simple());
+    let undeclared_schema = format!("aip_semantic_negative_{}", uuid::Uuid::new_v4().simple());
     let config = dir.path().join("service.json");
     let file = dir.path().join("data.aip");
     std::fs::write(&file, SEMANTIC_DATA_APP).unwrap();
@@ -319,12 +329,36 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
 
         // The same rows inserted in the opposite order must yield the identical sorted response.
         db.batch_execute(&format!("DELETE FROM {schema}.vote; DELETE FROM {schema}.event; INSERT INTO {schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES (13,42,'boundary',NULL,NULL,'READY',99999999.99,false),(11,42,'first',NULL,'99999999.99','DONE',10.50,false),(12,42,'second','kept','1.20','READY',10.50,false); INSERT INTO {schema}.vote(id,event_id) VALUES(1,11)")).await.unwrap();
-        let permuted = post(address,"/read",&token,fingerprint,query).await;
+        let permuted = post(address,"/read",&token,fingerprint,query.clone()).await;
         assert_eq!(permuted["ok"],true,"{permuted}");
         assert_eq!(permuted["rows"],first["rows"],"input insertion order does not change the semantic result");
         stop(child).await;
+
+        // The old fixture's omitted Event traverse declaration remains a negative control.
+        let undeclared_source = SEMANTIC_DATA_APP.replace("    traverse member { select id, name }\n", "");
+        assert_ne!(undeclared_source, SEMANTIC_DATA_APP, "negative control must remove the Event traverse declaration");
+        let undeclared_file = dir.path().join("undeclared-traverse.aip");
+        std::fs::write(&undeclared_file, undeclared_source).unwrap();
+        let undeclared_config = dir.path().join("undeclared-service.json");
+        let mut undeclared_config_value: Value = serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        undeclared_config_value["schema"] = json!(undeclared_schema);
+        std::fs::write(&undeclared_config, undeclared_config_value.to_string()).unwrap();
+        command(&undeclared_config, &["init", undeclared_file.to_str().unwrap()]).await;
+        db.batch_execute(&format!("INSERT INTO {undeclared_schema}.member(id,name) VALUES(42,'Ada'); INSERT INTO {undeclared_schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES(11,42,'first',NULL,'99999999.99','DONE',10.50,false)")).await.unwrap();
+        command(&undeclared_config, &["principal","bind","--subject","semantic-user","--actor","42"]).await;
+        let (child, undeclared_listening) = start(&undeclared_config, &undeclared_file).await;
+        let denied = post(
+            undeclared_listening["address"].as_str().unwrap(),
+            "/read",
+            &token,
+            undeclared_listening["fingerprint"].as_str().unwrap(),
+            query,
+        )
+        .await;
+        assert_eq!(denied["code"],"WIRE.TRAVERSE_NOT_ALLOWED","undeclared relation traversal remains default-deny: {denied}");
+        stop(child).await;
     }).catch_unwind().await;
-    db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
+    db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE; DROP SCHEMA IF EXISTS {undeclared_schema} CASCADE")).await.unwrap();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
