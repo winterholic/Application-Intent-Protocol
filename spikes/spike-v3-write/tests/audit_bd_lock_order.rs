@@ -4,10 +4,10 @@
 //! point. `WIRE.CONFLICT` alone is not a deadlock signal: only V3's retryable SQL-conflict marker is counted below.
 //! The public result does not retain the raw SQLSTATE, so PostgreSQL log evidence remains necessary for diagnosis.
 //! Expected business result: one bundle wins both rows and the other receives `WIRE.INVALID_STATE` on the claimed row.
-use serde_json::{Value, json};
-use spike_v1_fixture::{Form, load_str};
+use serde_json::{json, Value};
+use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{connect_with_url, plan::Caller, sqlgen};
-use spike_v3_write::{Knobs, bundle};
+use spike_v3_write::{bundle, Knobs};
 use std::{sync::Arc, time::Duration};
 
 const DB: &str = aip_test_support::test_database_url!();
