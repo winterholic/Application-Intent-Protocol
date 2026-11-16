@@ -258,12 +258,31 @@ impl<'m, 'a> Checker<'m, 'a> {
             ExprKind::Name(name) => self.scopes.iter().rev().find_map(|s| s.vars.get(&name.name).map(|b| b.nullable)).unwrap_or(false),
             ExprKind::Field(base, _) => child(base),
             ExprKind::Agg { func, .. } => matches!(func, AggFn::Min | AggFn::Max | AggFn::Avg),
-            ExprKind::Binary(_, left, right) => child(left) || child(right),
-            ExprKind::Neg(value) | ExprKind::Not(value) => child(value),
+            ExprKind::Binary(op, left, right) => match op {
+                BinOp::And | BinOp::Or | BinOp::Ne => false,
+                BinOp::Eq if matches!(left.kind, ExprKind::Null) || matches!(right.kind, ExprKind::Null) => false,
+                _ => child(left) || child(right),
+            },
+            ExprKind::Not(_) => false,
+            ExprKind::Neg(value) => child(value),
+            ExprKind::InList(value, items) => child(value) || items.iter().any(child),
+            ExprKind::InRange(value, lo, hi) => child(value) || child(lo) || child(hi),
+            ExprKind::InExpr(value, set) => child(value) || child(set),
             ExprKind::If(_, then_value, else_value) => child(then_value) || child(else_value),
             ExprKind::Call(call) if call.callee.text() == "coalesce" => !call.args.is_empty() && call.args.iter().all(|a| child(&a.value)),
-            ExprKind::Call(call) => self.m.relations.get(&call.callee.text()).is_some_and(|r| r.result.is_some()),
+            ExprKind::Call(call) => match call.callee.text().as_str() {
+                "same" => true,
+                // snapshot() accepts a row value and produces its typed snapshot handle. A nullable
+                // row source is governed by the source's own optionality / control-flow contract.
+                "snapshot" => false,
+                "domain" | "days_until" | "contains" | "starts_with" | "lower" | "upper" | "trim" | "length" | "slugify" => {
+                    call.args.iter().any(|a| child(&a.value))
+                }
+                "flag" => false,
+                name => self.m.relations.get(name).is_some_and(|r| r.result.is_some()),
+            },
             ExprKind::The(_) | ExprKind::Latest(..) | ExprKind::First(..) => true,
+            ExprKind::RunningSum { value, .. } => child(value),
             _ => false,
         }
     }
@@ -931,7 +950,7 @@ impl<'m, 'a> Checker<'m, 'a> {
         match s {
             Stmt::Let(l) => {
                 let t = self.expr(&l.value, None);
-                let nullable = self.nullability.get(&(l.value.span.start, l.value.span.end)).copied().unwrap_or(false);
+                let nullable = l.code.is_none() && self.nullability.get(&(l.value.span.start, l.value.span.end)).copied().unwrap_or(false);
                 self.bind_nullable(&l.name, t, nullable);
             }
             Stmt::Insert { entity, from, fields, bind, .. } => {
@@ -1187,7 +1206,7 @@ impl<'m, 'a> Checker<'m, 'a> {
         self.param_types(&q.params);
         for l in &q.lets {
             let t = self.expr(&l.value, None);
-            let nullable = self.nullability.get(&(l.value.span.start, l.value.span.end)).copied().unwrap_or(false);
+            let nullable = l.code.is_none() && self.nullability.get(&(l.value.span.start, l.value.span.end)).copied().unwrap_or(false);
             self.bind_nullable(&l.name, t, nullable);
         }
         for (call, name) in &q.fetches {
@@ -1302,7 +1321,7 @@ impl<'m, 'a> Checker<'m, 'a> {
             if matches!(t, Ty::Coll(_)) {
                 self.err(codes::E213, format!("let {} is multi-valued; use same(...), the ... or an aggregate", l.name.name), l.value.span);
             }
-            let nullable = self.nullability.get(&(l.value.span.start, l.value.span.end)).copied().unwrap_or(false);
+            let nullable = l.code.is_none() && self.nullability.get(&(l.value.span.start, l.value.span.end)).copied().unwrap_or(false);
             self.bind_nullable(&l.name, t, nullable);
         }
         self.allow(c.allow.as_ref());
