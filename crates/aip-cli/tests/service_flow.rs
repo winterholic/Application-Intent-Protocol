@@ -36,6 +36,36 @@ resource Locked {
   expose read { select id, value, checked; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
 }
 "#;
+const SERVICE_AGGREGATE_APP: &str = r#"
+resource Member { fields { id: Id; org: Text } rows read when true }
+actor Member
+access callerVotes(a: Member) = true
+access publicVotes(a: Member) = true
+resource Record {
+  fields { id: Id; org: Text; owner: Member; title: Text; secret: Text; checked: Bool }
+  rows read when org = actor.org
+  field secret read when owner = actor
+  expose read {
+    select id, org, owner, title, secret, checked, ownVoteCount, publicVoteCount, minOwnVote, maxOwnVote
+    traverse votes via Vote.record { select id, owner, amount; sort id; limit 10 }
+    sort id
+    budget { rows 20; depth 2; deadline 2s; cost 1000; offset 100; cursor }
+  }
+  aggregate ownVoteCount: Int { source Vote; sourceAccess callerVotes(actor); groupKey record; where owner = actor; callerFilter none; rowOutput none; release count }
+  aggregate publicVoteCount: Int { source Vote; sourceAccess publicVotes(actor); groupKey record; callerFilter none; rowOutput none; release count }
+  aggregate minOwnVote: Int? { source Vote; sourceAccess callerVotes(actor); groupKey record; callerFilter none; rowOutput none; release min(amount) }
+  aggregate maxOwnVote: Int? { source Vote; sourceAccess callerVotes(actor); groupKey record; callerFilter none; rowOutput none; release max(amount) }
+  expose aggregate ownVoteCount
+  expose aggregate publicVoteCount
+  expose aggregate minOwnVote
+  expose aggregate maxOwnVote
+}
+resource Vote {
+  fields { id: Id; record: Record; owner: Member; amount: Int }
+  rows read when owner = actor
+  expose read { select id, record, owner, amount; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000; offset 100; cursor } }
+}
+"#;
 const SEMANTIC_DATA_APP: &str = r#"
 enum Phase { READY, DONE }
 resource Member {
@@ -487,6 +517,146 @@ async fn service_policy_default_deny_redaction_and_hidden_target_invariants() {
     .catch_unwind()
     .await;
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn service_policy_aggregate_noninterference_http_postgres() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = format!("aip_policyagg_{}", uuid::Uuid::new_v4().simple());
+    let config = dir.path().join("service.json");
+    let file = dir.path().join("policy.aip");
+    std::fs::write(&file, SERVICE_AGGREGATE_APP).unwrap();
+    let private = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
+    let public = private.to_public_key();
+    std::fs::write(
+        dir.path().join("jwks.json"),
+        json!({"keys":[{"kty":"RSA","kid":"current","alg":"RS256","use":"sig","n":URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())}]}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &config,
+        json!({"schema":schema,"database_url_env":"AIP_TEST_DATABASE","listen":"127.0.0.1:0","wire":"decimal","allowed_origins":["https://app.example.com"],"auth":{"issuer":"https://issuer.example","audience":"aip-api","jwks":{"kind":"file","path":"jwks.json"}}}).to_string(),
+    )
+    .unwrap();
+    command(&config, &["init", file.to_str().unwrap()]).await;
+    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
+    let outcome = AssertUnwindSafe(async {
+        db.batch_execute(&format!(
+            "INSERT INTO {schema}.member(id,org) VALUES (42,'red'),(99,'red'),(100,'blue'); \
+             INSERT INTO {schema}.record(id,org,owner_id,title,secret,checked) VALUES \
+             (1,'red',42,'mine','owner-secret',false),(2,'red',99,'peer-secret','redacted-secret',false),(3,'blue',99,'foreign','hidden-secret',false); \
+             INSERT INTO {schema}.vote(id,record_id,owner_id,amount) VALUES \
+             (1,1,42,10),(2,1,42,20),(3,1,99,-900),(4,2,99,7),(5,3,99,-700)"
+        )).await.unwrap();
+        command(&config, &["principal", "bind", "--subject", "policy-user", "--actor", "42"]).await;
+        command(&config, &["principal", "bind", "--subject", "policy-peer", "--actor", "99"]).await;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mut header = Header::new(Algorithm::RS256);
+        header.typ = Some("at+jwt".into());
+        header.kid = Some("current".into());
+        let key = EncodingKey::from_rsa_der(private.to_pkcs1_der().unwrap().as_bytes());
+        let token = encode(&header, &json!({"iss":"https://issuer.example","aud":"aip-api","sub":"policy-user","iat":now,"nbf":now,"exp":now+300}), &key).unwrap();
+        let peer_token = encode(&header, &json!({"iss":"https://issuer.example","aud":"aip-api","sub":"policy-peer","iat":now,"nbf":now,"exp":now+300}), &key).unwrap();
+        let (child, listening) = start(&config, &file).await;
+        let address = listening["address"].as_str().unwrap();
+        let fingerprint = listening["fingerprint"].as_str().unwrap();
+        let query = json!({"query":{"read":"Record","select":["id","owner","secret","ownVoteCount","publicVoteCount","minOwnVote","maxOwnVote","votes"],"sort":[{"field":"id","dir":"asc"}]}});
+        let before = post(address, "/read", &token, fingerprint, query.clone()).await;
+        assert_eq!(before["ok"], true, "{before}");
+        assert_eq!(before["rows"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["1", "2"], "row policy hides another organization");
+        assert_eq!(before["rows"][0]["owner"], json!("42"), "to-one reference remains visible under target row policy");
+        assert_eq!(before["rows"][0]["secret"], "owner-secret");
+        assert_eq!(before["rows"][1]["secret"], Value::Null, "field policy redacts peer data");
+        assert_eq!(before["rows"][0]["ownVoteCount"], 2, "caller-scoped count includes only caller rows");
+        assert_eq!(before["rows"][0]["publicVoteCount"], 3, "explicitly public count includes every source row");
+        assert_eq!(before["rows"][0]["minOwnVote"], 10, "min excludes rows hidden by source row policy");
+        assert_eq!(before["rows"][0]["maxOwnVote"], 20, "max excludes rows hidden by source row policy");
+        assert_eq!(before["rows"][1]["ownVoteCount"], 0);
+        assert_eq!(before["rows"][1]["publicVoteCount"], 1);
+        assert_eq!(before["rows"][1]["minOwnVote"], Value::Null);
+        assert_eq!(before["rows"][1]["maxOwnVote"], Value::Null);
+        assert_eq!(before["rows"][0]["votes"], json!([{"id":"1","owner":"42","amount":10},{"id":"2","owner":"42","amount":20}]), "to-many traversal applies child row policy before its limit");
+        assert_eq!(before["rows"][1]["votes"], json!([]), "a child collection with only hidden rows is empty");
+        let caller_aggregate = post(address, "/read", &token, fingerprint, json!({"query":{"aggregate":"Record.ownVoteCount","input":{}}})).await;
+        assert_eq!(caller_aggregate["rows"][0], 2, "standalone caller-scoped aggregate preserves its where contract");
+        let public_aggregate = post(address, "/read", &token, fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await;
+        assert_eq!(public_aggregate["rows"][0], 5, "explicit public aggregate includes all source rows");
+        let min_aggregate = post(address, "/read", &token, fingerprint, json!({"query":{"aggregate":"Record.minOwnVote","input":{}}})).await;
+        let max_aggregate = post(address, "/read", &token, fingerprint, json!({"query":{"aggregate":"Record.maxOwnVote","input":{}}})).await;
+        assert_eq!(min_aggregate["rows"][0], 10);
+        assert_eq!(max_aggregate["rows"][0], 20);
+        let forbidden_aggregate_filter = post(address, "/read", &token, fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{},"filter":[]}})).await;
+        assert_eq!(forbidden_aggregate_filter["code"], "WIRE.FILTER_NOT_ALLOWED", "callerFilter none rejects even an empty caller filter");
+        let peer_view = post(address, "/read", &peer_token, fingerprint, query.clone()).await;
+        assert_eq!(peer_view["rows"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["1", "2"], "same-organization caller sees the row set through their own identity");
+        assert_eq!(peer_view["rows"][0]["secret"], Value::Null, "another user cannot read the owner's field");
+        assert_eq!(peer_view["rows"][0]["ownVoteCount"], 0, "caller aggregate is scoped to the second user");
+        assert_eq!(peer_view["rows"][1]["ownVoteCount"], 1);
+        assert_eq!(peer_view["rows"][0]["votes"], json!([]), "to-many traversal is independently filtered for the second user");
+
+        let db_before = db.query_one(&format!("SELECT count(*), min(amount), max(amount), avg(amount)::float8 FROM {schema}.vote WHERE record_id=1"), &[]).await.unwrap();
+        let before_metrics = (db_before.get::<_, i64>(0), db_before.get::<_, i32>(1), db_before.get::<_, i32>(2), db_before.get::<_, f64>(3));
+        assert_eq!(before_metrics, (3, -900, 20, -870.0 / 3.0), "DB baseline includes hidden source rows");
+        db.execute(&format!("INSERT INTO {schema}.vote(id,record_id,owner_id,amount) VALUES (6,1,99,-5000)"), &[]).await.unwrap();
+        let after_insert = post(address, "/read", &token, fingerprint, query.clone()).await;
+        assert_eq!(after_insert["rows"][0]["ownVoteCount"], before["rows"][0]["ownVoteCount"]);
+        assert_eq!(after_insert["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
+        assert_eq!(after_insert["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
+        assert_eq!(after_insert["rows"][0]["publicVoteCount"], 4, "public aggregate intentionally changes for the hidden insert");
+        let inserted_public_aggregate = post(address, "/read", &token, fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await;
+        assert_eq!(inserted_public_aggregate["rows"][0], 6);
+        let inserted_caller_aggregate = post(address, "/read", &token, fingerprint, json!({"query":{"aggregate":"Record.ownVoteCount","input":{}}})).await;
+        assert_eq!(inserted_caller_aggregate["rows"][0], 2);
+        let db_insert = db.query_one(&format!("SELECT count(*), min(amount), max(amount), avg(amount)::float8 FROM {schema}.vote WHERE record_id=1"), &[]).await.unwrap();
+        assert_eq!((db_insert.get::<_, i64>(0), db_insert.get::<_, i32>(1), db_insert.get::<_, i32>(2), db_insert.get::<_, f64>(3)), (before_metrics.0 + 1, -5000, 20, (-5000.0 + 10.0 + 20.0) / 3.0));
+        db.execute(&format!("UPDATE {schema}.vote SET amount=-6000 WHERE id=6"), &[]).await.unwrap();
+        let db_update = db.query_one(&format!("SELECT count(*), min(amount), max(amount), avg(amount)::float8 FROM {schema}.vote WHERE record_id=1"), &[]).await.unwrap();
+        assert_eq!((db_update.get::<_, i64>(0), db_update.get::<_, i32>(1), db_update.get::<_, i32>(2), db_update.get::<_, f64>(3)), (4, -6000, 20, (-6000.0 + 10.0 + 20.0 - 900.0) / 4.0));
+        let after_update = post(address, "/read", &token, fingerprint, query.clone()).await;
+        assert_eq!(after_update["rows"][0]["ownVoteCount"], before["rows"][0]["ownVoteCount"]);
+        assert_eq!(after_update["rows"][0]["publicVoteCount"], 4);
+        assert_eq!(after_update["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
+        assert_eq!(after_update["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
+        assert_eq!(after_update["rows"], after_insert["rows"], "hidden-only update does not alter caller output or public row count");
+        assert_eq!(post(address, "/read", &token, fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await["rows"][0], 6);
+        db.execute(&format!("DELETE FROM {schema}.vote WHERE id=6"), &[]).await.unwrap();
+        let db_delete = db.query_one(&format!("SELECT count(*), min(amount), max(amount), avg(amount)::float8 FROM {schema}.vote WHERE record_id=1"), &[]).await.unwrap();
+        assert_eq!((db_delete.get::<_, i64>(0), db_delete.get::<_, i32>(1), db_delete.get::<_, i32>(2), db_delete.get::<_, f64>(3)), before_metrics);
+        let after_delete = post(address, "/read", &token, fingerprint, query.clone()).await;
+        assert_eq!(after_delete["rows"], before["rows"], "hidden-only delete restores the caller response");
+        assert_eq!(post(address, "/read", &token, fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await["rows"][0], 5);
+
+        let hidden_filter = post(address, "/read", &token, fingerprint, json!({"query":{"read":"Record","select":["id"],"filter":[{"field":"secret","op":"eq","value":"redacted-secret"}]}})).await;
+        assert_eq!(hidden_filter["code"], "WIRE.POLICY_FIELD_NOT_FILTERABLE", "field-hidden filter is rejected");
+        let hidden_sort = post(address, "/read", &token, fingerprint, json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"secret","dir":"asc"}]}})).await;
+        assert_eq!(hidden_sort["code"], "WIRE.POLICY_FIELD_NOT_FILTERABLE", "field-hidden sort is rejected by the shared non-queryable policy code");
+
+        let page_one = post(address, "/read", &token, fingerprint, json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"id","dir":"asc"}],"limit":1,"offset":0}})).await;
+        assert_eq!(page_one["rows"], json!([{"id":"1"}]), "first offset page contains the first authorized row");
+        let page_two = post(address, "/read", &token, fingerprint, json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"id","dir":"asc"}],"limit":1,"offset":1}})).await;
+        assert_eq!(page_two["rows"], json!([{"id":"2"}]), "second offset page is stable and policy filtered");
+        let cursor_page = post(address, "/read", &token, fingerprint, json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"id","dir":"asc"}],"limit":1,"after":{"id":"1"}}})).await;
+        assert_eq!(cursor_page["rows"], json!([{"id":"2"}]), "keyset cursor advances in the authorized order");
+        let bad_cursor = post(address, "/read", &token, fingerprint, json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"id","dir":"asc"}],"after":"not-a-cursor"}})).await;
+        assert_eq!(bad_cursor["code"], "WIRE.BAD_CURSOR", "malformed cursor is rejected");
+        let votes = post(address, "/read", &token, fingerprint, json!({"query":{"read":"Vote","select":["id","record","owner","amount"],"sort":[{"field":"id","dir":"asc"}]}})).await;
+        assert_eq!(votes["rows"], json!([{"id":"1","record":"1","owner":"42","amount":10},{"id":"2","record":"1","owner":"42","amount":20}]), "child collection read excludes other owners and retains to-one references");
+        db.execute(&format!("UPDATE {schema}.member SET org='blue' WHERE id=42"), &[]).await.unwrap();
+        let changed_policy = post(address, "/read", &token, fingerprint, query).await;
+        assert_eq!(changed_policy["rows"], json!([{"id":"3","owner":"99","secret":null,"ownVoteCount":0,"publicVoteCount":1,"minOwnVote":null,"maxOwnVote":null,"votes":[]}]), "same identity is re-evaluated against current row and field policy");
+        stop(child).await;
+
+        let unsupported_avg = SERVICE_AGGREGATE_APP.replace("release max(amount)", "release avg(amount)");
+        assert_ne!(unsupported_avg, SERVICE_AGGREGATE_APP);
+        let avg_file = dir.path().join("unsupported-avg.aip");
+        std::fs::write(&avg_file, unsupported_avg).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_aip")).arg("service").arg("init").arg(&avg_file).arg("--config").arg(&config).env("AIP_TEST_DATABASE", DB).output().await.unwrap();
+        assert!(!output.status.success(), "avg is currently unsupported and must not be treated as an HTTP aggregate assertion");
+    }).catch_unwind().await;
+    db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await.unwrap();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }

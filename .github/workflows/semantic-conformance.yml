@@ -1,0 +1,54 @@
+name: Service semantic conformance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'crates/aip-cli/**'
+      - 'crates/aip-runtime/**'
+      - 'crates/aip-test-support/**'
+      - '.github/workflows/semantic-conformance.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semantic-conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  service-flow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install Rust stable components
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+      - name: Validate isolated PostgreSQL target
+        run: node --input-type=module -e 'import { requireTestDatabase } from "./product/test-support/postgres-guard.mjs"; const target = requireTestDatabase(); console.log(`${target.host}:${target.port}/${target.dbname}`)'
+      - name: Run service HTTP and PostgreSQL contract tests
+        run: cargo test -p aip-cli --test service_flow --locked -- --nocapture
