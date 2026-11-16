@@ -1,7 +1,8 @@
-//! Audit B (2026-11-16): probe whether opposite-order atomic bundles produce a retryable SQL concurrency failure.
+//! Audit B (2026-11-16): opposite-order atomic bundles may deadlock; retry the fully rolled-back SQL transaction within
+//! the existing bound, then require one winner and one business refusal. The recorded CI reproduction observed 40P01.
 //! The sleep after each transition's row lock is only a scheduling hint; it does not prove the sessions overlap at that
 //! point. `WIRE.CONFLICT` alone is not a deadlock signal: only V3's retryable SQL-conflict marker is counted below.
-//! The public result does not retain the raw SQLSTATE, so a marker still needs PostgreSQL log evidence to confirm 40P01.
+//! The public result does not retain the raw SQLSTATE, so PostgreSQL log evidence remains necessary for diagnosis.
 //! Expected business result: one bundle wins both rows and the other receives `WIRE.INVALID_STATE` on the claimed row.
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
@@ -27,7 +28,7 @@ fn claim(id: i64) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn opposite_order_bundle_probe_reports_only_expected_business_outcomes() {
+async fn opposite_order_bundles_retry_deadlocks_then_return_one_business_refusal() {
     let schema = format!("aip_bd_lock_order_{}", std::process::id());
     sqlgen::set_schema(&schema);
     let facts = Arc::new(load_str(SPEC, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution);
