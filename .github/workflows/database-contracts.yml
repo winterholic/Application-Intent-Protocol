@@ -95,18 +95,18 @@ jobs:
           test_status=${PIPESTATUS[0]}
           echo "aip-cli baseline exit=$test_status"
           exit "$test_status"
-      - name: Audit C service data semantics over HTTP and database state
+      - name: Audit C service identity, data and policy semantics over HTTP and database state
         if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.service_semantics_only == true) }}
         shell: bash
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/aip-policy-c"
-          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/service-data-semantics-readiness.log"
+          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/service-flow-readiness.log"
           readiness_status=${PIPESTATUS[0]}
           if (( readiness_status != 0 )); then exit "$readiness_status"; fi
-          cargo test -p aip-cli --test service_flow --locked service_data_semantics_hold_across_http_and_database_state -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/service-data-semantics.log"
+          cargo test -p aip-cli --test service_flow --locked -- --nocapture 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/service-flow.log"
           test_status=${PIPESTATUS[0]}
-          echo "service data semantics exit=$test_status"
+          echo "service flow suite exit=$test_status"
           exit "$test_status"
       - name: Audit C spike-v2-read security_authorization
         if: ${{ always() && !(github.event_name == 'workflow_dispatch' && (inputs.service_semantics_only == true || inputs.bounded_retry_only == true)) }}
