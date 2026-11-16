@@ -140,3 +140,87 @@ fe_sendauth: no password supplied
 - `cargo test -p aip-service -p aip-cli --no-fail-fast` — 같은 DSN guard에서 중단.
 - `pg_isready -h 127.0.0.1 -p 52142` — accepting connections.
 - `psql -Atqc 'select…'` — `fe_sendauth: no password supplied`.
+
+## 8. 전용 PG 보완 실행 (2026-11-16, 후속)
+
+### 전용 클러스터 시도와 차단
+
+작업자 소유 예정 경로 `/tmp/aip-audit-pg17-a/data`, 포트 `55471`, 데이터베이스 `aip_test_a_semantic_20261116`, OS 소유자 `winterholic`으로 새 PostgreSQL 17.11 클러스터를 초기화하려 했다. 기존 포트 52142와 다른 DB는 확인하거나 변경하지 않았다. `AIP_TEST_DATABASE_URL` / `AIP_TEST_ADMIN_URL`은 이 endpoint 및 `aip_test_` DB를 명시하도록 구성했고, `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSERVICE`, `PGSERVICEFILE`은 명령 환경에서 unset했다.
+
+실행 명령:
+
+```text
+/opt/homebrew/opt/postgresql@17/bin/initdb -D /tmp/aip-audit-pg17-a/data -U winterholic --auth-local=trust --auth-host=trust --no-instructions
+```
+
+환경·단계·오류: Codex command tool의 이 작업자 실행 환경에서 initdb bootstrap 단계가 OS named SysV shared memory 생성에서 실패했다. 반환 코드 1. 출력:
+
+```text
+selecting dynamic shared memory implementation ... sysv
+FATAL: could not create shared memory segment: Operation not permitted
+DETAIL: Failed system call: shmget(key=476717691, size=56, 03600)
+initdb: removing contents of data directory "/tmp/aip-audit-pg17-a/data"
+```
+
+권한 거부 후 다른 실행 도구/초기화 방식으로 같은 클러스터를 재시도하지 않았다. 초기화 뒤의 `pg_ctl start`는 `&&` 체인상 실행되지 않았다. 따라서 해당 경로는 작업자 전용으로 예약·기록했으나 PG cluster 초기화가 완료되지 않았고, 서버는 시작되지 않았으며 `SELECT 1`과 DB 생성은 실행하지 못했다. 데이터 경로는 initdb 실패 후 빈 경로로 남았다. 재실행 시에는 실행 환경이 SysV shared memory를 허용하는지 먼저 해결한 뒤 위 initdb 명령부터 수행하고, `55471`에서 서버 시작 → `aip_test_a_semantic_20261116` 생성 → explicit DSN으로 SELECT 1 → 제품 통합 테스트 순으로 진행한다. DB를 실제로 만들지 못했으므로 중지·삭제할 서버는 없으며, 보존된 작업 경로와 재실행 조건을 기록한다.
+
+### 실행한 DB 비의존 제품 검사
+
+명령:
+
+```text
+env -u PGHOST -u PGPORT -u PGDATABASE -u PGUSER -u PGPASSWORD -u PGSERVICE -u PGSERVICEFILE AIP_TEST_DATABASE_URL='postgresql://winterholic@127.0.0.1:55471/aip_test_a_semantic_20261116?sslmode=disable' AIP_TEST_ADMIN_URL='postgresql://winterholic@127.0.0.1:55471/postgres?sslmode=disable' cargo test -p aip-cli --test service -- --nocapture
+```
+
+결과: exit 0, **4 passed**. 실제로 실행된 것은 제품 CLI의 definition check, serve 옵션 거부, Python SDK 생성/import 검사 2개다. service DB를 호출하지 않아 A 영역 DB 의미 검증 증거는 아니다.
+
+명령:
+
+```text
+env -u PGHOST -u PGPORT -u PGDATABASE -u PGUSER -u PGPASSWORD -u PGSERVICE -u PGSERVICEFILE AIP_TEST_DATABASE_URL='postgresql://winterholic@127.0.0.1:55471/aip_test_a_semantic_20261116?sslmode=disable' AIP_TEST_ADMIN_URL='postgresql://winterholic@127.0.0.1:55471/postgres?sslmode=disable' cargo test -p aip-service --lib -- --nocapture
+```
+
+결과: exit 0, **47 passed**. 이는 service crate의 unit tests이며 HTTP/DB data semantics matrix를 호출하지 않는다.
+
+명령:
+
+```text
+env -u PGHOST -u PGPORT -u PGDATABASE -u PGUSER -u PGPASSWORD -u PGSERVICE -u PGSERVICEFILE AIP_TEST_DATABASE_URL='postgresql://winterholic@127.0.0.1:55471/aip_test_a_semantic_20261116?sslmode=disable' AIP_TEST_ADMIN_URL='postgresql://winterholic@127.0.0.1:55471/postgres?sslmode=disable' cargo test -p aip-cli --test service_flow --no-run
+```
+
+결과: exit 0, `tests/service_flow.rs` test executable을 컴파일했다. `service_flow` assertion은 **실행 전**이며, 이 harness가 DB migration/init, HTTP `/read`, `/apply`, restart/replay을 포함함을 확인했다. 해당 파일의 시나리오는 identity/event/restart 중심으로, Missing/Null·aggregate·partial patch·Decimal matrix를 대신하지 않는다. DB가 시작되지 않아 실행 명령은 제출하지 않았다.
+
+### 제품 테스트 추적과 A 영역 실행 판정
+
+기존 테스트 중 `crates/aip-service/tests/mysql_read_http.rs` 및 `mysql_write_http.rs`는 MySQL harness다. PG 테스트로 오인하지 않았다. `crates/aip-cli/tests/service_flow.rs`는 `aip service`를 실행하는 PostgreSQL 통합 harness지만 해당 시나리오의 assertions는 principal identity, event read/apply, migration/restart, replay에 집중되어 있다. `crates/aip-cli/tests/service.rs`는 DB 비의존 CLI/SDK 생성 검사다. 따라서 이번에 실제 실행한 service test assertions는 작성·검증·SDK 생성 기준이고, A 영역 9항목 중 DB 결과를 실제 실행으로 확정한 것은 없다.
+
+| 영역 | 실제 실행 assertion | 후속 판정 |
+|---|---|---|
+| Missing·Null·값 존재 | 없음. `service_flow` 실행 전 중단 | 미검증 |
+| 조건부 효과·평가 시점 | 없음 | 미검증 (동시성/트랜잭션 평가는 타 범위) |
+| 정렬·동률 | 없음 | 미검증 |
+| latest/first/last | 없음 | 의미 불명확 유지 |
+| 관계 참조·대상 선택 | 없음 | 미검증 |
+| 집계·빈 결과 | 없음 | 제품 경로 결함 미확인. 기존 Core 결함은 별도 유지 |
+| 부분 수정·필드 삭제 | 없음 | 미검증 |
+| Decimal/Money 경계 | 없음 | 미검증 |
+| 입력·출력 타입 일치 | service CLI check 및 SDK codegen assertions는 통과했으나 데이터 응답 roundtrip은 없음 | DB/wire 결과 미검증 |
+
+### Core aggregate nullability 두 재현의 관계
+
+`min_of_empty_set_is_not_assignable_to_a_required_field`와 `grouped_min_output_shape_is_nullable_for_empty_input`은 **하나의 설계 누락(aggregate nullability를 Core 의미 타입에 표현하지 않음)의 두 downstream 증상**이다. 첫 증상은 `check.rs`의 할당 호환성 경로에서 `Ty`만 사용해 NULL 가능성을 판정하지 못한다. 두 번째는 grouped shape 경로가 expression별 `may_be_null` 계산을 건너뛰고 `ty_shape(..., false)`를 사용한다. 즉 원인 계층은 공유하지만 검사·shape 생성은 독립 지점이며 각각 회귀 단언이 필요하다. 이는 Core 소스/기존 RED 결과로 한 코드 수준 결론이다. 전용 PG가 시작되지 않아 Core SQL의 실제 NULL row와 Core output contract를 DB로 대조하지 못했고, `aip service` 사실/SDK 경로의 동등한 영향도 계속 미확인이다.
+
+제품 경로 결함 RED는 추가하지 않았다. DB 연동 assertion을 실행하지 못했고, 정적 경로 추적만으로 새 재현을 만드는 것은 실제 제품 결함을 증명하지 않기 때문이다. Core RED 2개는 이전 commit `db98c9e`에 그대로 유지한다.
+
+### 추가 확인 출력
+
+```text
+cargo test -p aip-cli --test service -- --nocapture
+4 passed; 0 failed; 0 ignored
+
+cargo test -p aip-service --lib -- --nocapture
+47 passed; 0 failed; 0 ignored
+
+cargo test -p aip-cli --test service_flow --no-run
+Executable tests/service_flow.rs (...)
+```
