@@ -17,6 +17,30 @@ use tokio::{
 
 const DB: &str = aip_test_support::test_database_url!();
 const APP: &str = include_str!("../../../prototype/example/app.aip");
+const SEMANTIC_DATA_APP: &str = r#"
+enum Phase { READY, DONE }
+resource Member {
+  fields { id: Id; name: Text }
+  rows read when true
+  expose read { select id, name }
+}
+actor Member
+access visibleVotes(a: Member) = true
+resource Event {
+  fields { id: Id; member: Member; title: Text; note: Text?; amount: Decimal(10,2)?; phase: Phase; score: Decimal(10,2); checked: Bool }
+  rows read when member = actor
+  transition edit { allow member = actor; from true; patch title, note, amount; to checked = checked }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose read {
+    select id, member, title, note, amount, phase, score, checked, voteCount
+    traverse member { select id, name }
+    sort score
+    budget { rows 20; depth 2; deadline 2s; cost 1000 }
+  }
+  aggregate voteCount: Int { source Vote; sourceAccess visibleVotes(actor); groupKey event; callerFilter none; rowOutput none; release count }
+}
+resource Vote { fields { id: Id; event: Event } rows read when true }
+"#;
 
 async fn command(config: &Path, args: &[&str]) -> Value {
     let mut child = Command::new(env!("CARGO_BIN_EXE_aip"));
@@ -247,6 +271,94 @@ async fn product_identity_migration_and_restart_use_the_same_contract() {
         stop(child).await;
     }).catch_unwind().await;
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn service_data_semantics_hold_across_http_and_database_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = format!("aip_semantic_data_{}", uuid::Uuid::new_v4().simple());
+    let undeclared_schema = format!("aip_semantic_negative_{}", uuid::Uuid::new_v4().simple());
+    let config = dir.path().join("service.json");
+    let file = dir.path().join("data.aip");
+    std::fs::write(&file, SEMANTIC_DATA_APP).unwrap();
+    let private = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
+    let public = private.to_public_key();
+    std::fs::write(dir.path().join("jwks.json"), json!({"keys":[{"kty":"RSA","kid":"current","alg":"RS256","use":"sig","n":URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())}]}).to_string()).unwrap();
+    std::fs::write(&config, json!({"schema":schema,"database_url_env":"AIP_TEST_DATABASE","listen":"127.0.0.1:0","wire":"decimal","allowed_origins":["https://app.example.com"],"auth":{"issuer":"https://issuer.example","audience":"aip-api","jwks":{"kind":"file","path":"jwks.json"}}}).to_string()).unwrap();
+    command(&config, &["init", file.to_str().unwrap()]).await;
+    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
+    let outcome = AssertUnwindSafe(async {
+        db.batch_execute(&format!("INSERT INTO {schema}.member(id,name) VALUES(42,'Ada'); INSERT INTO {schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES (12,42,'second','kept','1.20','READY',10.50,false),(11,42,'first',NULL,'99999999.99','DONE',10.50,false),(13,42,'boundary',NULL,NULL,'READY',99999999.99,false); INSERT INTO {schema}.vote(id,event_id) VALUES(1,11)")).await.unwrap();
+        command(&config, &["principal","bind","--subject","semantic-user","--actor","42"]).await;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mut header = Header::new(Algorithm::RS256); header.typ = Some("at+jwt".into()); header.kid = Some("current".into());
+        let key = EncodingKey::from_rsa_der(private.to_pkcs1_der().unwrap().as_bytes());
+        let token = encode(&header, &json!({"iss":"https://issuer.example","aud":"aip-api","sub":"semantic-user","iat":now,"nbf":now,"exp":now+300}), &key).unwrap();
+        let (child, listening) = start(&config, &file).await;
+        let address = listening["address"].as_str().unwrap();
+        let fingerprint = listening["fingerprint"].as_str().unwrap();
+        let query = json!({"query":{"read":"Event","select":["id","title","note","amount","phase","score","voteCount",{"member":{"select":["id","name"]}}],"sort":[{"field":"score","dir":"asc"}]}});
+        let first = post(address,"/read",&token,fingerprint,query.clone()).await;
+        assert_eq!(first["ok"],true,"{first}");
+        assert_eq!(first["rows"].as_array().map(Vec::len),Some(3),"all three authorized rows are returned");
+        assert_eq!(first["rows"][0]["id"],"11","equal sort values use stable id ordering");
+        assert_eq!(first["rows"][0]["note"],Value::Null,"stored nullable value is JSON null");
+        assert_eq!(first["rows"][0]["amount"],"99999999.99","declared Decimal(10,2) upper boundary remains exact");
+        assert_eq!(first["rows"][0]["voteCount"],1);
+        assert_eq!(first["rows"][1]["voteCount"],0,"empty relation count is zero");
+        assert_eq!(first["rows"][0]["member"],json!({"id":"42","name":"Ada"}));
+        assert!(first["rows"][0].get("checked").is_none(),"declared but unselected checked stays absent");
+        let patch = json!({"key":"semantic-partial","request":{"apply":"Event.edit","target":{"ids":["12"]},"values":{"title":"changed"}}});
+        let applied = post(address,"/apply",&token,fingerprint,patch).await;
+        assert_eq!(applied["ok"],true,"{applied}");
+        let row = db.query_one(&format!("SELECT title,note,amount::text,checked FROM {schema}.event WHERE id=12"),&[]).await.unwrap();
+        assert_eq!(row.get::<_,String>(0),"changed");
+        assert_eq!(row.get::<_,Option<String>>(1).as_deref(),Some("kept"),"omitted patch fields are unchanged");
+        assert_eq!(row.get::<_,Option<String>>(2).as_deref(),Some("1.20"));
+        assert!(!row.get::<_,bool>(3));
+
+        let explicit_null = json!({"key":"semantic-null","request":{"apply":"Event.edit","target":{"ids":["12"]},"values":{"note":null,"amount":"99999999.99"}}});
+        let cleared = post(address,"/apply",&token,fingerprint,explicit_null).await;
+        assert_eq!(cleared["ok"],true,"{cleared}");
+        let row = db.query_one(&format!("SELECT note,amount::text FROM {schema}.event WHERE id=12"),&[]).await.unwrap();
+        assert_eq!(row.get::<_,Option<String>>(0),None,"explicit null clears a nullable field");
+        assert_eq!(row.get::<_,Option<String>>(1).as_deref(),Some("99999999.99"),"upper Decimal boundary survives write and storage");
+
+        // The same rows inserted in the opposite order must yield the identical sorted response.
+        db.batch_execute(&format!("DELETE FROM {schema}.vote; DELETE FROM {schema}.event; INSERT INTO {schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES (13,42,'boundary',NULL,NULL,'READY',99999999.99,false),(11,42,'first',NULL,'99999999.99','DONE',10.50,false),(12,42,'second','kept','1.20','READY',10.50,false); INSERT INTO {schema}.vote(id,event_id) VALUES(1,11)")).await.unwrap();
+        let permuted = post(address,"/read",&token,fingerprint,query.clone()).await;
+        assert_eq!(permuted["ok"],true,"{permuted}");
+        assert_eq!(permuted["rows"],first["rows"],"input insertion order does not change the semantic result");
+        stop(child).await;
+
+        // The old fixture's omitted Event traverse declaration remains a negative control.
+        let undeclared_source = SEMANTIC_DATA_APP.replace("    traverse member { select id, name }\n", "");
+        assert_ne!(undeclared_source, SEMANTIC_DATA_APP, "negative control must remove the Event traverse declaration");
+        let undeclared_file = dir.path().join("undeclared-traverse.aip");
+        std::fs::write(&undeclared_file, undeclared_source).unwrap();
+        let undeclared_config = dir.path().join("undeclared-service.json");
+        let mut undeclared_config_value: Value = serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        undeclared_config_value["schema"] = json!(undeclared_schema);
+        std::fs::write(&undeclared_config, undeclared_config_value.to_string()).unwrap();
+        command(&undeclared_config, &["init", undeclared_file.to_str().unwrap()]).await;
+        db.batch_execute(&format!("INSERT INTO {undeclared_schema}.member(id,name) VALUES(42,'Ada'); INSERT INTO {undeclared_schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES(11,42,'first',NULL,'99999999.99','DONE',10.50,false)")).await.unwrap();
+        command(&undeclared_config, &["principal","bind","--subject","semantic-user","--actor","42"]).await;
+        let (child, undeclared_listening) = start(&undeclared_config, &undeclared_file).await;
+        let denied = post(
+            undeclared_listening["address"].as_str().unwrap(),
+            "/read",
+            &token,
+            undeclared_listening["fingerprint"].as_str().unwrap(),
+            query,
+        )
+        .await;
+        assert_eq!(denied["code"],"WIRE.TRAVERSE_NOT_ALLOWED","undeclared relation traversal remains default-deny: {denied}");
+        stop(child).await;
+    }).catch_unwind().await;
+    db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE; DROP SCHEMA IF EXISTS {undeclared_schema} CASCADE")).await.unwrap();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
