@@ -249,7 +249,8 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
     };
     let req = &body["request"];
     let principal = principal_key(caller.actor_id, wire);
-    // 다른 행을 읽는 정책에 의존하는 전이는 SERIALIZABLE로 실행하고, 직렬화 실패는 같은 요청을 서버가 다시 실행한다(O-26).
+    // This handler owns a SQL-only, idempotent transaction; bounded retries cover fully rolled-back deadlocks at either isolation level.
+    // Callback-backed write extensions use a separate path and never enter this loop.
     let serializable = spike_v3_write::write_needs_serializable(facts, req);
     let started = std::time::Instant::now();
     let commit_sent = std::sync::atomic::AtomicBool::new(false);
@@ -257,10 +258,10 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
         let mut attempt = 0;
         loop {
             let result = apply_attempt(db, facts, key, req, &principal, caller, wire, serializable, &commit_sent, started).await;
-            let retry = serializable
-                && result["code"] == "WIRE.CONFLICT"
-                && result["msg"].as_str().is_some_and(|msg| spike_v3_write::is_retryable(&Reject { code: "WIRE.CONFLICT", msg: msg.to_string() }))
-                && attempt < spike_v3_write::SERIALIZATION_RETRIES;
+            let retry = result["code"] == "WIRE.CONFLICT"
+                && result["msg"]
+                    .as_str()
+                    .is_some_and(|msg| spike_v3_write::retry_owned_transaction(&Reject { code: "WIRE.CONFLICT", msg: msg.to_string() }, attempt));
             if !retry {
                 return result;
             }
