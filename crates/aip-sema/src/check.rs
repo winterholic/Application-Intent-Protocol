@@ -24,6 +24,7 @@ enum Ctx {
 #[derive(Debug, Clone)]
 struct Binding {
     ty: Ty,
+    nullable: bool,
 }
 
 struct Scope {
@@ -40,6 +41,8 @@ pub struct Checker<'m, 'a> {
     pub events: BTreeMap<String, EventShape>,
     /// Type of every checked expression, keyed by span; the backend reads it.
     pub types: HashMap<(u32, u32), Ty>,
+    /// Whether an expression can evaluate to SQL NULL, tracked independently of its scalar type.
+    pub nullability: HashMap<(u32, u32), bool>,
     /// Aliases that `from Search.match(q) alias` binds in the query being checked; `alias.rank` is the match score there.
     search_aliases: Vec<String>,
 }
@@ -57,6 +60,7 @@ impl<'m, 'a> Checker<'m, 'a> {
             diags: Vec::new(),
             events: m.events.clone(),
             types: HashMap::new(),
+            nullability: HashMap::new(),
             search_aliases: Vec::new(),
         }
     }
@@ -76,13 +80,19 @@ impl<'m, 'a> Checker<'m, 'a> {
 
     fn bind(&mut self, name: &Ident, ty: Ty) {
         if let Some(s) = self.scopes.last_mut() {
-            s.vars.insert(name.name.clone(), Binding { ty });
+            s.vars.insert(name.name.clone(), Binding { ty, nullable: false });
         }
     }
 
     fn bind_str(&mut self, name: &str, ty: Ty) {
         if let Some(s) = self.scopes.last_mut() {
-            s.vars.insert(name.to_string(), Binding { ty });
+            s.vars.insert(name.to_string(), Binding { ty, nullable: false });
+        }
+    }
+
+    fn bind_nullable(&mut self, name: &Ident, ty: Ty, nullable: bool) {
+        if let Some(s) = self.scopes.last_mut() {
+            s.vars.insert(name.name.clone(), Binding { ty, nullable });
         }
     }
 
@@ -236,7 +246,26 @@ impl<'m, 'a> Checker<'m, 'a> {
     pub fn expr(&mut self, e: &Expr, expected: Option<&Ty>) -> Ty {
         let t = self.expr_inner(e, expected);
         self.types.insert((e.span.start, e.span.end), t.clone());
+        let nullable = self.expr_may_be_null(e);
+        self.nullability.insert((e.span.start, e.span.end), nullable);
         t
+    }
+
+    fn expr_may_be_null(&self, e: &Expr) -> bool {
+        let child = |e: &Expr| self.nullability.get(&(e.span.start, e.span.end)).copied().unwrap_or(false);
+        match &e.kind {
+            ExprKind::Null => true,
+            ExprKind::Name(name) => self.scopes.iter().rev().find_map(|s| s.vars.get(&name.name).map(|b| b.nullable)).unwrap_or(false),
+            ExprKind::Field(base, _) => child(base),
+            ExprKind::Agg { func, .. } => matches!(func, AggFn::Min | AggFn::Max | AggFn::Avg),
+            ExprKind::Binary(_, left, right) => child(left) || child(right),
+            ExprKind::Neg(value) | ExprKind::Not(value) => child(value),
+            ExprKind::If(_, then_value, else_value) => child(then_value) || child(else_value),
+            ExprKind::Call(call) if call.callee.text() == "coalesce" => !call.args.is_empty() && call.args.iter().all(|a| child(&a.value)),
+            ExprKind::Call(call) => self.m.relations.get(&call.callee.text()).is_some_and(|r| r.result.is_some()),
+            ExprKind::The(_) | ExprKind::Latest(..) | ExprKind::First(..) => true,
+            _ => false,
+        }
     }
 
     fn expr_inner(&mut self, e: &Expr, expected: Option<&Ty>) -> Ty {
@@ -793,10 +822,18 @@ impl<'m, 'a> Checker<'m, 'a> {
                         Some(v) => self.expr(v, Some(&want)),
                         None => self.name(name, Some(&want)),
                     };
-                    if !want.accepts(&got) {
+                    let nullable = value
+                        .as_ref()
+                        .map(|v| self.nullability.get(&(v.span.start, v.span.end)).copied().unwrap_or(false))
+                        .unwrap_or_else(|| self.scopes.iter().rev().find_map(|s| s.vars.get(&name.name).map(|b| b.nullable)).unwrap_or(false));
+                    if !want.accepts(&got) || (!fi.optional && nullable) {
                         self.err(
                             codes::E201,
-                            format!("{entity}.{} is {want}, got {got}", name.name),
+                            if !want.accepts(&got) {
+                                format!("{entity}.{} is {want}, got {got}", name.name)
+                            } else {
+                                format!("{entity}.{} is not optional but this expression can return null", name.name)
+                            },
                             value.as_ref().map(|v| v.span).unwrap_or(name.span),
                         );
                     }
@@ -882,8 +919,8 @@ impl<'m, 'a> Checker<'m, 'a> {
         } else if !fi.ty.accepts(&got) {
             self.err(codes::E201, format!("{ent_name}.{} is {}, got {got}", field.name, fi.ty), a.value.span);
         }
-        if !fi.optional && matches!(&a.value.kind, ExprKind::Agg { func: AggFn::Min | AggFn::Max | AggFn::Avg, .. }) {
-            self.err(codes::E201, format!("{ent_name}.{} is not optional but this aggregate can return null", field.name), a.value.span);
+        if !fi.optional && self.nullability.get(&(a.value.span.start, a.value.span.end)).copied().unwrap_or(false) {
+            self.err(codes::E201, format!("{ent_name}.{} is not optional but this expression can return null", field.name), a.value.span);
         }
         if got == Ty::Null && !fi.optional {
             self.err(codes::E201, format!("{ent_name}.{} is not optional and cannot be set to null", field.name), a.value.span);
@@ -894,7 +931,8 @@ impl<'m, 'a> Checker<'m, 'a> {
         match s {
             Stmt::Let(l) => {
                 let t = self.expr(&l.value, None);
-                self.bind(&l.name, t);
+                let nullable = self.nullability.get(&(l.value.span.start, l.value.span.end)).copied().unwrap_or(false);
+                self.bind_nullable(&l.name, t, nullable);
             }
             Stmt::Insert { entity, from, fields, bind, .. } => {
                 let Some(ent) = self.entity_of(entity) else { return };
@@ -1149,7 +1187,8 @@ impl<'m, 'a> Checker<'m, 'a> {
         self.param_types(&q.params);
         for l in &q.lets {
             let t = self.expr(&l.value, None);
-            self.bind(&l.name, t);
+            let nullable = self.nullability.get(&(l.value.span.start, l.value.span.end)).copied().unwrap_or(false);
+            self.bind_nullable(&l.name, t, nullable);
         }
         for (call, name) in &q.fetches {
             let t = self.call(call, None);
@@ -1263,7 +1302,8 @@ impl<'m, 'a> Checker<'m, 'a> {
             if matches!(t, Ty::Coll(_)) {
                 self.err(codes::E213, format!("let {} is multi-valued; use same(...), the ... or an aggregate", l.name.name), l.value.span);
             }
-            self.bind(&l.name, t);
+            let nullable = self.nullability.get(&(l.value.span.start, l.value.span.end)).copied().unwrap_or(false);
+            self.bind_nullable(&l.name, t, nullable);
         }
         self.allow(c.allow.as_ref());
         for r in &c.requires {

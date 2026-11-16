@@ -2091,7 +2091,7 @@ impl<'x, 'a> Lower<'x, 'a> {
                 .iter()
                 .map(|it| {
                     let s = match &it.value {
-                        Some(e) => ty_shape(&a.ty_of(e), may_be_null(a, e)),
+                        Some(e) => ty_shape(&a.ty_of(e), a.may_be_null(e)),
                         None => ir::Shape::Value { ty: ir::Type::Unknown, nullable: false },
                     };
                     (it.name.name.clone(), s)
@@ -2234,7 +2234,7 @@ fn sel_shape(a: &Analysis<'_>, entity: &str, sel: &ast::Selection) -> ir::Shape 
     let mut fields = Vec::new();
     for it in &sel.items {
         let s = match &it.value {
-            Some(e) => with_nullable(derived_shape(a, &a.ty_of(e), it.sub.as_ref()), may_be_null(a, e)),
+            Some(e) => with_nullable(derived_shape(a, &a.ty_of(e), it.sub.as_ref()), a.may_be_null(e)),
             None => match info.and_then(|i| i.field(&it.name.name)) {
                 Some(f) => field_shape(a, f, it.sub.as_ref()),
                 None => ir::Shape::Value { ty: ir::Type::Unknown, nullable: false },
@@ -2268,17 +2268,5 @@ fn derived_shape(a: &Analysis<'_>, t: &Ty, sub: Option<&ast::Selection>) -> ir::
         },
         (Ty::Entity(_), None) => ir::Shape::Value { ty: ir::Type::Uuid, nullable: true },
         (t, _) => ty_shape(t, false),
-    }
-}
-
-/// Values read through `the/latest/first`, an entity-returning relation or an
-/// optional field can be missing.
-fn may_be_null(a: &Analysis<'_>, e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::The(_) | ast::ExprKind::Latest(..) | ast::ExprKind::First(..) => true,
-        ast::ExprKind::Call(c) => a.model.relations.get(&c.callee.text()).is_some_and(|r| r.result.is_some()),
-        ast::ExprKind::Field(b, _) => may_be_null(a, b),
-        ast::ExprKind::Agg { func, .. } => !matches!(func, ast::AggFn::Count | ast::AggFn::Sum),
-        _ => false,
     }
 }

@@ -17,27 +17,33 @@ pub struct Analysis<'a> {
     pub diagnostics: Vec<Diagnostic>,
     /// Expression types keyed by `(span.start, span.end)`.
     pub types: std::collections::HashMap<(u32, u32), ty::Ty>,
+    /// Whether checked expressions can evaluate to SQL NULL, keyed by source span.
+    pub nullability: std::collections::HashMap<(u32, u32), bool>,
 }
 
 impl Analysis<'_> {
     pub fn ty_of(&self, e: &aip_syntax::ast::Expr) -> ty::Ty {
         self.types.get(&(e.span.start, e.span.end)).cloned().unwrap_or(ty::Ty::Unknown)
     }
+
+    pub fn may_be_null(&self, e: &aip_syntax::ast::Expr) -> bool {
+        self.nullability.get(&(e.span.start, e.span.end)).copied().unwrap_or(false)
+    }
 }
 
 pub fn analyze(file: &File) -> Analysis<'_> {
     let mut model = model::Model::build(file);
-    let (checker_diags, events, types) = {
+    let (checker_diags, events, types, nullability) = {
         let mut checker = check::Checker::new(&model);
         checker.run();
-        (checker.diags, checker.events, checker.types)
+        (checker.diags, checker.events, checker.types, checker.nullability)
     };
     model.events = events;
     let mut diagnostics = std::mem::take(&mut model.diags);
     diagnostics.extend(checker_diags);
     diagnostics.sort_by_key(|d| (d.span.line, d.span.col));
     diagnostics.dedup_by(|a, b| a.code == b.code && a.span == b.span && a.message == b.message);
-    Analysis { model, diagnostics, types }
+    Analysis { model, diagnostics, types, nullability }
 }
 
 pub fn has_errors(diags: &[Diagnostic]) -> bool {
