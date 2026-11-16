@@ -4,6 +4,7 @@
 - 범위: 제품 정의의 정책 작성 → 사실 변환 → `aip service` 실행 → HTTP/SDK 오류·결과
 - 결론: 이번 실행에서 **새로 확인된 결함은 0건**이다. 제품 PostgreSQL 테스트를 실행하지 못했으므로 이 결론은 코드 경로 정적 추적과 가능한 비DB 테스트 범위에 한정한다. 기존 정책 보안 회귀의 현재 동작은 미검증이다.
 - 결함 수정은 하지 않았다. 재현 조건·RED 출력을 확보하지 않은 상태에서 테스트를 결함 증거로 추가하지 않았다.
+- 후속 DB 검증: 작업자 소유 PostgreSQL 초기화가 Codex command sandbox의 System V 공유 메모리 `Operation not permitted`로 막혔다. 아래 후속 실행 기록에 따라 DB 연결 및 보안 회귀는 여전히 미실행이다.
 
 ## 1. 실제 제품 경로와 실험 경로
 
@@ -93,6 +94,30 @@
 
 각 위험의 재현 조건은 위 표의 source/기존 테스트 경로다. 현재 RED 출력이 없으므로 테스트 이름·실패 문자열을 결함 증거로 주장하지 않는다. 현행 작성 규칙을 바꾸지 않는 작은 patch 제안도 이번 증거만으로는 정당화되지 않는다.
 
+### 2026-11-16 격리 PostgreSQL 후속 실행
+
+목표는 제품 DB 권한 검증과 S-01/S-17 회귀를 작업자 소유 PostgreSQL에서 보완하는 것이었다. 저장소의 strict DSN guard와 권한 기대값은 변경하지 않았다. 부모 command 환경에서 `PGHOST`, `PGPORT` 변수가 존재함을 변수명만 확인했고, 테스트 명령에는 둘 다 `env -u`로 제거할 계획이었다. `AIP_TEST_DATABASE_URL`과 `AIP_TEST_ADMIN_URL`은 아직 전달하지 않았다.
+
+| 완료 기준 | 실행/관측 | 결과 |
+|---|---|---|
+| 전용 DB 초기화 | Codex nested command sandbox에서 `/opt/homebrew/opt/postgresql@17/bin/initdb -D /tmp/aip-audit-c-policy-pgdata -U runner --auth-local=trust --auth-host=trust --no-instructions` | **실패, initdb 단계.** 서버 시작이나 연결 전에 bootstrap이 `FATAL: could not create shared memory segment: Operation not permitted`, `DETAIL: Failed system call was shmget(...)`로 종료됐고 `initdb`가 데이터 디렉터리를 제거했다. 이는 해당 command sandbox에서 관측된 IPC 거부다. |
+| 명시 DSN 연결 검사 | `psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1'` | **미실행.** 초기화된 서버가 없어 시험 대상 endpoint가 없었다. 다른 실행 엔진/방법으로 우회하지 않았다. |
+| `cargo test -p aip-cli --no-fail-fast` baseline | 실행 예정 | **미실행.** 전용 DB를 만들지 못해 DSN을 줄 수 없다. 앞선 회차의 strict build guard 실패는 assertion 결과가 아니다. |
+| S-01 `security_authorization` | `cargo test --manifest-path spikes/spike-v2-read/Cargo.toml --locked --test security_authorization --no-fail-fast` | **미실행.** 해당 suite는 `single_reference_traverse_respects_origin_field_policy`와 반복 select reject를 포함하지만 DB 회귀 결과는 없다. |
+| S-17 `negated_policy` | `cargo test --manifest-path spikes/spike-v2-read/Cargo.toml --locked --test negated_policy --no-fail-fast` | **미실행.** `negated_actor_attribute_denies_the_anonymous_caller`의 현 실행 결과는 없다. |
+| S-14 PoC 대조 | `cargo test -p aip-cli --features poc-runtime --test field_policy_e2e --no-fail-fast` | **미실행.** 실행되더라도 `aip_runtime::Engine` 기반 PoC 결과로 제품 `aip service` 증거가 되지 않는다. |
+
+DB 시도가 막힌 뒤 제품 `aip service` 경로에서 재사용할 수 있는 regression source를 다시 분류했다. `crates/aip-cli/tests/field_policy_e2e.rs`는 PoC라 제외한다. `crates/aip-service/tests/mysql_read_http.rs::mysql_read_path_serves_policy_reads_and_fences_ddl`와 `mysql_write_http.rs::mysql_apply_is_atomic_idempotent_audited_and_fenced`는 서비스 read/write API, relation/field projection 및 `WIRE.FORBIDDEN`/`WIRE.MISSING_TARGET` 예시를 포함하지만 MySQL 경로다. 따라서 이 테스트 source가 존재해도 이번 PostgreSQL 제품 경로 실행으로 승격하지 않는다. `spikes/spike-v2-read/tests/security_authorization.rs`와 `negated_policy.rs`도 회귀 구현 위치는 제공하지만, 독립 spike suite 실행 전에는 결과가 없다.
+
+이번 회차의 행위별 상태:
+
+- 기본 거부: **제품 PostgreSQL 실행 미검증**. 정적 근거는 §2 및 V1 fixture 검사로 제한한다.
+- 숨김 행과 부재 행: **제품 PostgreSQL 실행 미검증**. 서비스 MySQL 쓰기 테스트 source에는 `WIRE.MISSING_TARGET` 회귀가 있지만 이번에는 미실행이다.
+- visible + forbidden: **제품 PostgreSQL 실행 미검증**. 서비스 MySQL 쓰기 테스트 source에 `WIRE.FORBIDDEN` 회귀가 있지만 이번에는 미실행이다.
+- `fieldRead`와 관계 가시성: **제품 PostgreSQL 실행 미검증**. MySQL read service 테스트와 spike S-01 source는 관련 범위를 일부 포함하나 이번 실행 증거가 아니다. 제품 PostgreSQL에서 합친 핵심 사례가 확인되지 않아 추가 테스트도 작성하지 않았다.
+
+새로 확인된 결함은 없다. 이는 테스트가 통과했다는 뜻이 아니며, DB 연결 전 차단으로 새 결함을 찾지 못했다는 뜻이다. 확인된 결함이 없으므로 RED 테스트를 추가하지 않았다. 시작한 PostgreSQL 서버는 없어서 정리할 프로세스도 없으며, initdb가 실패한 소유 데이터 디렉터리를 제거했음을 출력에서 확인했다. 실패 후 동일 대상을 다른 실행 수단으로 재시도하지 않았다.
+
 ### 속성 기반 불변식 시험 가능성 및 초안
 
 가능하다. 신규 property-testing 의존성 없이, 현재 strict DB harness에서 seeded/deterministic case 생성으로 먼저 작성할 수 있다. 본 Run에서는 전용 DB가 없어 실행 가능한 테스트 코드로 넣지 않고 실행 계약 초안만 남긴다.
@@ -121,7 +146,7 @@ for each generated actor and hidden row r (rowRead(r, actor) != TRUE):
 | P2 | role/tenant/ownership 변경이 진행 중인 apply/read와 겹칠 때 새 권한이 어느 요청부터 적용되는지, DB 격리 계약을 실제 경합 시험으로 측정. | 중간~높음 | 아니오, 현행 lock/isolation 경계 우선 확인 |
 | P2 | worker/service actor와 end-user actor의 facts, audit actor, allow/rowRead 결과를 같은 operation으로 대조. | 중간 | 전용 service principal을 정의에 넣는 요구가 확인되는 경우에만 별도 검토 |
 
-테스트 전용 PostgreSQL/관리자 URL은 현재 environment에서 제공되지 않았다. 본 문서는 `.env`, 키 또는 설정 secret을 읽지 않았다.
+테스트용 DSN은 만들지 못했다. initdb 실패 외에 DB 접속을 시도하지 않았다. 본 문서는 `.env`, 키 또는 설정 secret을 읽지 않았다.
 
 ## 7. 실행 근거
 
@@ -147,8 +172,14 @@ AIP_TEST_DATABASE_URL is required; refusing PostgreSQL defaults
 $ cargo test -p aip-cli --features poc-runtime --test field_policy_e2e --no-fail-fast
 AIP_TEST_DATABASE_URL is required; refusing PostgreSQL defaults
 
+$ env -u PGHOST -u PGPORT /opt/homebrew/opt/postgresql@17/bin/initdb -D /tmp/aip-audit-c-policy-pgdata -U runner --auth-local=trust --auth-host=trust --no-instructions
+FATAL: could not create shared memory segment: Operation not permitted
+DETAIL: Failed system call was shmget(...)
+initdb: removing data directory "/tmp/aip-audit-c-policy-pgdata"
+
 $ git status --short --branch
 ## audit/semantic-c-policy-20261116...origin/main
 ```
 
 `aip-cli` baseline과 v2 auth regressions가 테스트 assertion failure를 낸 것은 아니다. strict harness가 DB endpoint를 받지 못해 빌드/테스트 시작 전 중단된 것이며, 수정 전 RED 출력은 없다.
+이번 후속 회차에서도 DB 초기화가 Codex nested command sandbox IPC 제한에서 중단돼 `psql SELECT 1`, 제품 baseline, S-01, S-17, S-14 test binary는 실행되지 않았다.
