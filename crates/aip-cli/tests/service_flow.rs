@@ -51,9 +51,10 @@ resource Record {
   field secret read when owner = actor
   expose read {
     select id, org, owner, title, secret, checked, ownVoteCount, publicVoteCount, minOwnVote, maxOwnVote
+    filter secret.eq
     traverse owner { select id, email }
     traverse votes via Vote.record { select id, owner, amount; sort id; limit 10 }
-    sort id
+    sort id, secret
     budget { rows 20; depth 2; deadline 2s; cost 1000; offset 100; cursor }
   }
   aggregate ownVoteCount: Int { source Vote; sourceAccess callerVotes(actor); groupKey record; where owner = actor; callerFilter none; rowOutput none; release count }
