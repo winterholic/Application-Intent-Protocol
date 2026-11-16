@@ -2091,7 +2091,7 @@ impl<'x, 'a> Lower<'x, 'a> {
                 .iter()
                 .map(|it| {
                     let s = match &it.value {
-                        Some(e) => ty_shape(&a.ty_of(e), false),
+                        Some(e) => ty_shape(&a.ty_of(e), may_be_null(a, e)),
                         None => ir::Shape::Value { ty: ir::Type::Unknown, nullable: false },
                     };
                     (it.name.name.clone(), s)

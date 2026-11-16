@@ -882,6 +882,9 @@ impl<'m, 'a> Checker<'m, 'a> {
         } else if !fi.ty.accepts(&got) {
             self.err(codes::E201, format!("{ent_name}.{} is {}, got {got}", field.name, fi.ty), a.value.span);
         }
+        if !fi.optional && matches!(&a.value.kind, ExprKind::Agg { func: AggFn::Min | AggFn::Max | AggFn::Avg, .. }) {
+            self.err(codes::E201, format!("{ent_name}.{} is not optional but this aggregate can return null", field.name), a.value.span);
+        }
         if got == Ty::Null && !fi.optional {
             self.err(codes::E201, format!("{ent_name}.{} is not optional and cannot be set to null", field.name), a.value.span);
         }

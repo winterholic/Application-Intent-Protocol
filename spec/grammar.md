@@ -11,6 +11,7 @@
 2. 절(clause)의 순서는 고정이다. 포매터(`aip fmt`) 출력이 정본이며, 포매터 결과와 다른 파일은 W-FMT.
 3. 비교는 `=`, 대입은 `set` 문 안의 `=`, `+=`, `-=`뿐이다. `==`는 없다.
 4. 집합을 받는 집계는 전부 **집합식(set-expr)** 한 가지 모양을 쓴다: `count(order.items)`, `sum(order.items i: i.price * i.quantity)`, `all(targets t: outranks(actor, t))`.
+   Core 집계에서 빈 집합의 `count`와 `sum` 결과는 `0`, `min`·`max`·`avg` 결과는 `null`이다. 후자의 값을 필수 필드에 대입하면 `POC.E201`이며, nullable 필드에는 대입할 수 있다. 계산된 query 출력 shape도 이 nullability를 반영한다.
 5. 존재 검사는 키워드 `exists <set-expr>` 하나다. `exists(...)` 함수 표기는 없다.
 6. 시간 길이는 숫자 + 단위 한 가지: `30s`, `10m`, `2h`, `7d`, `2w`, `6mo`, `1y`.
 7. 오류 코드는 `UPPER_SNAKE_CASE`.
