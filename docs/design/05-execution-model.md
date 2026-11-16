@@ -3,6 +3,8 @@
 > 상태: Proposed · 렌즈: dev-distributed-systems(타임아웃은 "모름", 2PC 회피, exactly-once 신화), dev-event-driven(아웃박스, 멱등 소비, key 단위 순서), dev-auth(인가는 매 요청)
 > 기준 인프라: PostgreSQL 단일 primary. 복제본 읽기는 M5 이후.
 
+이 문서 전체는 설계안이며 현재 제품의 보장으로 읽지 않는다. 특히 §3.1의 전역 선잠금과 §3.2의 retry-safety 분류는 아직 공개 제품 계약이나 구현 증거가 아니다. 현재 공개 계약은 선언된 `expect` 불일치와 동시 DB 충돌을 `WIRE.CONFLICT`로 돌려 트랜잭션을 취소한다고 정한다 (`spec/definition-syntax.md` transition `expect`, `spec/wire-errors.md` `WIRE.CONFLICT`). 이는 atomic bundle의 요청 순서와 무관한 잠금 또는 모든 교착의 자동 재시도를 약속하지 않는다. 현재 `aip service`의 `/apply`·atomic bundle·compose와 durable write 경로가 V3 쓰기 엔진을 호출하지만, V3 bundle/compose는 단계별 전이를 요청 순서로 실행하고 각 전이는 자체 대상만 `ORDER BY id FOR UPDATE`로 잠근다. V3는 retryable SQL 충돌을 SERIALIZABLE 쓰기에서만 재실행한다. READ COMMITTED의 교착 결과는 `WIRE.CONFLICT`로 반환될 수 있고 자동 재시도 보장은 없다. 근거는 `spikes/spike-v3-write/src/lib.rs`의 `db_err`, `is_retryable`, `bundle_run`, `bundle`·`compose` retry loop와 V6 `spikes/spike-v6-transport/src/lib.rs`의 `/apply` 경로다.
+
 ## 1. 원칙
 
 1. **분산하지 않을 수 있으면 분산하지 않는다.** 모든 내구성 상태(outbox, saga, 타이머, 멱등 기록, 스케줄 리더)는 애플리케이션과 같은 PostgreSQL에 둔다. 별도 워크플로 엔진, 별도 코디네이터가 없다. 그러면 "상태 기록"과 "비즈니스 변경"이 한 트랜잭션에 들어간다.
@@ -68,12 +70,18 @@ Phase 4  Response
 
 ### 3.1 잠금 순서
 
+아래 세 항목은 목표 설계이며 구현·공개 계약을 뜻하지 않는다. 실제 제품이 모든 대상 행을 선잠금하거나 실행 단계의 요청 순서를 정규화한다는 증거는 확인하지 않았다.
+
 - 각 엔티티 테이블에 전역 순위를 부여한다(스키마 정의 순서가 아니라 참조 그래프의 위상 정렬 + 이름, 결정적).
 - 한 명령의 모든 행 잠금은 (순위, id) 오름차순으로 한 번에 획득한다.
 - 집합 UPDATE 대상도 먼저 같은 순서로 잠근다.
 - 결과: AIP 명령끼리의 행 잠금 순환 대기는 생기지 않는다. 인덱스 페이지나 외래키 검사로 인한 DB 내부 교착은 여전히 가능하므로(보장 불가 항목 19) 재시도 정책으로 흡수한다.
 
+현재 wire 계약의 `WIRE.CONFLICT`는 expect 불일치, 동시 변경/직렬화 충돌을 구분하지 않고 나타낼 수 있다. 내부 V3 분류는 PostgreSQL `40P01`(deadlock)과 `40001`(serialization failure)을 retryable 표식으로 바꾸지만, 일반 business `WIRE.CONFLICT`와 같은 wire code다. 이 표식에 따른 서버 재실행은 현재 SERIALIZABLE 쓰기에만 적용된다. 따라서 전역 순서 약속과 충돌 재시도 표를 제품 보장으로 인용하지 말고, 실제 계약·해당 실행 경로·DB 증거를 각각 확인한다.
+
 ### 3.2 자동 재시도
+
+다음 표는 제안된 분류다. 현재 구현은 이 `retry_safety` 세 등급을 제품 문법이나 계약으로 노출하지 않는다. 확인된 재시도는 V3에서 SERIALIZABLE인 apply/bundle/compose 중 내부 retryable 표식이 있는 충돌을 최대 3회 다시 실행하는 경로다. READ COMMITTED 교착 자동 재시도나 bundle 순서 무관 보장은 확인되지 않았다. 공개 `WIRE.CONFLICT`의 `retry: later` 지침은 충돌 뒤 상태를 다시 확인하라는 뜻이지, 동일 요청 재실행이 항상 성공하거나 서버가 자동 재시도한다는 약속이 아니다.
 
 | retry_safety | 조건 | 직렬화 실패/교착 시 |
 |---|---|---|
@@ -86,6 +94,8 @@ Phase 4  Response
 기본은 READ COMMITTED + 명시 잠금이다. 컴파일러가 잠금이나 DB 제약으로 강제할 수 없는 불변식(예: 여러 테이블에 걸친 합계 조건)을 만나면 그 명령만 SERIALIZABLE로 올리고, `aip verify`에 이유를 적는다.
 
 ## 4. Saga (다단계 외부 효과)
+
+이 절의 컴파일러 생성 saga, 범용 상태 기계, 복구 루프 및 마지막 단계 순서 규칙도 Proposed다. 현재 제품에서 확인되는 복구 범위는 기능별이다. durable job의 외부 효과 장부는 idempotency key로 저장 결과를 재생하고, 결과를 알 수 없는 비멱등 명령을 `UNKNOWN`/`WIRE.EFFECT_UNKNOWN`으로 기록해 자동 재전송하지 않는다. lookup은 선언·제공자 경로가 실제로 있는 경우에만 결과 판정 수단이다. write extension의 Mongo/Redis saga는 보상 실패 이름과 `saga_transaction_log`를 남기며, 공개 오류 지침은 운영자의 수동 복구 또는 보상 재시도를 안내한다. durable job 자체에는 saga 보상이 없다는 내용은 D-P-JOBSTORE 초안에도 적혀 있고, 실제 런타임 분기는 `spikes/spike-v6-transport/src/durable.rs`에 있다. 이 범위를 넘어 임의 외부 효과에 대한 일반 saga 자동 복구가 제품에서 지원된다고 추정하지 않는다.
 
 별도 선언 없이, 명령에 Phase 1 효과가 있으면 컴파일러가 saga를 만든다.
 

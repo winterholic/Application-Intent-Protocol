@@ -4,7 +4,7 @@
 - 감사 범위: 제품 서비스가 실제로 호출하는 쓰기 경로와 durable execution의 계약
 - 수정 범위: 제품 동작 변경 없이 감사 결과와 최소 재현 테스트만 추가
 - 판정 시각: 2026-11-16 (KST)
-- 상태: **부분 완료**. 기존 PostgreSQL 기준선에서 lock-order 회귀의 RED를 관측했지만, 현재 세션에서는 테스트 DSN이 제공되지 않아 교정된 동시 멱등 회귀와 후속 확인을 실행하지 못했다.
+- 상태: **부분 완료**. 보존 기준선에서 lock-order 테스트 실패는 보이나 실패 결과 전문과 SQLSTATE가 없어 교착 실행 증거로 확정하지 않는다. 현재 세션은 DB 재실행 없이 문서·테스트 판정 기준을 보완한다.
 
 ## 1. 제품 경로와 PoC 구분
 
@@ -14,14 +14,16 @@
 
 ## 2. 우선순위 결과
 
-### P2 — atomic bundle의 요청 순서가 교착을 만들 수 있음 (확인됨)
+### P2 후보 — atomic bundle의 요청 순서가 교착을 만들 수 있음 (소스상 개연성, 실행 원인 미확인)
 
-- **문제:** 하나의 atomic 요청이 두 행을 `[30,31]` 순서로 잠그고, 동시 요청이 같은 행을 `[31,30]` 순서로 잠그면 양쪽이 서로의 두 번째 행을 기다릴 수 있다.
-- **영향:** PostgreSQL이 한 트랜잭션을 교착 희생자로 중단한다. 해당 요청은 모두 롤백되지만 보통의 READ COMMITTED 명령은 자동 재시도하지 않아 정상 업무 경쟁이 `WIRE.CONFLICT`로 끝날 수 있다. 데이터 손상은 확인되지 않았다.
-- **근거/원인:** 설계는 `docs/design/05-execution-model.md` §3.1에서 한 명령의 전체 행 잠금을 전역 순서로 획득한다고 약속한다. 반면 `spikes/spike-v3-write/src/lib.rs:1586-1617`의 `bundle_run`은 연산을 요청 순서대로 돌고, 각 `apply_op`의 `judge_query`는 개별 전이 대상만 `ORDER BY t.id FOR UPDATE`로 잠근다 (`:401-416,1431-1450`). bundle 전체 대상 행의 선행 전역 잠금 단계가 없다. 두 경로는 V6의 제품 `/apply`에서 호출된다.
+- **문제 후보:** 두 atomic 요청이 같은 행을 반대 순서로 여러 단계에서 잠그면 순환 대기가 생길 수 있다. 이는 현재 호출·잠금 코드에서 도출한 재현 가능한 가설이지, 현재 공개 계약 위반 또는 보장된 제품 실패로 판정하지 않는다.
+- **영향 후보:** 실제 DB 교착이면 희생 요청은 롤백되어 `WIRE.CONFLICT`로 반환될 수 있다. READ COMMITTED 경로에서 서버 자동 재시도는 확인되지 않았다. 사용자 데이터 손상은 이 기록에서 확인되지 않았다.
+- **제품 계약과 결정:** `spec/definition-syntax.md`의 `expect`와 `spec/wire-errors.md`의 `WIRE.CONFLICT`는 stale expect/동시 변경에 따른 rollback 및 호출자 재확인을 정한다. 이 계약은 bundle의 전체 잠금 순서나 순서 무관 실행, 모든 deadlock 자동 재시도를 약속하지 않는다. `docs/design/02-language.md`, `04-safety-matrix.md`, `05-execution-model.md`는 모두 `Proposed`이며 전역 순서·재시도 설명은 현재 구현을 입증하는 결정이 아니다. `docs/DECISIONS.md`에서 bundle 전역 선잠금의 Accepted 결정을 찾지 못했다.
+- **소스 추적:** 제품 `aip service`의 V6 `/apply`가 V3 `bundle_in`/`compose_in` 경로를 부른다. V3 `bundle_run`은 연산을 요청 순서대로 처리하고, 각 단계의 `judge_query`가 그 단계 대상만 `ORDER BY id FOR UPDATE`로 잠근다. bundle 전체 대상의 사전 전역 잠금은 이 경로에서 확인되지 않았다. `db_err`는 PG `40P01`/`40001`을 retryable 표식이 붙은 `WIRE.CONFLICT`로 분류한다. 해당 retry loop는 SERIALIZABLE인 apply/bundle/compose에서만 작동한다. 일반 WIRE 코드만으로는 PG 오류를 식별할 수 없다.
 - **다른 경로 대조:** 단일 전이는 대상 집합을 `id` 오름차순으로 잠그므로 이 재현의 역순 교착 유형은 없다. `compose`와 V6 write extension의 `bundle_in`도 순차 전이 호출을 공유하므로 동일 유형의 잠금 순서 위험이 남는다. 이 확장 경로의 반례는 이번에 별도 실행하지 않았다.
-- **권고(구현 안 함):** bundle/compose의 대상 집합을 쓰기 전에 계산해 리소스 전역 순위와 id 순으로 잠근 다음 단계들을 실행한다. 정책상 잠그면 안 되는 행이 대기하거나 노출되지 않도록 현재 행 가시성·권한 필터를 유지하는 계획이 필요하다. 구현은 중간 난이도이며 전체 재설계는 필요해 보이지 않는다.
-- **RED:** 기존 `/tmp/aip-baseline-engines.log`에서 `cargo test --test audit_bd_lock_order -- --nocapture` 실행 대상이 `atomic_bundles_touching_the_same_rows_in_opposite_order_do_not_deadlock ... FAILED`, `0 passed; 1 failed`로 종료했다. 기존 테스트의 실패 위치는 `tests/audit_bd_lock_order.rs:72`이고, 그 단언은 결과에 `WIRE.CONFLICT`가 하나라도 있으면 실패한다. 이 테스트는 실제 PostgreSQL 두 연결을 쓴다. 현재 파일은 `spikes/spike-v3-write/tests/audit_bd_lock_order.rs`다.
+- **보존 실행 증거:** `/tmp/aip-baseline-engines.log`에는 `audit_bd_lock_order` 테스트의 `FAILED`, `0 passed; 1 failed`, panic 위치 `tests/audit_bd_lock_order.rs:72`, Cargo의 실패 target 문구가 있다. 로그에는 실행 명령 전문·revision 메타데이터·`outcomes` 값·프로세스 exit code가 없고, 테스트 단언은 어떤 원인이든 `WIRE.CONFLICT` 하나면 실패시킨다. 따라서 실제 실행 실패는 보이나 deadlock 원인, 정확한 반환 코드·메시지, PostgreSQL SQLSTATE `40P01` 관측은 **미확인**이다. 이 로그만으로 RED를 교착 재현 성공으로 부르지 않는다. 로그 표식은 테스트 target과 결과만 남기므로 기록 revision은 현재 지정 HEAD `d55dd95`와 동일하다고 확인할 수 없다.
+- **테스트 판정 보완:** `audit_bd_lock_order.rs`는 일반 `WIRE.CONFLICT`를 교착으로 오인하지 않도록 V3의 내부 retryable 표식(`is_retryable`)을 구분하고, 예상 business 결과를 `WIRE.INVALID_STATE`로 한정한다. 다만 테스트의 100ms `pause_after_lock_ms`는 스케줄 유도용 sleep이라 양 세션이 첫 잠금을 동시에 가진다는 보장이 아니다. 테스트 자체는 원시 SQLSTATE를 보존하지 않으므로, 정확한 재현은 격리된 PostgreSQL에서 두 세션을 식별해 wait graph/lock wait를 관측하고 서버 오류 로그의 `40P01`과 테스트의 전체 outcomes를 함께 보존해야 한다. 저장소의 `write_extension_atomic.rs:55-68`에 `pg_stat_activity` lock wait polling 선례가 있다. 성공 판정은 한 bundle 성공, 나머지 정상 `WIRE.INVALID_STATE`, 두 행 모두 승자 소유, retryable SQL conflict 표식 없음과 SQLSTATE 40P01 미관측을 각각 기록하는 것이다. 이 세션은 실제 DB 확인을 하지 않는다.
+- **수정 권고는 보류:** 현재 증거로 전역 선잠금 구현을 권고하거나 새 제품 보장으로 승격하지 않는다. 테스트가 40P01을 보존된 독립 실행에서 재현한 뒤 lock-order 선택지를 다시 평가한다.
 - **수정 난이도:** 중간. 잠금 후보를 계산할 때 전이 순서·행 정책·bulk 상한·생성 후 참조 의미를 보존해야 한다. 대규모 재설계 필요성은 확인되지 않았다.
 
 ### 멱등 동시성 — 결함 확인 안 됨, 추가 검증 미완
@@ -35,9 +37,9 @@
 | 항목 | 판정 | 코드·기존 검사와 판단 |
 |---|---|---|
 | 복합 변경 원자성 | 검증됨, 범위 한정 | `bundle_once` 한 트랜잭션과 `bundle_in`/`checks_in` 호출 경로: `spike-v3-write/src/lib.rs:1543-1557,1575-1583`; 실패 시 트랜잭션 drop/rollback. 기존 V3 bundle·commit fault 계열과 V6 HTTP 경로가 있음. 동일 atomic 요청의 전체 서비스 wrapper 변형은 이번에 새로 실행하지 않음. |
-| 동시 수정 충돌 | 부분 검증 | 단일 행 잠금과 absence 의존 SERIALIZABLE·재시도 경로가 있음. 기존 `absence_serializable_http` 1건 통과. 다중 행 bundle 역순은 아래 lock-order 결함. |
-| 잠금 순서·데드락 | **결함 확인** | 위 P2. 설계의 전역 순서 약속과 atomic 실행 순서가 불일치. |
-| 낙관적 동시성 | 의미 불명확 / 검사 공백 | 요청 `expect` 검사가 동시성 제어에 어떻게 대응하는지 별도 코드·제품 계약 정합성 판정을 끝내지 못했다. 잠금은 pessimistic이며, 별도 version/ETag 경로의 보장으로 확대하지 않는다. |
+| 동시 수정 충돌 | 검증됨, 범위 한정 | 명시 행 잠금과 부재 의존 SERIALIZABLE 재시도는 서로 다른 경로다. 공개 `WIRE.CONFLICT`는 전체 DB rollback 및 상태 재확인을 안내하며 deadlock SQLSTATE 세부를 노출하지 않는다. 기존 `absence_serializable_http` baseline 1건 통과. |
+| 잠금 순서·데드락 | **실행 원인 미확인** | 코드상 atomic 단계 순서가 잠금 순서를 결정할 수 있고 baseline test는 실패했으나 결과는 일반 `WIRE.CONFLICT`인지 40P01인지 보존되지 않았다. Proposed 문서의 순서 약속은 현행 제품 계약이 아니다. |
+| 낙관적 동시성 | 계약·경로·회귀 대조 완료 | `expect` 선언 필드는 요청마다 모두 필요하고, 요청 값은 `apply_input`에서 타입 검증된 후 잠긴 대상의 UPDATE 조건에 NULL-safe 비교로 들어간다. 기대 값 불일치 시 변경 수 불일치가 `WIRE.CONFLICT`로 되어 transaction 전체를 rollback한다. `general_update.rs`의 stale expect 회귀, `product/tests/general-update.test.mjs`의 wire 결과, `facereview-comments.test.mjs`의 두 동시 편집 중 하나 성공/하나 conflict 기존 회귀가 이 의미를 확인한다. `version`은 버전 필드 증감과 함께 선언할 때 권장되는 낙관적 경합 표식이다. |
 | 실패 시 롤백 범위 | 검증됨, DB 범위 | V3 commit-classification tests는 COMMIT 전 실패와 결과 불명 상태를 구분한다. extension atomic test도 callback 오류·deadline·출력 오류 롤백을 겨냥한다. 외부 시스템 효과까지 DB rollback 된다고 보장하지 않는다. |
 | commit 후 응답 유실 | 검증됨 | `/apply`는 commit 뒤 연결·응답을 분류하고 같은 key의 재요청으로 결과를 재생한다. 기존 V6 `commit_unknown_wire`: 13 passed. |
 | 멱등 키 재사용·결과 재생 | 부분 검증 | 순차 동일 key 재생·다른 본문 거부 경로가 있고 기존 commit-unknown test 통과. corrected 12-connection race는 새로 실행되지 않음. |
@@ -47,7 +49,7 @@
 | Job 재시도·중복 실행 | 기존 테스트 통과, 조합 공백 | `job_retry` 1건과 `job_breaker` 2건 통과. job API idempotency 및 effect journal이 있음. 여러 worker·provider 결과 불명·lease 만료가 교차하는 모든 조합은 미검증. |
 | 외부 API 결과 불명확성 | 기존 테스트 통과 | provider 전송과 DB commit은 원자적이지 않으며 UNKNOWN을 자동 재전송하지 않는 계약. `job_breaker` 2건과 local mock `outbound_webhook` 1건 통과. 실제 외부 전송은 하지 않음. |
 | Outbox·Webhook 전달 의미 | 기존 테스트 통과, 중복 허용 | outbox pending dispatch와 서명 webhook/local mock 경로. 기준선 `outbox` 2건, `outbound_webhook` 1건 통과. 외부 consumer의 정확히 한 번 전달을 의미하지 않음. |
-| 실패 후 보상·복구 | 부분 / 의미 범위 제한 | durable job의 알려진 실패는 재시도·분기 가능하고 UNKNOWN은 멈춘다. saga가 필요한 선행 외부 효과의 lookup·compensation 전체 복구는 현재 제품 경로에서 판정을 마치지 못했다. 설계 문서만 근거로 구현 완료 처리하지 않음. |
+| 실패 후 보상·복구 | 계약별 지원 범위 구분 | durable job은 effect journal/idempotency 결과 재생을 지원하고, 결과 불명인 비멱등 호출은 `UNKNOWN`/`WIRE.EFFECT_UNKNOWN`으로 남겨 맹목 재전송하지 않는다. Provider lookup은 그 기능이 선언·구현된 경로에 한정된다. Mongo/Redis write extension의 compensation은 별도 saga log와 `WIRE.COMPENSATION_FAILED` 수동 복구/보상 재시도 안내가 있다. D-P-JOBSTORE 초안은 job saga compensation 미지원을 적으며 현행 durable 분기도 같은 경계를 둔다. design §4의 모든 외부 효과에 대한 컴파일러 생성 saga·일반 lookup 복구 루프는 Proposed이며 제품 보장으로 세지 않는다. |
 
 ## 4. 포팅 자산의 실패·우회 유형 분류
 
@@ -63,15 +65,21 @@
 
 ## 5. 실행 흔적과 미검증 범위
 
-- 기존 기준선 `/tmp/aip-baseline-engines.log`: lock-order test 실패(1/1); `commit_unknown_wire` 13/13, `job_retry` 1/1, `outbox` 2/2, `outbound_webhook` 1/1, write-extension atomic 1/1 및 commit classification 12/12 통과.
+- 기존 기준선 `/tmp/aip-baseline-engines.log`: lock-order target은 실패(1/1)했지만 원시 outcome·SQLSTATE는 없음. 같은 로그에서 `commit_unknown_wire` 13/13, `job_retry` 1/1, `outbox` 2/2, `outbound_webhook` 1/1, write-extension atomic 1/1 및 commit classification 12/12 통과.
 - 전체 baseline 로그에는 서로 다른 engine별 실패가 있다: V3 3 targets(lock-order, latest effect, nullable projection), V4 3 targets(native capability/principal fixtures), V6 1 target(잘못된 key 재사용 race), 그리고 product test sweep의 6 targets. 마지막 그룹에서 로그에 확인되는 이름은 V12–V16이며 실패 원인 전문은 이 보고서에 재분류하지 않았다. 감사와 무관한 latest projection·optional Mongo/Redis·principal fixture 실패를 B/D 결함으로 세지 않았다. 각 숫자는 각각의 Cargo invocation 결과이며 합쳐서 하나의 `6 targets failed`로 표현하지 않는다.
-- 현재 세션의 재실행 시도 1: `cargo test -p spike-v3-write --test audit_bd_lock_order -- --nocapture`는 `package ... is not a member of the workspace`로 테스트 전에 종료했다. 올바른 crate 경로에서 다시 시도했다.
-- 현재 세션의 재실행 시도 2: `cargo test --test audit_bd_lock_order -- --nocapture` (`spikes/spike-v3-write`): build script가 `AIP_TEST_DATABASE_URL is required; refusing PostgreSQL defaults`로 종료했다. dedicated DSN이 설정되지 않았다.
-- 대안 확인: `docker ps`는 `unix:///Users/winterholic/.orbstack/run/docker.sock` 없음으로 실패. 설치된 PostgreSQL 17로 임시 클러스터를 `/private/tmp`에 초기화하려 했으나 `initdb` bootstrap의 `shmget(...): Operation not permitted`로 종료했다. `--set=shared_memory_type=mmap` 지정으로 다른 구성을 한 번 더 시도해도 bootstrap이 같은 `shmget` 오류를 냈다. 임시 인스턴스는 시작되지 않았고 DB 테스트는 실행되지 않았다.
-- corrected `audit_bd_idem_race.rs`는 source 수정만 했으며 **컴파일·실행 미검증**이다. 앞서 잘못된 key 사용으로 실패한 기록을 제품 실패 증거로 사용하지 않는다.
+- 이전 세션의 기록된 DB 실행 시도: package 이름으로 지정한 첫 `cargo test -p spike-v3-write ...`는 crate가 독립 workspace라 `package ... is not a member of the workspace`로 테스트 전 종료. 올바른 경로의 테스트 실행은 명시 DSN guard `AIP_TEST_DATABASE_URL is required; refusing PostgreSQL defaults`에서 중단. 당시 기록된 대안 실패는 Docker socket `unix:///Users/winterholic/.orbstack/run/docker.sock` 부재와 PostgreSQL 17 `initdb`의 `shmget(...): Operation not permitted`다. 이 세션에서는 이 DB 실행·대안을 재시도하지 않았다.
+- baseline `audit_bd_idem_race` 실패는 서로 다른 업무 본문에 같은 key를 넣어 모두 `WIRE.IDEMPOTENCY_MISMATCH`를 받은 테스트 오류였다. 현재 파일은 READ COMMITTED `Counter.bump`와 SERIALIZABLE `Booking.confirm` 각 race에 서로 다른 고정 key를 주고, 각 race 안에서는 동일 본문·동일 key를 사용한다. 이번 세션은 assertion을 실행하지 않고 `--no-run` 컴파일만 통과했다.
+
+### 이번 보완 검증
+
+- `cargo fmt --all -- --check` — exit 0.
+- `git diff --check` — exit 0.
+- `AIP_TEST_DATABASE_URL='host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner' AIP_TEST_ADMIN_URL='host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner' cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --test audit_bd_lock_order --no-run` (PG* inherited env unset) — exit 0, executable 생성. DB 연결 및 assertion 실행 없음.
+- 같은 명시 DSN guard로 `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test audit_bd_idem_race --no-run` — exit 0, executable 생성. DB 연결 및 assertion 실행 없음.
+- 첫 V3 `--no-run` compile은 test의 `&str` 비교에서 E0277을 찾아냈다. 참조 비교를 고친 뒤 재컴파일과 format 검사 모두 통과했다.
 
 ## 6. 수정안 (코드 변경 아님)
 
-`bundle_run`이 operation list 전체의 write target과 순위를 수집할 수 있도록 transition별 target resolution을 분리한다. 모든 대상은 정책상 보이는 행만, 한 명령의 전역 순위와 id 순으로 선잠금한다. 그 뒤 기존 연산 순서로 정책·precondition·effects를 실행하되 다시 잠금을 획득하지 않거나 이미 획득한 잠금을 재사용한다. `bundle_in`·`compose_in`·write extension·durable job 호출에서 같은 계획을 공유한다. 테스트는 두 연결의 역순 multi-row bundle에서 성공 1개와 business refusal 1개, 전체 rollback을 확인하고, 숨김 행 누출·혼합 리소스·where 상한·같은 행 중복 요청을 반례로 둔다.
+현재 결론은 구현 권고가 아니라 증거 보완이다. lock-order 테스트를 독립 PostgreSQL에서 재현할 때는 두 연결의 lock 획득 단계를 동기화하고, PostgreSQL server log의 원시 `40P01` 및 test outcomes를 보존한다. 동시에 business `WIRE.INVALID_STATE`가 교착 신호로 잘못 집계되지 않는지 확인한다. 이 확인 후에만 전역 선잠금 등 변경안을 검토한다.
 
-`2026-11-16` 검증에서 수정 전 RED는 확보됐지만 위 후보의 GREEN, corrected idempotency race, 전체 `cargo test --no-fail-fast`, port 별 독립 evidence 대조 및 원격 push SHA 검증은 완료되지 않았다. 제품 코드는 수정하지 않았다.
+낙관적 동시성은 spec·judge/update 경로·기존 회귀로 해소했으며, recovery는 현재 제품별 지원 범위와 Proposed saga를 분리했다. 제품 코드는 수정하지 않았다. C 담당 CI 결과는 직접 받지 않았으므로 미실행이다.
