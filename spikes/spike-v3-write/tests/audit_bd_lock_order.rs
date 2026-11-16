@@ -1,15 +1,12 @@
-//! Audit B (2026-11-16): `docs/design/05-execution-model.md` 3.1 promises that every row lock of one command is taken
-//! in one global order, so two AIP commands cannot wait on each other in a cycle. A single transition honours it (the judge
-//! locks `ORDER BY t.id`), but an `atomic` bundle runs its operations in request order and each operation locks only its own
-//! targets. Two bundles that touch the same two rows in opposite order therefore deadlock; PostgreSQL aborts one after
-//! `deadlock_timeout` and the caller gets `WIRE.CONFLICT` for what is a plain business race.
-//!
-//! Expected (design): no cycle. One bundle wins both rows, the other is refused by the business rule (`INVALID_STATE`,
-//! the row is already CLAIMED). Real PostgreSQL, one connection per bundle.
-use serde_json::{json, Value};
-use spike_v1_fixture::{load_str, Form};
+//! Audit B (2026-11-16): probe whether opposite-order atomic bundles produce a retryable SQL concurrency failure.
+//! The sleep after each transition's row lock is only a scheduling hint; it does not prove the sessions overlap at that
+//! point. `WIRE.CONFLICT` alone is not a deadlock signal: only V3's retryable SQL-conflict marker is counted below.
+//! The public result does not retain the raw SQLSTATE, so a marker still needs PostgreSQL log evidence to confirm 40P01.
+//! Expected business result: one bundle wins both rows and the other receives `WIRE.INVALID_STATE` on the claimed row.
+use serde_json::{Value, json};
+use spike_v1_fixture::{Form, load_str};
 use spike_v2_read::{connect_with_url, plan::Caller, sqlgen};
-use spike_v3_write::{bundle, Knobs};
+use spike_v3_write::{Knobs, bundle};
 use std::{sync::Arc, time::Duration};
 
 const DB: &str = aip_test_support::test_database_url!();
@@ -30,7 +27,7 @@ fn claim(id: i64) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn atomic_bundles_touching_the_same_rows_in_opposite_order_do_not_deadlock() {
+async fn opposite_order_bundle_probe_reports_only_expected_business_outcomes() {
     let schema = format!("aip_bd_lock_order_{}", std::process::id());
     sqlgen::set_schema(&schema);
     let facts = Arc::new(load_str(SPEC, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution);
@@ -53,12 +50,18 @@ async fn atomic_bundles_touching_the_same_rows_in_opposite_order_do_not_deadlock
             gate.wait().await;
             let request = json!({"atomic": order.iter().map(|id| claim(*id)).collect::<Vec<_>>()});
             let caller = Caller { actor_id: Some(actor), now: "2026-11-16T00:00:00Z".into() };
-            // Hold each operation's locks for a moment so both bundles hold their first row before asking for the second.
+            // Best-effort schedule hint only; exact overlap must be confirmed from PostgreSQL lock/error evidence.
             let knobs = Knobs { pause_after_lock_ms: 100, ..Knobs::default() };
             let outcome = tokio::time::timeout(Duration::from_secs(10), bundle(&mut db, &facts, &request, &caller, &knobs))
                 .await
                 .expect("a bundle must finish, not hang");
-            (actor, outcome.map(|_| ()).map_err(|reject| reject.code))
+            (
+                actor,
+                outcome.map(|_| ()).map_err(|reject| {
+                    let retryable_sql_conflict = spike_v3_write::is_retryable(&reject);
+                    (reject.code, retryable_sql_conflict)
+                }),
+            )
         }));
     }
     let mut outcomes = vec![];
@@ -69,10 +72,12 @@ async fn atomic_bundles_touching_the_same_rows_in_opposite_order_do_not_deadlock
         db.query(&format!("SELECT owner_id FROM {schema}.task ORDER BY id"), &[]).await.unwrap().iter().map(|row| row.get(0)).collect();
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
 
-    assert!(
-        outcomes.iter().all(|(_, outcome)| !matches!(outcome, Err("WIRE.CONFLICT"))),
-        "opposite-order bundles formed a lock cycle and PostgreSQL broke it: {outcomes:?}"
-    );
+    assert!(outcomes.iter().all(|(_, outcome)| !matches!(outcome, Err((_, true)))), "a retryable SQL concurrency outcome was returned: {outcomes:?}");
     assert_eq!(outcomes.iter().filter(|(_, outcome)| outcome.is_ok()).count(), 1, "exactly one bundle must win: {outcomes:?}");
+    assert_eq!(
+        outcomes.iter().filter(|(_, outcome)| matches!(outcome, Err((code, false)) if *code == "WIRE.INVALID_STATE")).count(),
+        1,
+        "the losing bundle must be refused by the business state, not another error: {outcomes:?}"
+    );
     assert!(owners[0].is_some() && owners[0] == owners[1], "the winner owns both rows and the loser changed nothing: {owners:?}");
 }

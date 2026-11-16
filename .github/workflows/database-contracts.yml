@@ -53,6 +53,19 @@ jobs:
         run: |
           rustup update stable
           rustup default stable
+      - name: Configure PostgreSQL server error diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          psql -X "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET log_error_verbosity = 'verbose'" \
+            -c "ALTER SYSTEM SET log_lock_waits = 'on'" \
+            -c "SELECT pg_reload_conf()" 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/postgres-diagnostics.log"
+          diagnostic_status=${PIPESTATUS[0]}
+          echo "postgres diagnostics exit=$diagnostic_status"
+          exit "$diagnostic_status"
       - name: Verify credential replacement and documented runtime grants under SCRAM
         run: |
           cargo test -p aip-test-support --locked
@@ -69,6 +82,19 @@ jobs:
           cargo test -p aip-cli --locked --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/aip-cli.log"
           test_status=${PIPESTATUS[0]}
           echo "aip-cli baseline exit=$test_status"
+          exit "$test_status"
+      - name: Audit C service data semantics over HTTP and database state
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/service-data-semantics-readiness.log"
+          readiness_status=${PIPESTATUS[0]}
+          if (( readiness_status != 0 )); then exit "$readiness_status"; fi
+          cargo test -p aip-cli --test service_flow --locked service_data_semantics_hold_across_http_and_database_state -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/service-data-semantics.log"
+          test_status=${PIPESTATUS[0]}
+          echo "service data semantics exit=$test_status"
           exit "$test_status"
       - name: Audit C spike-v2-read security_authorization
         if: always()
@@ -105,7 +131,7 @@ jobs:
           psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/audit-bd-lock-order-readiness.log"
           readiness_status=${PIPESTATUS[0]}
           if (( readiness_status != 0 )); then exit "$readiness_status"; fi
-          cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test audit_bd_lock_order -- --nocapture 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/audit-bd-lock-order.log"
+          cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test audit_bd_lock_order -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/aip-policy-c/audit-bd-lock-order.log"
           test_status=${PIPESTATUS[0]}
           echo "audit_bd_lock_order exit=$test_status"
           exit "$test_status"
@@ -148,6 +174,25 @@ jobs:
           test_status=${PIPESTATUS[0]}
           echo "latest_nullable_projection exit=$test_status"
           exit "$test_status"
+      - name: Collect PostgreSQL server error logs
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-policy-c"
+          : > "$RUNNER_TEMP/aip-policy-c/postgres-server.log"
+          mapfile -t containers < <(docker ps -a --format '{{.ID}} {{.Image}}' | awk '$2 ~ /^postgres:17(@|$)/ {print $1}')
+          if ((${#containers[@]} == 0)); then
+            echo 'No PostgreSQL 17 service container found on the runner.' | tee "$RUNNER_TEMP/aip-policy-c/postgres-server.log"
+            exit 0
+          fi
+          status=0
+          for container in "${containers[@]}"; do
+            echo "===== postgres container $container =====" >> "$RUNNER_TEMP/aip-policy-c/postgres-server.log"
+            docker logs --timestamps "$container" >> "$RUNNER_TEMP/aip-policy-c/postgres-server.log" 2>&1 || status=$?
+          done
+          echo "postgres log collection exit=$status"
+          exit "$status"
       - name: Preserve policy C test logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

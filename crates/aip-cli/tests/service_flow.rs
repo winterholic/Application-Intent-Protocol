@@ -290,16 +290,17 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         let (child, listening) = start(&config, &file).await;
         let address = listening["address"].as_str().unwrap();
         let fingerprint = listening["fingerprint"].as_str().unwrap();
-        let query = json!({"query":{"read":"Event","select":["id","title","note","amount","phase","score","checked","voteCount",{"member":{"select":["id","name"]}}],"sort":[{"field":"score","dir":"asc"}]}});
+        let query = json!({"query":{"read":"Event","select":["id","title","note","amount","phase","score","voteCount",{"member":{"select":["id","name"]}}],"sort":[{"field":"score","dir":"asc"}]}});
         let first = post(address,"/read",&token,fingerprint,query.clone()).await;
         assert_eq!(first["ok"],true,"{first}");
+        assert_eq!(first["rows"].as_array().map(Vec::len),Some(3),"all three authorized rows are returned");
         assert_eq!(first["rows"][0]["id"],"11","equal sort values use stable id ordering");
         assert_eq!(first["rows"][0]["note"],Value::Null,"stored nullable value is JSON null");
         assert_eq!(first["rows"][0]["amount"],"99999999.99","declared Decimal(10,2) upper boundary remains exact");
         assert_eq!(first["rows"][0]["voteCount"],1);
         assert_eq!(first["rows"][1]["voteCount"],0,"empty relation count is zero");
         assert_eq!(first["rows"][0]["member"],json!({"id":"42","name":"Ada"}));
-        assert!(first["rows"][0].get("unselected").is_none(),"unselected fields stay absent");
+        assert!(first["rows"][0].get("checked").is_none(),"declared but unselected checked stays absent");
         let patch = json!({"key":"semantic-partial","request":{"apply":"Event.edit","target":{"ids":["12"]},"values":{"title":"changed"}}});
         let applied = post(address,"/apply",&token,fingerprint,patch).await;
         assert_eq!(applied["ok"],true,"{applied}");
@@ -319,6 +320,7 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         // The same rows inserted in the opposite order must yield the identical sorted response.
         db.batch_execute(&format!("DELETE FROM {schema}.vote; DELETE FROM {schema}.event; INSERT INTO {schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES (13,42,'boundary',NULL,NULL,'READY',99999999.99,false),(11,42,'first',NULL,'99999999.99','DONE',10.50,false),(12,42,'second','kept','1.20','READY',10.50,false); INSERT INTO {schema}.vote(id,event_id) VALUES(1,11)")).await.unwrap();
         let permuted = post(address,"/read",&token,fingerprint,query).await;
+        assert_eq!(permuted["ok"],true,"{permuted}");
         assert_eq!(permuted["rows"],first["rows"],"input insertion order does not change the semantic result");
         stop(child).await;
     }).catch_unwind().await;
