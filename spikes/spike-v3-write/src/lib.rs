@@ -93,6 +93,12 @@ pub fn is_retryable(reject: &Reject) -> bool {
     reject.code == "WIRE.CONFLICT" && reject.msg.ends_with(RETRY_MARK)
 }
 
+/// Whether a transaction-owning caller may retry this fully rolled-back SQL failure within the existing bound.
+/// Only use this for idempotent SQL operations; caller-owned transactions and callback effects cannot use this policy.
+pub fn retry_owned_transaction(reject: &Reject, retries_so_far: usize) -> bool {
+    is_retryable(reject) && retries_so_far < SERIALIZATION_RETRIES
+}
+
 /// 호출자가 정한 쓰기 단계에서 직렬화 충돌과 같게 다룰 거절(예: SERIALIZABLE에서 멱등 키 행 삽입 충돌). 재시도 대상이다.
 pub fn serialization_conflict(stage: &str) -> Reject {
     Reject { code: "WIRE.CONFLICT", msg: format!("{stage}: 동시 쓰기와 충돌. {RETRY_MARK}") }
@@ -130,8 +136,19 @@ pub fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), 
 
 #[cfg(test)]
 mod scalar_literal_tests {
-    use super::{literal, IdWire, Src};
+    use super::{literal, retry_owned_transaction, IdWire, Reject, Src, SERIALIZATION_RETRIES};
     use serde_json::json;
+
+    #[test]
+    fn owned_transaction_retries_only_retryable_conflicts_within_the_existing_bound() {
+        let deadlock = Reject { code: "WIRE.CONFLICT", msg: "교착: 다시 시도 가능".into() };
+        let business_refusal = Reject { code: "WIRE.INVALID_STATE", msg: "현재 상태에서 허용되지 않음".into() };
+
+        assert!(retry_owned_transaction(&deadlock, 0), "READ COMMITTED deadlocks are safe after a full rollback");
+        assert!(retry_owned_transaction(&deadlock, SERIALIZATION_RETRIES - 1));
+        assert!(!retry_owned_transaction(&deadlock, SERIALIZATION_RETRIES));
+        assert!(!retry_owned_transaction(&business_refusal, 0));
+    }
 
     #[test]
     fn email_and_date_literals_are_validated_and_use_typed_sql_casts() {
@@ -214,7 +231,7 @@ pub async fn apply(db: &mut Client, facts: &Value, req: &Value, caller: &Caller,
         let retry_knobs = Knobs { pause_after_lock_ms: 0, pause_before_commit_ms: 0, ..knobs.clone() };
         loop {
             match apply_inner(&mut *db, facts, req, caller, if attempt == 0 { knobs } else { &retry_knobs }, ctl.clone(), serializable).await {
-                Err(e) if serializable && is_retryable(&e) && attempt < SERIALIZATION_RETRIES => {
+                Err(e) if retry_owned_transaction(&e, attempt) => {
                     attempt += 1;
                     retry_backoff(attempt).await;
                 }
@@ -1529,7 +1546,7 @@ pub async fn bundle(db: &mut Client, facts: &Value, req: &Value, caller: &Caller
         let retry_knobs = Knobs { pause_after_lock_ms: 0, pause_before_commit_ms: 0, ..knobs.clone() };
         loop {
             match bundle_once(&mut *db, facts, req, caller, if attempt == 0 { knobs } else { &retry_knobs }, ctl.clone(), serializable).await {
-                Err(e) if serializable && is_retryable(&e) && attempt < SERIALIZATION_RETRIES => {
+                Err(e) if retry_owned_transaction(&e, attempt) => {
                     attempt += 1;
                     retry_backoff(attempt).await;
                 }
@@ -1664,7 +1681,7 @@ pub async fn compose(db: &mut Client, facts: &Value, req: &Value, caller: &Calle
         let retry_knobs = Knobs { pause_after_lock_ms: 0, pause_before_commit_ms: 0, ..knobs.clone() };
         loop {
             match compose_once(&mut *db, facts, req, caller, if attempt == 0 { knobs } else { &retry_knobs }, ctl.clone(), serializable).await {
-                Err(e) if serializable && is_retryable(&e) && attempt < SERIALIZATION_RETRIES => {
+                Err(e) if retry_owned_transaction(&e, attempt) => {
                     attempt += 1;
                     retry_backoff(attempt).await;
                 }
