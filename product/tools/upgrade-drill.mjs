@@ -3,7 +3,8 @@
 //   node product/tools/upgrade-drill.mjs --old-bin <aip> --new-bin <aip> [--workers python]
 //
 // The old binary initializes and serves a deployment, a caller writes through it and a durable job finishes. The new binary then
-// serves the same schema: the committed row, the idempotency record and the finished job must survive. Two rollbacks follow:
+// serves the same schema: the committed row, the idempotency record and the finished job must survive. Stored job output
+// remains bound to its accepted deployment and contract; a changed binding must refuse public result access. Two rollbacks follow:
 // the old binary against the schema the new one touched, and a restore of the pre-upgrade dump. Every stage is asserted and the
 // observed outcome is printed as one JSON report. The database must be the dedicated test PostgreSQL (see postgres-guard.mjs).
 import { spawn, spawnSync } from "node:child_process";
@@ -12,6 +13,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { requireTestDatabase } from "../test-support/postgres-guard.mjs";
 
 const productDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -139,6 +141,21 @@ async function call(base, token, fingerprint, path, body) {
 
 const summarize = (response) => (response?.ok === true ? response.rows.map((row) => `${row.id}:${row.checked}`).join(",") : `error:${response?.code}`);
 
+export function upgradeJobResultOutcome(response, {before, after, deployment, contract}) {
+  assert(before?.state === "SUCCEEDED" && before.output?.length === 3
+    && typeof before.deployment === "string" && before.deployment.length > 0
+    && typeof before.contract === "string" && before.contract.length > 0 && isDeepStrictEqual(before, after),
+    "new-job-preservation", "the upgrade changed the finished job's stored result or bindings");
+  const readable = before.deployment === deployment && before.contract === contract;
+  if (readable) {
+    assert(response.ok === true && isDeepStrictEqual(response.output, before.output), "new-job-result", "unchanged job bindings must return the original output");
+  } else {
+    assert(response.ok === false && response.code === "WIRE.DEPLOYMENT_CHANGED" && !Object.hasOwn(response, "output"),
+      "new-job-result", "changed job bindings must refuse result access without exposing output");
+  }
+  return {storedResultPreserved: true, resultReadable: readable, resultRefusedWith: readable ? null : "WIRE.DEPLOYMENT_CHANGED"};
+}
+
 export async function rollbackBinaryOutcome(reverted, {call: request = call, token, oldFingerprint} = {}) {
   if (reverted.started) {
     const base = `http://${reverted.address}`;
@@ -237,6 +254,10 @@ async function main() {
     const written = await call(base, token, oldFingerprint, "/apply", { request: markRequest("11"), key: "drill-write-1" });
     assert(written.ok === true && written.replayed !== true, "old-write", `write failed: ${JSON.stringify(written)}`);
     let jobId;
+    let oldJobSnapshot;
+    let upgradedJobOutcome;
+    // There is exactly one job at both snapshot points, before the new deployment accepts another one.
+    const snapshotJob = () => JSON.parse(sql(`SELECT jsonb_build_object('id',id,'owner',owner,'operation',operation,'state',state,'input',input,'output',output,'deployment',deployment_digest,'contract',contract_digest,'attempt',attempt) FROM ${schema}.aip_jobs`, "job-snapshot"));
     if (options.workers !== "none") {
       const enqueued = await call(base, token, oldFingerprint, "/jobs/enqueue", { operation: "textLengthJob", input: { text: "가😀A" }, key: "drill-job-1", delayMs: 0 });
       assert(enqueued.ok === true, "old-job", `enqueue failed: ${JSON.stringify(enqueued)}`);
@@ -248,6 +269,9 @@ async function main() {
       }
       const finished = await call(base, token, oldFingerprint, "/jobs/status", { id: jobId });
       assert(finished.run?.state === "SUCCEEDED", "old-job", `job ended in ${finished.run?.state}`);
+      const finishedResult = await call(base, token, oldFingerprint, "/jobs/result", { id: jobId });
+      assert(finishedResult.ok === true && finishedResult.output?.length === 3, "old-job-result", "the old binary did not return the completed job result");
+      oldJobSnapshot = snapshotJob();
     }
     await stopOwned(oldService.child);
     const before = {
@@ -300,7 +324,13 @@ async function main() {
       const oldJob = await call(base, token, newFingerprint, "/jobs/status", { id: jobId });
       assert(oldJob.run?.state === "SUCCEEDED", "new-job-status", `job from the old binary: ${JSON.stringify(oldJob).slice(0, 300)}`);
       const oldResult = await call(base, token, newFingerprint, "/jobs/result", { id: jobId });
-      assert(oldResult.output?.length === 3, "new-job-result", `job result after upgrade: ${JSON.stringify(oldResult).slice(0, 300)}`);
+      // Persistence does not grant access under another deployment's policies or typed contract.
+      upgradedJobOutcome = upgradeJobResultOutcome(oldResult, {
+        before: oldJobSnapshot,
+        after: snapshotJob(),
+        deployment: sql(`SELECT facts_digest FROM ${schema}.aip_migrate_meta WHERE singleton=true`, "new-job-deployment"),
+        contract: newFingerprint,
+      });
       const newJob = await call(base, token, newFingerprint, "/jobs/enqueue", { operation: "textLengthJob", input: { text: "가😀A" }, key: "drill-job-2", delayMs: 0 });
       assert(newJob.ok === true, "new-job", `enqueue on the upgraded schema failed: ${JSON.stringify(newJob).slice(0, 300)}`);
       let state;
@@ -309,6 +339,8 @@ async function main() {
         if (state !== "SUCCEEDED") await new Promise((resolveWait) => setTimeout(resolveWait, 50));
       }
       assert(state === "SUCCEEDED", "new-job", `job on the upgraded schema ended in ${state}`);
+      const newResult = await call(base, token, newFingerprint, "/jobs/result", { id: newJob.run.id });
+      assert(newResult.ok === true && newResult.output?.length === 3, "new-job-result", "the new deployment did not return its own job result");
     }
     await stopOwned(upgradedService.child);
     const infraTables = sql(`SELECT string_agg(tablename, ',' ORDER BY tablename) FROM pg_tables WHERE schemaname='${infra}'`, "after-upgrade");
@@ -316,7 +348,7 @@ async function main() {
     report.stages.upgrade = {
       fingerprintUnchanged: newFingerprint === oldFingerprint,
       oldRowsAndIdempotencyPreserved: true,
-      oldJobReadable: Boolean(jobId),
+      oldJob: upgradedJobOutcome ?? null,
       infraTablesAfter: infraTables,
       jobTraceColumn: jobColumns || null,
     };
@@ -340,8 +372,13 @@ async function main() {
     assert(backReplay.ok === true && backReplay.replayed === true, "restore-replay", "idempotency record missing after restore");
     const redo = await call(restoredBase, token, oldFingerprint, "/apply", { request: markRequest("12"), key: "drill-write-2" });
     assert(redo.ok === true && redo.replayed !== true, "restore-redo", "the write undone by the restore must run again as new");
+    if (jobId) {
+      const restoredResult = await call(restoredBase, token, oldFingerprint, "/jobs/result", { id: jobId });
+      assert(restoredResult.ok === true && isDeepStrictEqual(restoredResult.output, oldJobSnapshot.output), "restore-job-result", "the restored old deployment did not return its original job result");
+      assert(isDeepStrictEqual(snapshotJob(), oldJobSnapshot), "restore-job-preservation", "the backup did not restore the original job and its bindings");
+    }
     await stopOwned(restored.child);
-    report.stages.rollbackRestore = { rowsRestored: true, idempotencyRestored: true, undoneWriteRunsAgain: true };
+    report.stages.rollbackRestore = { rowsRestored: true, idempotencyRestored: true, undoneWriteRunsAgain: true, oldJobResultRestored: Boolean(jobId) };
     report.ok = true;
   } catch (error) {
     report.ok = false;

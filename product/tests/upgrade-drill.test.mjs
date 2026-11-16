@@ -1,7 +1,34 @@
 import assert from "node:assert/strict";
 import {EventEmitter} from "node:events";
 import {test} from "node:test";
-import {finalizeDrill, rollbackBinaryOutcome, startService, stopOwnedService} from "../tools/upgrade-drill.mjs";
+import {finalizeDrill, rollbackBinaryOutcome, startService, stopOwnedService, upgradeJobResultOutcome} from "../tools/upgrade-drill.mjs";
+
+const storedJob = {id: "job-1", state: "SUCCEEDED", output: {length: 3}, deployment: "old-deployment", contract: "old-contract"};
+const resultSnapshot = (overrides = {}) => ({before: storedJob, after: structuredClone(storedJob), deployment: "old-deployment", contract: "old-contract", ...overrides});
+
+test("upgraded jobs preserve stored results while refusing a changed deployment or contract", () => {
+  for (const change of [{deployment: "new-deployment"}, {contract: "new-contract"}]) {
+    assert.deepEqual(
+      upgradeJobResultOutcome({ok: false, code: "WIRE.DEPLOYMENT_CHANGED"}, resultSnapshot(change)),
+      {storedResultPreserved: true, resultReadable: false, resultRefusedWith: "WIRE.DEPLOYMENT_CHANGED"},
+    );
+    assert.throws(() => upgradeJobResultOutcome({ok: true, output: {length: 3}}, resultSnapshot(change)), /new-job-result/);
+    assert.throws(() => upgradeJobResultOutcome({ok: false, code: "WIRE.DB_UNAVAILABLE"}, resultSnapshot(change)), /new-job-result/);
+    assert.throws(() => upgradeJobResultOutcome({ok: false, code: "WIRE.DEPLOYMENT_CHANGED", output: {length: 3}}, resultSnapshot(change)), /new-job-result/);
+  }
+});
+
+test("unchanged job bindings require the original result and upgrades cannot mutate stored jobs", () => {
+  assert.deepEqual(
+    upgradeJobResultOutcome({ok: true, output: {length: 3}}, resultSnapshot()),
+    {storedResultPreserved: true, resultReadable: true, resultRefusedWith: null},
+  );
+  assert.throws(() => upgradeJobResultOutcome({ok: false, code: "WIRE.DEPLOYMENT_CHANGED"}, resultSnapshot()), /new-job-result/);
+  assert.throws(() => upgradeJobResultOutcome({ok: true, output: {length: 4}}, resultSnapshot()), /new-job-result/);
+  for (const mutation of [{output: null}, {state: "QUEUED"}, {deployment: "new-deployment"}, {contract: "new-contract"}]) {
+    assert.throws(() => upgradeJobResultOutcome({ok: false, code: "WIRE.DEPLOYMENT_CHANGED"}, resultSnapshot({deployment: "new-deployment", after: {...storedJob, ...mutation}})), /new-job-preservation/);
+  }
+});
 
 test("rollback accepts only the schema mismatch refusal while preserving a successful old-binary path", async () => {
   await assert.rejects(
