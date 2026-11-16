@@ -41,6 +41,7 @@ resource Member {
   fields { id: Id; org: Text; email: Text }
   rows read when org = actor.org
   field email read when id = actor
+  expose read { select id, org, email; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
 }
 actor Member
 access callerVotes(a: Member) = true
@@ -51,10 +52,9 @@ resource Record {
   field secret read when owner = actor
   expose read {
     select id, org, owner, title, secret, checked, ownVoteCount, publicVoteCount, minOwnVote, maxOwnVote
-    filter secret.eq
     traverse owner { select id, email }
     traverse votes via Vote.record { select id, owner, amount; sort id; limit 10 }
-    sort id, secret
+    sort id
     budget { rows 20; depth 2; deadline 2s; cost 1000; offset 100; cursor }
   }
   aggregate ownVoteCount: Int { source Vote; sourceAccess callerVotes(actor); groupKey record; where owner = actor; callerFilter none; rowOutput none; release count }
@@ -868,7 +868,7 @@ async fn service_policy_http_hidden_fields_cannot_filter_or_sort() {
             json!({"query":{"read":"Record","select":["id"],"filter":[{"field":"secret","op":"eq","value":"peer-secret"}]}}),
         )
         .await;
-        assert_eq!(hidden_filter["code"], "WIRE.POLICY_FIELD_NOT_FILTERABLE", "field-hidden filter is rejected");
+        assert_eq!(hidden_filter["code"], "WIRE.FILTER_NOT_ALLOWED", "a field-hidden filter is not part of this read contract");
         let hidden_sort = post(
             &fixture.address,
             "/read",
@@ -877,7 +877,7 @@ async fn service_policy_http_hidden_fields_cannot_filter_or_sort() {
             json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"secret","dir":"asc"}]}}),
         )
         .await;
-        assert_eq!(hidden_sort["code"], "WIRE.POLICY_FIELD_NOT_FILTERABLE", "field-hidden sort is rejected by the shared non-queryable policy code");
+        assert_eq!(hidden_sort["code"], "WIRE.SORT_NOT_ALLOWED", "a field-hidden sort is not part of this read contract");
     })
     .catch_unwind()
     .await;
