@@ -224,3 +224,28 @@ cargo test -p aip-service --lib -- --nocapture
 cargo test -p aip-cli --test service_flow --no-run
 Executable tests/service_flow.rs (...)
 ```
+
+## 9. CI용 제품 데이터 의미 matrix 준비 (2026-11-16 후속)
+
+테스트 전용 commit `4f82d2fc335221c0391f81d811dc127609759297`에서 `crates/aip-cli/tests/service_flow.rs`에 `service_data_semantics_hold_across_http_and_database_state`를 추가했다. 기존 product service harness의 `service init` → JWT principal bind → HTTP `/read`·`/apply` → 전용 schema DB query 흐름을 재사용한다. fixture는 선언 DSL의 nullable scalar, Decimal(10,2), relation select, count aggregate, transition patch만 쓴다.
+
+| 의미 | CI assertion 준비 내용 | 실행 상태 |
+|---|---|---|
+| Missing / Null | 선택하지 않은 응답 필드의 부재, 선택된 nullable 필드의 JSON null, patch 생략 시 저장값 보존, 명시적 null patch 시 DB NULL 저장 | compile-only; DB assertion 미실행 |
+| 정렬 동률·관계 선택 | score 동률 행은 id 순서로 반환, 선택된 member relation의 id/name 포함 | compile-only; DB assertion 미실행 |
+| 빈 집계 | Vote가 없는 Event의 count 결과 0, Vote가 있는 Event는 1 | compile-only; DB assertion 미실행 |
+| 부분 수정 | title만 patch한 뒤 note/amount/checked를 HTTP 밖 DB query로 보존 확인 | compile-only; DB assertion 미실행 |
+| Decimal 경계 | Decimal(10,2) 최대 예시 `99999999.99`를 HTTP 문자열과 DB text cast로 고정 | compile-only; DB assertion 미실행 |
+| 순서 불변식 | 동일 row set을 반대 삽입 순서로 재적재하고 정렬된 HTTP rows 전체 동등성 확인 | compile-only; DB assertion 미실행 |
+
+새 함수에는 `cfg`·`ignore`·이름 필터가 없으며 `service_flow` test target의 일반 테스트다. Linux에서도 harness가 실행할 대상으로 컴파일되며, Ubuntu CI에서 실제 실행했다는 증거는 아직 없다. 이는 부모가 C의 격리 PostgreSQL 검증 workflow 통합 뒤 실행 결과로 확정해야 한다.
+
+이 fixture와 현재 확인한 제품 DSL 선언은 `count` 집계까지만 대상으로 삼았다. `min`/`max`/`avg` 빈 집합 의미를 이 제품 harness의 현재 선언 지원으로 입증할 근거는 없어 시험을 억지로 확장하지 않았다. 해당 의미는 기존 Core RED 2개와 제품 서비스 경로 검증 공백을 분리해 유지한다. `create` 입력에서 빠진 nullable 필드와 명시적 null을 구분하는 계약도 이 matrix에 포함하지 않았다.
+
+### 로컬 검사와 제한
+
+```text
+env -u PGHOST -u PGPORT AIP_TEST_DATABASE_URL='postgresql://test:unused@127.0.0.1:55439/aip_test_semantic_compile' AIP_TEST_ADMIN_URL='postgresql://test:unused@127.0.0.1:55439/postgres' cargo test -p aip-cli --test service_flow --no-run --locked
+```
+
+결과: exit 0, `Executable tests/service_flow.rs` 생성. DSN은 build guard 통과에만 쓰는 명시값이며 DB 연결은 하지 않았다. `cargo fmt --all --check`와 `git diff --check`도 exit 0. 따라서 SQL/schema/HTTP assertion 자체는 모두 미실행이다. 로컬 PostgreSQL 권한 차단에 대한 initdb 재시도나 대체 경로 접속은 하지 않았다.
