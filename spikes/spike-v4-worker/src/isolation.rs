@@ -693,6 +693,9 @@ mod tests {
         let started = tokio::time::Instant::now();
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("child_status=running"));
+        assert!(error.to_string().contains("stdout_captured=0"));
+        assert!(error.to_string().contains("stderr_captured=0"));
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 
