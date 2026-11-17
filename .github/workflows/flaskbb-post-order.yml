@@ -171,6 +171,8 @@ jobs:
         run: cargo build -p aip-cli --locked
       - name: Verify import approval and SQL emission
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s porting/flaskbb/tests -p test_post_order_import.py -v
+      - name: Verify PostOrder manifest duplicates, omissions, conflicts and high-water
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest porting.flaskbb.tests.test_post_order_manifest -v
       - name: Verify server-selected effect target contract
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test latest_effect_match
