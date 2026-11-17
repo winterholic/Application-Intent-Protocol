@@ -653,9 +653,12 @@ async fn service_policy_aggregate_noninterference_http_postgres() {
         let peer_view = post(&fixture.address, "/read", &fixture.peer_token, &fixture.fingerprint, query.clone()).await;
         assert_eq!(peer_view["rows"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["1", "3", "4"], "same-organization caller sees the row set through their own identity");
         assert_eq!(peer_view["rows"][0]["secret"], Value::Null, "another user cannot read the owner's field");
-        assert_eq!(peer_view["rows"][0]["ownVoteCount"], 0, "caller aggregate is scoped to the second user");
-        assert_eq!(peer_view["rows"][1]["ownVoteCount"], 1);
-        assert_eq!(peer_view["rows"][0]["votes"], json!([]), "to-many traversal is independently filtered for the second user");
+        assert_eq!(peer_view["rows"][0]["ownVoteCount"], 1, "peer owns vote 3 on record 1; the first caller's votes 1 and 2 are not counted");
+        assert_eq!(peer_view["rows"][0]["minOwnVote"], -900, "peer min sees only its own vote, not the first caller's 10 and 20");
+        assert_eq!(peer_view["rows"][0]["maxOwnVote"], -900);
+        assert_eq!(peer_view["rows"][1]["ownVoteCount"], 1, "peer owns vote 4 on record 3");
+        assert_eq!(peer_view["rows"][2]["ownVoteCount"], 0);
+        assert_eq!(peer_view["rows"][0]["votes"], json!([{"id":"3","owner":"99","amount":-900}]), "to-many traversal is independently filtered for the second user");
 
         let before_metrics = policy_vote_metrics(&fixture.schema).await;
         assert_eq!(before_metrics, (3, -900, 20, -870.0 / 3.0), "DB baseline includes hidden source rows");
