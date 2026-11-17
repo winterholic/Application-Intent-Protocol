@@ -132,6 +132,9 @@ async fn shared_fixture_core_runtime_matches_expected_values_on_postgres() {
         .await
         .expect("execute Core empty aggregate query")
         .data;
+    let empty_rows = empty.as_array().expect("aggregate query returns rows");
+    assert_eq!(empty_rows.len(), 1, "known empty account still yields its aggregate row");
+    let empty = &empty_rows[0];
     assert_eq!(empty["count"], expected["emptyCount"], "empty count follows fixture");
     assert_eq!(empty["sum"], expected["emptySum"], "empty sum follows fixture");
     assert_eq!(empty["min"], expected["emptyMin"], "empty min follows fixture");
