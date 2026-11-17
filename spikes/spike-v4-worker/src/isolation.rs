@@ -143,6 +143,14 @@ impl WorkerLaunchConfig {
     pub async fn probe(&self, lang: crate::Lang, ext_dir: &std::path::Path) -> std::io::Result<()> {
         #[cfg(target_os = "linux")]
         let diagnostic = std::env::var("AIP_TEST_PROBE_DIAGNOSTICS").as_deref() == Ok("1");
+        #[cfg(not(target_os = "linux"))]
+        let diagnostic = false;
+        self.probe_with_diagnostics(lang, ext_dir, diagnostic).await
+    }
+
+    async fn probe_with_diagnostics(&self, lang: crate::Lang, ext_dir: &std::path::Path, _diagnostic: bool) -> std::io::Result<()> {
+        #[cfg(target_os = "linux")]
+        let diagnostic = _diagnostic;
         #[cfg(target_os = "linux")]
         let probe_started = diagnostic.then(std::time::Instant::now);
         crate::cgroup::validate_config(self.cgroup_root.as_deref(), self.resource_limits)?;
@@ -242,7 +250,7 @@ impl WorkerLaunchConfig {
                 // Sample /proc before try_wait: try_wait reaps an exited leader and would erase
                 // the OS evidence that this Child still owns its zombie at cleanup entry.
                 #[cfg(target_os = "linux")]
-                let process_sample = linux_probe_process_sample(pid);
+                let process_sample = diagnostic.then(|| linux_probe_process_sample(pid));
                 let child_status = match child.try_wait() {
                     Ok(Some(status)) => format!("exited({status})"),
                     Ok(None) => "running".to_owned(),
@@ -251,28 +259,37 @@ impl WorkerLaunchConfig {
                 #[cfg(target_os = "linux")]
                 if diagnostic {
                     eprintln!(
-                        "AIP_PROBE_DIAG event=timeout sequence={probe_sequence} probe_kind={probe_kind} elapsed_ms={} pid={pid} child_status_at_cleanup=not_reaped_before_cleanup child_status_after_cleanup={child_status} proc_sample={process_sample:?} stdout_bytes_read={} stderr_bytes_read={} action=start_kill_requested kill_result={_kill_result:?}",
+                        "AIP_PROBE_DIAG event=timeout sequence={probe_sequence} probe_kind={probe_kind} elapsed_ms={} pid={pid} child_status_at_cleanup=not_reaped_before_cleanup child_status_after_cleanup={child_status} proc_sample={} stdout_bytes_read={} stderr_bytes_read={} action=start_kill_requested kill_result={_kill_result:?}",
                         probe_started.expect("diagnostic start time").elapsed().as_millis(),
+                        process_sample.as_deref().unwrap_or("<not-collected>"),
                         stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
                         stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
                     );
                 }
                 #[cfg(target_os = "linux")]
-                let residual_pid_present = diagnostic && std::path::PathBuf::from("/proc").join(pid.to_string()).exists();
+                let residual_pid_present = diagnostic.then(|| std::path::PathBuf::from("/proc").join(pid.to_string()).exists());
                 #[cfg(target_os = "linux")]
-                if diagnostic {
+                if let Some(residual_pid_present) = residual_pid_present {
                     eprintln!(
                         "AIP_PROBE_DIAG event=post-kill sequence={probe_sequence} pid={pid} residual_pid_present={residual_pid_present} child_status={:?}",
                         child.try_wait()
                     );
                 }
                 #[cfg(target_os = "linux")]
-                let timeout_message = format!(
-                    "worker runtime probe exceeded {} seconds; pid={pid}; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
-                    RUNTIME_PROBE_DEADLINE.as_secs(),
-                    stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
-                    stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
-                );
+                let timeout_message = match (process_sample.as_deref(), residual_pid_present) {
+                    (Some(process_sample), Some(residual_pid_present)) => format!(
+                        "worker runtime probe exceeded {} seconds; pid={pid}; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        RUNTIME_PROBE_DEADLINE.as_secs(),
+                        stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                        stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                    ),
+                    _ => format!(
+                        "worker runtime probe exceeded {} seconds; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        RUNTIME_PROBE_DEADLINE.as_secs(),
+                        stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                        stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                    ),
+                };
                 #[cfg(not(target_os = "linux"))]
                 let timeout_message = format!(
                     "worker runtime probe exceeded {} seconds; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
@@ -1113,6 +1130,143 @@ mod tests {
         assert!(!survived, "probe descendant {pid} was still running 3 seconds after the probe timed out");
     }
 
+    #[cfg(target_os = "linux")]
+    fn linux_fixture_state(pid: i32) -> std::io::Result<Option<char>> {
+        let status_path = std::path::PathBuf::from("/proc").join(pid.to_string()).join("status");
+        let status = match std::fs::read_to_string(&status_path) {
+            Ok(status) => status,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let state = status
+            .lines()
+            .find_map(|line| line.strip_prefix("State:").and_then(|value| value.split_whitespace().next()))
+            .and_then(|value| value.chars().next())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("/proc/{pid}/status has no State field")))?;
+        Ok(Some(state))
+    }
+
+    #[cfg(target_os = "linux")]
+    struct DetachedFixtureGuard {
+        pid_file: PathBuf,
+        pid: Option<i32>,
+        kill_attempted: bool,
+        confirmed: bool,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl DetachedFixtureGuard {
+        fn new(pid_file: PathBuf) -> Self {
+            Self { pid_file, pid: None, kill_attempted: false, confirmed: false }
+        }
+
+        fn fixture_pid(&mut self) -> Result<i32, String> {
+            if let Some(pid) = self.pid {
+                return Ok(pid);
+            }
+            let contents = std::fs::read_to_string(&self.pid_file).map_err(|error| format!("read fixture PID file: {error}"))?;
+            let pid = contents.trim().parse::<i32>().map_err(|error| format!("parse fixture PID {:?}: {error}", contents.trim()))?;
+            if pid <= 1 {
+                return Err(format!("fixture PID {pid} is not safe to signal"));
+            }
+            self.pid = Some(pid);
+            Ok(pid)
+        }
+
+        async fn terminate_and_confirm(&mut self) -> Result<(i32, bool), String> {
+            let pid = self.fixture_pid()?;
+            let state_before = linux_fixture_state(pid).map_err(|error| format!("observe detached fixture {pid} before cleanup: {error}"))?;
+            let survived_before_cleanup = state_before.is_some_and(|state| state != 'Z');
+
+            self.kill_attempted = true;
+            // SAFETY: `pid` came from the controlled fixture's PID file and was checked to be > 1;
+            // `kill` takes no pointer, and SIGKILL only requests termination of that process.
+            let kill_result = unsafe { libc::kill(pid, libc::SIGKILL) };
+            let kill_error = if kill_result == 0 { None } else { Some(std::io::Error::last_os_error()) };
+            if let Some(error) = &kill_error {
+                if error.raw_os_error() != Some(libc::ESRCH) {
+                    return Err(format!("SIGKILL request for detached fixture {pid} failed: {error}"));
+                }
+            }
+
+            let started = tokio::time::Instant::now();
+            let deadline = started + std::time::Duration::from_secs(3);
+            loop {
+                match linux_fixture_state(pid) {
+                    Ok(None) | Ok(Some('Z')) => {
+                        self.confirmed = true;
+                        eprintln!(
+                            "AIP_PROBE_FIXTURE_CLEANUP pid={pid} survived_before_cleanup={survived_before_cleanup} sigkill_requested=true terminated=true elapsed_ms={}",
+                            started.elapsed().as_millis()
+                        );
+                        return Ok((pid, survived_before_cleanup));
+                    }
+                    Ok(Some(_)) if tokio::time::Instant::now() < deadline => {
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                    Ok(Some(state)) => {
+                        return Err(format!("detached fixture {pid} remained in state {state} after bounded SIGKILL observation"));
+                    }
+                    Err(error) => return Err(format!("observe detached fixture {pid} after SIGKILL: {error}")),
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for DetachedFixtureGuard {
+        fn drop(&mut self) {
+            if self.confirmed {
+                return;
+            }
+            if self.pid.is_none() {
+                if let Ok(contents) = std::fs::read_to_string(&self.pid_file) {
+                    self.pid = contents.trim().parse::<i32>().ok().filter(|pid| *pid > 1);
+                }
+            }
+            if let Some(pid) = self.pid {
+                if !self.kill_attempted {
+                    self.kill_attempted = true;
+                    // SAFETY: this is the validated PID recorded by the controlled fixture; the
+                    // guard only requests SIGKILL and never dereferences process memory.
+                    unsafe { libc::kill(pid, libc::SIGKILL) };
+                }
+                eprintln!("AIP_PROBE_FIXTURE_CLEANUP_UNCONFIRMED pid={pid} bounded_termination_check_missing_or_failed=true");
+            } else {
+                eprintln!("AIP_PROBE_FIXTURE_CLEANUP_UNCONFIRMED pid_file={:?} fixture_PID_unavailable=true", self.pid_file);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn run_setsid_probe_with_diagnostics(diagnostic: bool) -> (std::io::Error, (i32, bool)) {
+        let dir = TempDir::new("probe-setsid-owner");
+        let pid_file = dir.path().join("detached-descendant.pid");
+        let mut fixture = DetachedFixtureGuard::new(pid_file.clone());
+        let mut config = probe_runtime("setsid-runtime.sh");
+        config.environment.insert("AIP_PROBE_DESCENDANT_PID_FILE".into(), pid_file.to_string_lossy().into_owned());
+
+        let result = config.probe_with_diagnostics(Lang::Node, dir.path(), diagnostic).await;
+        // Run cleanup before interpreting the error or asserting anything so both successful and
+        // mutation-failure paths leave no detached sleeper behind.
+        let cleanup = fixture.terminate_and_confirm().await;
+        let error = result.expect_err("setsid fixture keeps the probe pipes open until timeout");
+        let cleanup = cleanup.expect("detached fixture SIGKILL and bounded termination confirmation must succeed");
+        (error, cleanup)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn runtime_probe_timeout_does_not_report_unobserved_os_state_without_diagnostics() {
+        let (error, (_pid, detached_survived)) = run_setsid_probe_with_diagnostics(false).await;
+        let message = error.to_string();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(!message.contains("proc_sample="), "diagnostics-off error included an unrequested /proc sample: {message}");
+        assert!(!message.contains("residual_pid_present="), "diagnostics-off error reported an unobserved residual state: {message}");
+        assert!(detached_survived, "Isolation::None must retain its documented detached-child limitation");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn runtime_probe_timeout_leaves_no_descendant_process() {
@@ -1130,26 +1284,15 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn runtime_probe_timeout_keeps_leader_identity_owned_until_cleanup() {
-        let dir = TempDir::new("probe-setsid-owner");
-        let pid_file = dir.path().join("detached-descendant.pid");
-        let mut config = probe_runtime("setsid-runtime.sh");
-        config.environment.insert("AIP_PROBE_DESCENDANT_PID_FILE".into(), pid_file.to_string_lossy().into_owned());
-        let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
+        let (error, (_pid, detached_survived)) = run_setsid_probe_with_diagnostics(true).await;
         let message = error.to_string();
-        let pid: i32 = std::fs::read_to_string(&pid_file).expect("fixture recorded its detached child").trim().parse().unwrap();
-        let leader_pid = message.split("pid=").nth(1).and_then(|rest| rest.split(';').next()).expect("timeout includes leader PID");
+        let leader_pid = message.split("; pid=").nth(1).and_then(|rest| rest.split(';').next()).expect("diagnostic timeout includes leader PID");
         let owned_zombie = format!("root_pid={leader_pid} max_depth=");
         let leader_status = format!("pid={leader_pid} state=Z ppid={}", std::process::id());
 
-        // Isolation::None does not promise recovery of a setsid child after its parent exits.
-        // Reap this fixture explicitly so the Linux runner is not left with a sleeper.
-        let detached_survived = process_is_running(pid);
-        if detached_survived {
-            unsafe { libc::kill(pid, libc::SIGKILL) };
-        }
-
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert!(message.contains("child_status_at_cleanup=not_reaped_before_cleanup"), "{message}");
+        assert!(message.contains("proc_sample="), "diagnostic-on error omitted the OS process sample: {message}");
         assert!(message.contains(&owned_zombie) && message.contains(&leader_status), "leader ownership observation missing: {message}");
         assert!(detached_survived, "the setsid fixture should outlive its exited parent under Isolation::None");
     }
