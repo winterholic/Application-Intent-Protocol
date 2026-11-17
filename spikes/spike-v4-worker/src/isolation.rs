@@ -288,7 +288,7 @@ fn linux_probe_process_sample(root_pid: u32) -> String {
         if file.take(limit).read_to_end(&mut bytes).is_err() {
             return "<read-error>".to_owned();
         }
-        String::from_utf8_lossy(&bytes).replace('\0', " ").replace('\n', " ")
+        String::from_utf8_lossy(&bytes).replace(['\0', '\n'], " ")
     }
 
     fn visit(pid: u32, depth: usize, seen: &mut Vec<u32>, samples: &mut Vec<String>) {
