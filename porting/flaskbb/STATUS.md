@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-17 Post.unhide 무순서 후보의 결정적 경계 추가
+
+공유 `post-order-regression.json`의 `unhide_cases`에 세 사례를 추가했다. `single-visible-sibling-with-null-topic-pointer`와 `single-visible-sibling-with-hidden-topic-pointer`는 원본 query가 Topic.last_post 포인터와 독립적으로 visible sibling을 고른다는 점을, `multiple-visible-older-siblings-restore-without-order`는 여러 sibling이 모두 복원 글보다 엄격히 오래되면 원본의 어떤 무순서 선택에서도 Topic 포인터 복원이 성립한다는 점을 고정한다. 예상값은 `Post._restore_post_to_topic`의 visible sibling 조회와 strict date 비교, Topic.last_updated 비갱신, visible Topic일 때의 조건부 Forum projection에서 도출했다. 동률이나 날짜가 섞인 다중 후보에는 특정 순서를 정하지 않는다.
+
+원본 ORM과 Service HTTP가 같은 JSON을 읽도록 fixture setup을 확장했고, 기존 세 사례·각 다섯 단언은 유지했다. 원본 ORM/HTTP fixture 및 선언 검증을 포함하는 공식 [PG17 Run 44069648933](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44069648933)은 이 기록 시점에 `in_progress`였고, 새 사례의 RED/원본 결과는 아직 미확인이다. Run을 취소하거나 반복하지 않았다. 테스트 전용 commit `d441ba41597a7fbcaa1249700c8c473d5582f333`은 일반 push됐으며, 다음 단계는 해당 SHA의 terminal 결과에서 새 fixture의 제품 RED와 ORM GREEN을 확인하고 그 뒤 선언을 수정하는 것이다.
+
 ## 2026-11-17 Post.hide/delete 후보 없음·숨김 Topic 후보 회귀 보강
 
 PR #10 head `958afd50` 독립 검토(Run a6ab667f)가 찾은 두 공유 회귀 공백을 `tests/post-order-regression.json`의 `pointer_cases` 5·6번으로 추가했다. 같은 JSON을 원본 ORM(`test_post_oracle_gap.py`)과 AIP HTTP(`post-order-pointer.test.mjs`)가 hide·delete 두 전이로 읽는다. 5번 `no-candidate-clears-every-forum-projection`은 후보가 없을 때 Forum의 `last_post`와 네 projection 필드가 모두 NULL이 되는 원본 규칙(`forum/models.py` 298–319)을, 6번 `hidden-topic-visible-post-is-forum-candidate`는 Topic.hidden을 거르지 않는 원본 쿼리라 숨김 Topic의 visible Post(174)가 가장 큰 Post.id 후보가 되는 것을 확인한다. 6번은 174의 날짜를 후보 중 가장 이르게 두어 날짜 정렬이나 Topic 숨김 필터를 쓰면 171로 갈라진다. Forum 후보는 원본이 `Post.id desc`를 명시하므로 고정하지만, Topic.last_post는 무정렬 `posts[-2]`라 임의 순서로 고정하지 않는다. hide는 숨긴 대상이 관계에 남아 `{대상, 첫 글}` 중 하나, delete는 autoflush로 대상이 빠져 첫 글로만 허용하고 `last_updated`는 기존 독립 날짜 규칙(hide 대상 날짜, delete 첫 글 날짜)을 쓴다. 기존 source ID·timestamp 역전, 선행 포인터 보존, 단일 효과, 같은 key replay 단언은 그대로다.
