@@ -92,30 +92,7 @@ async function fixture(language) {
     run(binary, ["service", "init", appPath, "--config", configPath]);
     psql(`INSERT INTO ${schema}.member(id,org) VALUES (42,'red'),(99,'red'); INSERT INTO ${schema}.record(id,org,owner_id,title,note,amount,secret,checked,applies) VALUES (1,'red',42,'seed','preserve-me','1.2345','owner-only',false,0),(2,'red',42,'nullable',NULL,NULL,'also-private',false,0),(3,'red',99,'peer','peer-note','2.0001','hidden-secret',false,0),(4,'blue',99,'outside','outside-note','3.0001','outside-secret',false,0);`);
     run(binary, ["service", "principal", "--config", configPath, "bind", "--subject", "sdk-semantic-user", "--actor", "42"]);
-    const child = spawn(binary, ["service", "serve", appPath, "--config", configPath], {
-      cwd: root, env: { ...process.env, AIP_TEST_DATABASE: database }, stdio: ["ignore", "pipe", "pipe"],
-    });
-    owned.child = child;
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    const listening = await new Promise((resolveListening, reject) => {
-      const timeout = setTimeout(() => reject(new Error(`service start timeout: ${stderr}`)), 15_000);
-      child.stdout.on("data", () => {
-        const line = stdout.split(/\r?\n/u)[0];
-        if (!line) return;
-        clearTimeout(timeout);
-        try {
-          const message = JSON.parse(line);
-          if (message.ok && message.event === "listening") resolveListening(message);
-          else reject(new Error(`service startup rejected: ${line}\n${stderr}`));
-        } catch (error) { reject(error); }
-      });
-      child.once("exit", (code) => { clearTimeout(timeout); reject(new Error(`service exited ${code}: ${stdout}\n${stderr}`)); });
-    });
+    const listening = await startFixtureService(owned, appPath, configPath);
     assert.equal(listening.fingerprint, fingerprint, "service and generated TypeScript binding use the same declared contract");
     if (language === "python") {
       const pythonGenerated = readFileSync(join(dir, "binding.py"), "utf8");
@@ -125,19 +102,51 @@ async function fixture(language) {
       assert.equal(pythonFingerprint, listening.fingerprint, "Python generated binding and service use the same declared contract");
     }
     transferred = true;
-    return { ...owned, appPath, token, address: listening.address, fingerprint };
+    return { ...owned, appPath, configPath, token, address: listening.address, fingerprint };
   } finally {
     if (!transferred) await closeFixture(owned);
   }
 }
 
-async function closeFixture(value) {
-  if (value.child && value.child.exitCode === null && value.child.signalCode === null) {
-    await new Promise((resolveExit) => {
-      value.child.once("exit", resolveExit);
-      value.child.kill("SIGTERM");
+async function startFixtureService(value, appPath = value.appPath, configPath = value.configPath) {
+  const child = spawn(binary, ["service", "serve", appPath, "--config", configPath], {
+    cwd: root, env: { ...process.env, AIP_TEST_DATABASE: database }, stdio: ["ignore", "pipe", "pipe"],
+  });
+  value.child = child;
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  return new Promise((resolveListening, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`service start timeout: ${stderr}`)), 15_000);
+    child.stdout.on("data", () => {
+      const line = stdout.split(/\r?\n/u)[0];
+      if (!line) return;
+      clearTimeout(timeout);
+      try {
+        const message = JSON.parse(line);
+        if (message.ok && message.event === "listening") resolveListening(message);
+        else reject(new Error(`service startup rejected: ${line}\n${stderr}`));
+      } catch (error) { reject(error); }
     });
-  }
+    child.once("exit", (code) => { clearTimeout(timeout); reject(new Error(`service exited ${code}: ${stdout}\n${stderr}`)); });
+  });
+}
+
+async function stopFixtureService(value) {
+  const child = value.child;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise((resolveExit) => {
+    child.once("exit", resolveExit);
+    child.kill("SIGTERM");
+  });
+  value.child = null;
+}
+
+async function closeFixture(value) {
+  await stopFixtureService(value);
   psql(`DROP SCHEMA IF EXISTS ${value.schema} CASCADE`);
 }
 
@@ -149,6 +158,13 @@ function assertStored(fixtureValue, title) {
   assert.equal(psql(`SELECT title FROM ${fixtureValue.schema}.record WHERE id=4`), "outside", "row-hidden resource remains unchanged");
   assert.equal(psql(`SELECT count(*) FROM ${fixtureValue.schema}.record WHERE id=404`), "0", "the missing target remains absent");
   assert.equal(psql(`SELECT org FROM ${fixtureValue.schema}.member WHERE id=42`), "red", "the SDK's related Member exists unchanged in PostgreSQL");
+}
+
+function assertMigratedStored(fixtureValue, expectedTitle, expectedMigrated, expectedApplies) {
+  const result = psql(`SELECT title || '|' || coalesce(note,'<null>') || '|' || amount::text || '|' || coalesce(migrated,'<null>') || '|' || applies::text FROM ${fixtureValue.schema}.record WHERE id=1`);
+  assert.equal(result, `${expectedTitle}|<null>|987654321012.3456|${expectedMigrated}|${expectedApplies}`, "migration preserves exact Decimal, explicit Null, and committed SDK effects in the PostgreSQL row");
+  assert.equal(psql(`SELECT count(*) FROM ${fixtureValue.schema}.aip_idem`), String(expectedApplies), "migration preserves the prior idempotency result and stores the post-migration write once");
+  assert.equal(psql(`SELECT r.owner_id::text || '|' || m.org FROM ${fixtureValue.schema}.record r JOIN ${fixtureValue.schema}.member m ON m.id=r.owner_id WHERE r.id=1`), "42|red", "the related row and relationship survive migration in PostgreSQL");
 }
 
 async function prepareSdk() {
@@ -284,3 +300,169 @@ print("Generated Python SDK tests: 1 passed, 0 failed")
     assertStored(f, "python-updated");
   } finally { await closeFixture(f); }
 });
+
+async function migrationJourney(language) {
+  let typescriptSdk;
+  const f = await fixture(language);
+  try {
+      const oldBindingPath = join(f.dir, language === "ts" ? "binding.ts" : "binding.py");
+      if (language === "ts") {
+        const sdk = typescriptSdk ??= await prepareSdk();
+        writeFileSync(join(sdk.consumer, "binding.ts"), readFileSync(oldBindingPath, "utf8"));
+        run(join(root, "spikes/spike-0-ts/node_modules/.bin/tsc"), ["--strict", "--target", "ES2022", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--outDir", sdk.consumer, join(sdk.consumer, "binding.ts")], { cwd: sdk.consumer });
+        writeFileSync(join(sdk.consumer, "before-migration.mjs"), `
+import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { connect } from "@aip/sdk";
+import { contract } from "./binding.js";
+const client = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, contract);
+assert.deepEqual(await client.session(), { actorId: "42" });
+const request = { apply: "Record.edit", target: { ids: ["1"] }, values: { title: "ts-before-migration", note: null, amount: "987654321012.3456" } };
+const first = await client.apply(request, { key: "sdk-ts-migration-replay" });
+const replay = await client.apply(request, { key: "sdk-ts-migration-replay" });
+assert.equal(first.ok, true);
+assert.equal(replay.replayed, true);
+const { replayed: _replayed, ...replayResult } = replay;
+const { replayed: _firstReplay, ...firstResult } = first;
+assert.deepEqual(replayResult, firstResult, "the first and replayed SDK results match");
+writeFileSync(${JSON.stringify(join(f.dir, "idempotency-result.json"))}, JSON.stringify(first));
+const row = await client.read({ read: "Record", select: ["id", "note", "amount", { owner: { select: ["id", "org"] } }] });
+assert.equal(row.rows[0].id, "1");
+assert.equal(row.rows[0].note, null);
+assert.equal(row.rows[0].amount, "987654321012.3456");
+assert.deepEqual(row.rows[0].owner, { id: "42", org: "red" });
+`);
+        run(process.execPath, [join(sdk.consumer, "before-migration.mjs")], { cwd: sdk.consumer });
+      } else {
+        writeFileSync(join(f.dir, "before-migration.py"), `
+from aip_sdk import connect
+from binding import CONTRACT_FINGERPRINT, apply_record_edit, read_record
+import json
+client = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, CONTRACT_FINGERPRINT)
+assert client.session() == {"actorId":"42"}
+values = {"title":"python-before-migration", "note":None, "amount":"987654321012.3456"}
+first = apply_record_edit(client, {"ids":["1"]}, values, key="sdk-python-migration-replay")
+replay = apply_record_edit(client, {"ids":["1"]}, values, key="sdk-python-migration-replay")
+assert first["ok"] is True and replay["replayed"] is True
+assert {key:value for key,value in replay.items() if key != "replayed"} == {key:value for key,value in first.items() if key != "replayed"}
+with open(${JSON.stringify(join(f.dir, "idempotency-result.json"))}, "w", encoding="utf-8") as result_file:
+    json.dump(first, result_file, ensure_ascii=False)
+rows = read_record(client, {"read":"Record","select":["id","note","amount",{"owner":{"select":["id","org"]}}]})
+assert rows[0]["id"] == "1" and rows[0]["note"] is None and rows[0]["amount"] == "987654321012.3456", rows[0]
+assert rows[0]["owner"] == {"id":"42","org":"red"}, rows[0]
+`);
+        run("python3", [join(f.dir, "before-migration.py")], { cwd: f.dir, env: { PYTHONPATH: join(root, "product/python") } });
+      }
+
+      const oldRow = psql(`SELECT title || '|' || coalesce(note,'<null>') || '|' || amount::text || '|' || applies::text FROM ${f.schema}.record WHERE id=1`);
+      assert.equal(oldRow, `${language}-before-migration|<null>|987654321012.3456|1`);
+      assert.equal(psql(`SELECT count(*) FROM ${f.schema}.aip_idem`), "1", "the old binding creates one committed idempotency result");
+
+      const v2 = app.replace("amount: Decimal(18,4)?; secret:", "amount: Decimal(18,4)?; migrated: Text?; secret:")
+        .replace("patch title, note, amount;", "patch title, note, amount, migrated;");
+      writeFileSync(f.appPath, v2);
+      if (language === "ts") {
+        run(binary, ["service", "gen", f.appPath, "--wire", "decimal", "--out", join(f.dir, "binding-v2.ts"), "--sdk-import", "@aip/sdk"]);
+      } else {
+        run(binary, ["service", "gen", f.appPath, "--lang", "python", "--wire", "decimal", "--out", join(f.dir, "binding_v2.py")]);
+      }
+
+      await stopFixtureService(f);
+      const plan = JSON.parse(run(binary, ["service", "migrate", f.appPath, "--config", f.configPath]));
+      assert.equal(plan.blocked, false, "supported nullable-field migration is not blocked");
+      assert.match(plan.digest, /^[a-f0-9]{64}$/u);
+      const rejected = spawnSync(binary, ["service", "migrate", f.appPath, "--config", f.configPath, "--apply", "0".repeat(64)], {
+        cwd: root, encoding: "utf8", env: { ...process.env, AIP_TEST_DATABASE: database }, timeout: 120_000,
+      });
+      assert.notEqual(rejected.status, 0, "a wrong migration digest is rejected");
+      assert.equal(psql(`SELECT count(*) FROM information_schema.columns WHERE table_schema='${f.schema}' AND table_name='record' AND column_name='migrated'`), "0", "wrong-digest refusal did not alter the schema");
+      run(binary, ["service", "migrate", f.appPath, "--config", f.configPath, "--apply", plan.digest]);
+      assert.equal(psql(`SELECT title || '|' || coalesce(note,'<null>') || '|' || amount::text || '|' || coalesce(migrated,'<null>') || '|' || applies::text FROM ${f.schema}.record WHERE id=1`), `${language}-before-migration|<null>|987654321012.3456|<null>|1`, "the real migration preserves pre-migration SDK data and adds a nullable field");
+
+      const listening = await startFixtureService(f);
+      f.address = listening.address;
+      if (language === "ts") {
+        const sdk = typescriptSdk;
+        writeFileSync(join(sdk.consumer, "binding-v2.ts"), readFileSync(join(f.dir, "binding-v2.ts"), "utf8"));
+        run(join(root, "spikes/spike-0-ts/node_modules/.bin/tsc"), ["--strict", "--target", "ES2022", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--outDir", sdk.consumer, join(sdk.consumer, "binding.ts"), join(sdk.consumer, "binding-v2.ts")], { cwd: sdk.consumer });
+        writeFileSync(join(sdk.consumer, "after-migration.mjs"), `
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { connect } from "@aip/sdk";
+import { contract as newContract } from "./binding-v2.js";
+const base = ${JSON.stringify(`http://${f.address}`)};
+const token = ${JSON.stringify(f.token)};
+const client = connect(base, token, newContract);
+assert.deepEqual(await client.session(), { actorId: "42" }, "actor binding survives migration and service restart");
+const row = await client.read({ read: "Record", select: ["id", "title", "note", "amount", "migrated", { owner: { select: ["id", "org"] } }] });
+assert.equal(row.rows[0].id, "1");
+assert.equal(row.rows[0].note, null);
+assert.equal(row.rows[0].amount, "987654321012.3456");
+assert.equal(row.rows[0].migrated, null);
+assert.deepEqual(row.rows[0].owner, { id: "42", org: "red" });
+const prior = { apply: "Record.edit", target: { ids: ["1"] }, values: { title: "ts-before-migration", note: null, amount: "987654321012.3456" } };
+const preserved = await client.apply(prior, { key: "sdk-ts-migration-replay" });
+assert.equal(preserved.replayed, true, "the migration preserves the prior idempotency result");
+const { replayed: _replayed, ...replayResult } = preserved;
+const { replayed: _firstReplay, ...firstResult } = JSON.parse(readFileSync(${JSON.stringify(join(f.dir, "idempotency-result.json"))}, "utf8"));
+assert.deepEqual(replayResult, firstResult, "the committed idempotency response is unchanged by migration");
+const update = { apply: "Record.edit", target: { ids: ["1"] }, values: { title: "ts-after-migration", migrated: "new-schema" } };
+const first = await client.apply(update, { key: "sdk-ts-migration-write" });
+const replay = await client.apply(update, { key: "sdk-ts-migration-write" });
+assert.equal(first.ok, true);
+assert.equal(replay.replayed, true);
+assert.equal((await client.read({ read: "Record", select: ["id", "migrated", "applies"] })).rows[0].applies, 2);
+`);
+        writeFileSync(join(sdk.consumer, "stale-binding.mjs"), `
+import assert from "node:assert/strict";
+import { connect } from "@aip/sdk";
+import { contract } from "./binding.js";
+const oldClient = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, contract);
+await assert.rejects(oldClient.read({ read: "Record", select: ["id"] }), error => error.code === "WIRE.CONTRACT_MISMATCH");
+`);
+        run(process.execPath, [join(sdk.consumer, "stale-binding.mjs")], { cwd: sdk.consumer });
+        assert.equal(psql(`SELECT applies::text FROM ${f.schema}.record WHERE id=1`), "1", "stale-binding rejection caused no record effect");
+        assert.equal(psql(`SELECT count(*) FROM ${f.schema}.aip_idem`), "1", "stale-binding rejection created no idempotency result");
+        run(process.execPath, [join(sdk.consumer, "after-migration.mjs")], { cwd: sdk.consumer });
+      } else {
+        writeFileSync(join(f.dir, "after-migration.py"), `
+from aip_sdk import connect
+from binding_v2 import CONTRACT_FINGERPRINT as NEW_FINGERPRINT, apply_record_edit, read_record
+import json
+base = ${JSON.stringify(`http://${f.address}`)}
+token = ${JSON.stringify(f.token)}
+client = connect(base, token, NEW_FINGERPRINT)
+assert client.session() == {"actorId":"42"}, "actor binding survives migration and service restart"
+rows = read_record(client, {"read":"Record","select":["id","title","note","amount","migrated",{"owner":{"select":["id","org"]}}]})
+assert rows[0]["id"] == "1" and rows[0]["note"] is None and rows[0]["amount"] == "987654321012.3456" and rows[0]["migrated"] is None, rows[0]
+assert rows[0]["owner"] == {"id":"42","org":"red"}, rows[0]
+prior = apply_record_edit(client, {"ids":["1"]}, {"title":"python-before-migration","note":None,"amount":"987654321012.3456"}, key="sdk-python-migration-replay")
+assert prior["replayed"] is True, "the migration preserves the prior idempotency result"
+assert {key:value for key,value in prior.items() if key != "replayed"} == {key:value for key,value in json.load(open(${JSON.stringify(join(f.dir, "idempotency-result.json"))}, encoding="utf-8")).items() if key != "replayed"}, "the committed idempotency response is unchanged by migration"
+update = apply_record_edit(client, {"ids":["1"]}, {"title":"python-after-migration","migrated":"new-schema"}, key="sdk-python-migration-write")
+replay = apply_record_edit(client, {"ids":["1"]}, {"title":"python-after-migration","migrated":"new-schema"}, key="sdk-python-migration-write")
+assert update["ok"] is True and replay["replayed"] is True
+assert read_record(client, {"read":"Record","select":["id","migrated","applies"]})[0]["applies"] == 2
+`);
+        writeFileSync(join(f.dir, "stale-binding.py"), `
+from aip_sdk import AipError, connect
+from binding import CONTRACT_FINGERPRINT
+try:
+    connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, CONTRACT_FINGERPRINT).read({"read":"Record","select":["id"]})
+except AipError as error:
+    assert error.code == "WIRE.CONTRACT_MISMATCH"
+else:
+    raise AssertionError("the old generated binding was accepted after migration")
+`);
+        run("python3", [join(f.dir, "stale-binding.py")], { cwd: f.dir, env: { PYTHONPATH: join(root, "product/python") } });
+        assert.equal(psql(`SELECT applies::text FROM ${f.schema}.record WHERE id=1`), "1", "stale-binding rejection caused no record effect");
+        assert.equal(psql(`SELECT count(*) FROM ${f.schema}.aip_idem`), "1", "stale-binding rejection created no idempotency result");
+        run("python3", [join(f.dir, "after-migration.py")], { cwd: f.dir, env: { PYTHONPATH: join(root, "product/python") } });
+      }
+      assertMigratedStored(f, `${language}-after-migration`, "new-schema", 2);
+      console.log(`Generated ${language === "ts" ? "TypeScript" : "Python"} SDK migration journey: old binding write, PG17 migration, stale binding refusal, new binding read/write PASS`);
+  } finally { await closeFixture(f); }
+}
+
+test("generated TypeScript SDK preserves data and idempotency across a real nullable-field migration on PG17", { timeout: 360_000 }, () => migrationJourney("ts"));
+test("generated Python SDK preserves data and idempotency across a real nullable-field migration on PG17", { timeout: 360_000 }, () => migrationJourney("python"));
