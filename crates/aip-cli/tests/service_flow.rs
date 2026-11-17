@@ -661,13 +661,38 @@ async fn service_policy_aggregate_noninterference_http_postgres() {
         assert_eq!(peer_view["rows"][0]["votes"], json!([{"id":"3","owner":"99","amount":-900}]), "to-many traversal is independently filtered for the second user");
 
         let before_metrics = policy_vote_metrics(&fixture.schema).await;
-        assert_eq!(before_metrics, (3, -900, 20, -870.0 / 3.0), "DB baseline includes hidden source rows");
+        assert_eq!(before_metrics, (3, -900, 20, -870.0 / 3.0), "DB baseline includes hidden same-organization source rows");
+        // A vote owned by a different organization also belongs to the public count, while rowRead hides it
+        // from this caller's source-value aggregates and to-many relation.
+        policy_db_execute(&fixture.schema, "INSERT INTO vote(id,record_id,owner_id,amount) VALUES (6,1,100,-5000)").await;
+        let after_cross_org_insert = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        let mut expected_cross_org_insert = before["rows"].clone();
+        expected_cross_org_insert[0]["publicVoteCount"] = json!(4);
+        assert_eq!(after_cross_org_insert["rows"], expected_cross_org_insert, "cross-organization hidden insert changes only the explicitly public count across the full row and votes response");
+        assert_eq!(after_cross_org_insert["rows"][0]["ownVoteCount"], before["rows"][0]["ownVoteCount"]);
+        assert_eq!(after_cross_org_insert["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
+        assert_eq!(after_cross_org_insert["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
+        assert_eq!(after_cross_org_insert["rows"][0]["votes"], before["rows"][0]["votes"], "hidden cross-organization vote does not change the child relation");
+        policy_db_execute(&fixture.schema, "UPDATE vote SET amount=-6000 WHERE id=6").await;
+        let after_cross_org_update = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(after_cross_org_update["rows"], after_cross_org_insert["rows"], "cross-organization hidden update leaves caller-visible rows and votes unchanged");
+        assert_eq!(after_cross_org_update["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
+        assert_eq!(after_cross_org_update["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
+        assert_eq!(after_cross_org_update["rows"][0]["votes"], before["rows"][0]["votes"]);
+        policy_db_execute(&fixture.schema, "DELETE FROM vote WHERE id=6").await;
+        let after_cross_org_delete = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(after_cross_org_delete["rows"], before["rows"], "cross-organization hidden delete restores the full baseline response");
+        assert_eq!(after_cross_org_delete["rows"][0]["votes"], before["rows"][0]["votes"]);
+
         policy_db_execute(&fixture.schema, "INSERT INTO vote(id,record_id,owner_id,amount) VALUES (6,1,99,-5000)").await;
         let after_insert = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
         assert_eq!(after_insert["rows"][0]["ownVoteCount"], before["rows"][0]["ownVoteCount"]);
         assert_eq!(after_insert["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
         assert_eq!(after_insert["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
-        assert_eq!(after_insert["rows"][0]["publicVoteCount"], 4, "public aggregate intentionally changes for the hidden insert");
+        let mut expected_after_insert = before["rows"].clone();
+        expected_after_insert[0]["publicVoteCount"] = json!(4);
+        assert_eq!(after_insert["rows"], expected_after_insert, "the explicitly public count is the only full-row response difference after hidden insert");
+        assert_eq!(after_insert["rows"][0]["votes"], before["rows"][0]["votes"], "hidden insert leaves to-many votes unchanged");
         let inserted_public_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await;
         assert_eq!(inserted_public_aggregate["rows"][0], 6);
         let inserted_caller_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.ownVoteCount","input":{}}})).await;
@@ -855,6 +880,18 @@ async fn service_policy_caller_filter_read_and_none_boundaries() {
         )
         .await;
         assert_eq!(rejected["code"], "WIRE.FILTER_NOT_ALLOWED", "callerFilter none rejects even an empty caller filter");
+        assert!(!rejected.to_string().contains("-900"), "callerFilter rejection must not include source row values: {rejected}");
+        policy_db_execute(&fixture.schema, "UPDATE vote SET amount=-901 WHERE id=3").await;
+        let changed_hidden_source = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"aggregate":"Record.ownVoteCount","input":{},"filter":[]}}),
+        )
+        .await;
+        assert_eq!(changed_hidden_source, rejected, "callerFilter rejection body is identical after hidden source row value changes");
+        assert!(!changed_hidden_source.to_string().contains("-901"));
     })
     .catch_unwind()
     .await;
@@ -877,6 +914,10 @@ async fn service_policy_http_hidden_fields_cannot_filter_or_sort() {
         )
         .await;
         assert_eq!(hidden_filter["code"], "WIRE.FILTER_NOT_ALLOWED", "a field-hidden filter is not part of this read contract");
+        assert!(
+            !hidden_filter.to_string().contains("peer-secret"),
+            "filter rejection must not return hidden field values or row data: {hidden_filter}"
+        );
         let hidden_sort = post(
             &fixture.address,
             "/read",
@@ -886,6 +927,31 @@ async fn service_policy_http_hidden_fields_cannot_filter_or_sort() {
         )
         .await;
         assert_eq!(hidden_sort["code"], "WIRE.SORT_NOT_ALLOWED", "a field-hidden sort is not part of this read contract");
+        assert!(!hidden_sort.to_string().contains("peer-secret"), "sort rejection must not return hidden field values or row data: {hidden_sort}");
+        policy_db_execute(&fixture.schema, "UPDATE record SET secret='replacement-hidden-secret' WHERE id=2").await;
+        let changed_value_filter = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"read":"Record","select":["id"],"filter":[{"field":"secret","op":"eq","value":"replacement-hidden-secret"}]}}),
+        )
+        .await;
+        assert_eq!(changed_value_filter, hidden_filter, "hidden filter rejection body is identical across different underlying secret values");
+        assert!(!changed_value_filter.to_string().contains("replacement-hidden-secret"));
+        let changed_hidden_sort = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"secret","dir":"asc"}]}}),
+        )
+        .await;
+        assert_eq!(changed_hidden_sort, hidden_sort, "hidden sort rejection body is identical across different underlying secret values");
+        assert!(
+            !changed_hidden_sort.to_string().contains("replacement-hidden-secret"),
+            "sort rejection must not return changed hidden values: {changed_hidden_sort}"
+        );
     })
     .catch_unwind()
     .await;

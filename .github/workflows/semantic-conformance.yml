@@ -50,6 +50,10 @@ jobs:
           rustup component add rustfmt clippy
       - name: Validate isolated PostgreSQL target
         run: node --input-type=module -e 'import { requireTestDatabase } from "./product/test-support/postgres-guard.mjs"; const target = requireTestDatabase(); console.log(`${target.host}:${target.port}/${target.dbname}`)'
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy -p aip-cli --test service_flow --locked -- -D warnings
       - name: Run focused service policy regressions
         run: cargo test -p aip-cli --test service_flow --locked service_policy_ -- --nocapture
       - name: Run service HTTP and PostgreSQL contract tests
