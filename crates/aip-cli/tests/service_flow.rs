@@ -17,6 +17,7 @@ use tokio::{
 
 const DB: &str = aip_test_support::test_database_url!();
 const APP: &str = include_str!("../../../prototype/example/app.aip");
+const SHARED_SEMANTIC_FIXTURE: &str = include_str!("../../../conformance/semantic-v1.json");
 const SERVICE_POLICY_APP: &str = r#"
 resource Member { fields { id: Id; org: Text } rows read when true }
 actor Member
@@ -48,6 +49,7 @@ access visibleVotes(a: Member) = true
 resource Event {
   fields { id: Id; member: Member; title: Text; note: Text?; amount: Decimal(10,2)?; phase: Phase; score: Decimal(10,2); checked: Bool }
   rows read when member = actor
+  field checked read when note = "kept"
   transition edit { allow member = actor; from true; patch title, note, amount; to checked = checked }
   expose apply edit { target id; bulk maxRows 1 }
   expose read {
@@ -297,6 +299,30 @@ async fn product_identity_migration_and_restart_use_the_same_contract() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn service_data_semantics_hold_across_http_and_database_state() {
+    let conformance: Value = serde_json::from_str(SHARED_SEMANTIC_FIXTURE).unwrap();
+    let expected = &conformance["expected"];
+    let cases = conformance["cases"].as_array().unwrap();
+    let event_values = cases
+        .iter()
+        .map(|row| {
+            let note = if row["note"].is_null() { "NULL".to_owned() } else { format!("'{}'", row["note"].as_str().unwrap().replace('\'', "''")) };
+            let amount = row["amount"].as_str().map(|value| format!("'{value}'")).unwrap_or_else(|| "NULL".into());
+            format!(
+                "({},42,'{}',{note},{amount},'{}',{}, {})",
+                row["id"].as_str().unwrap(),
+                row["title"].as_str().unwrap(),
+                row["phase"].as_str().unwrap(),
+                row["score"].as_str().unwrap(),
+                row["checked"]
+            )
+        })
+        .collect::<Vec<_>>();
+    let vote_values = cases
+        .iter()
+        .flat_map(|row| {
+            row["votes"].as_array().unwrap().iter().map(move |vote| format!("({},{})", vote.as_i64().unwrap(), row["id"].as_str().unwrap()))
+        })
+        .collect::<Vec<_>>();
     let dir = tempfile::tempdir().unwrap();
     let schema = format!("aip_semantic_data_{}", uuid::Uuid::new_v4().simple());
     let undeclared_schema = format!("aip_semantic_negative_{}", uuid::Uuid::new_v4().simple());
@@ -310,7 +336,7 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
     command(&config, &["init", file.to_str().unwrap()]).await;
     let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
     let outcome = AssertUnwindSafe(async {
-        db.batch_execute(&format!("INSERT INTO {schema}.member(id,name) VALUES(42,'Ada'); INSERT INTO {schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES (12,42,'second','kept','1.20','READY',10.50,false),(11,42,'first',NULL,'99999999.99','DONE',10.50,false),(13,42,'boundary',NULL,NULL,'READY',99999999.99,false); INSERT INTO {schema}.vote(id,event_id) VALUES(1,11)")).await.unwrap();
+        db.batch_execute(&format!("INSERT INTO {schema}.member(id,name) VALUES(42,'Ada'); INSERT INTO {schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES {}; INSERT INTO {schema}.vote(id,event_id) VALUES {}", event_values.join(","), vote_values.join(","))).await.unwrap();
         command(&config, &["principal","bind","--subject","semantic-user","--actor","42"]).await;
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let mut header = Header::new(Algorithm::RS256); header.typ = Some("at+jwt".into()); header.kid = Some("current".into());
@@ -319,17 +345,22 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         let (child, listening) = start(&config, &file).await;
         let address = listening["address"].as_str().unwrap();
         let fingerprint = listening["fingerprint"].as_str().unwrap();
-        let query = json!({"query":{"read":"Event","select":["id","title","note","amount","phase","score","voteCount",{"member":{"select":["id","name"]}}],"sort":[{"field":"score","dir":"asc"}]}});
+        let query = json!({"query":{"read":"Event","select":["id","title","note","amount","score","checked","voteCount",{"member":{"select":["id","name"]}}],"sort":[{"field":"score","dir":"asc"}]}});
         let first = post(address,"/read",&token,fingerprint,query.clone()).await;
         assert_eq!(first["ok"],true,"{first}");
         assert_eq!(first["rows"].as_array().map(Vec::len),Some(3),"all three authorized rows are returned");
         assert_eq!(first["rows"][0]["id"],"11","equal sort values use stable id ordering");
+        assert_eq!(first["rows"].as_array().unwrap().iter().map(|row| row["id"].clone()).collect::<Vec<_>>(),expected["sortIds"].as_array().unwrap().iter().map(|id| id.as_str().map(|s| json!(s)).unwrap()).collect::<Vec<_>>(),"sorted result follows shared fixture");
         assert_eq!(first["rows"][0]["note"],Value::Null,"stored nullable value is JSON null");
+        assert_eq!(first["rows"][0]["note"],expected["null"],"fixture null case is preserved");
+        assert_eq!(first["rows"][1]["note"],expected["value"],"fixture present value is preserved");
         assert_eq!(first["rows"][0]["amount"],"99999999.99","declared Decimal(10,2) upper boundary remains exact");
         assert_eq!(first["rows"][0]["voteCount"],1);
-        assert_eq!(first["rows"][1]["voteCount"],0,"empty relation count is zero");
+        assert_eq!(first["rows"][1]["voteCount"],expected["emptyCount"],"empty relation count follows shared fixture");
+        assert_eq!(first["rows"][0]["checked"],Value::Null,"note = 'kept' is UNKNOWN for SQL NULL and field policy fails closed");
+        assert_eq!(first["rows"][1]["checked"],false,"non-null note equality is TRUE");
         assert_eq!(first["rows"][0]["member"],json!({"id":"42","name":"Ada"}));
-        assert!(first["rows"][0].get("checked").is_none(),"declared but unselected checked stays absent");
+        assert!(expected["missingFields"].as_array().unwrap().iter().all(|field| first["rows"][0].get(field.as_str().unwrap()).is_none()),"fixture fields omitted from selection stay absent");
         let patch = json!({"key":"semantic-partial","request":{"apply":"Event.edit","target":{"ids":["12"]},"values":{"title":"changed"}}});
         let applied = post(address,"/apply",&token,fingerprint,patch).await;
         assert_eq!(applied["ok"],true,"{applied}");
@@ -347,7 +378,7 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         assert_eq!(row.get::<_,Option<String>>(1).as_deref(),Some("99999999.99"),"upper Decimal boundary survives write and storage");
 
         // The same rows inserted in the opposite order must yield the identical sorted response.
-        db.batch_execute(&format!("DELETE FROM {schema}.vote; DELETE FROM {schema}.event; INSERT INTO {schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES (13,42,'boundary',NULL,NULL,'READY',99999999.99,false),(11,42,'first',NULL,'99999999.99','DONE',10.50,false),(12,42,'second','kept','1.20','READY',10.50,false); INSERT INTO {schema}.vote(id,event_id) VALUES(1,11)")).await.unwrap();
+        db.batch_execute(&format!("DELETE FROM {schema}.vote; DELETE FROM {schema}.event; INSERT INTO {schema}.event(id,member_id,title,note,amount,phase,score,checked) VALUES {}; INSERT INTO {schema}.vote(id,event_id) VALUES {}", event_values.iter().rev().cloned().collect::<Vec<_>>().join(","), vote_values.iter().rev().cloned().collect::<Vec<_>>().join(","))).await.unwrap();
         let permuted = post(address,"/read",&token,fingerprint,query.clone()).await;
         assert_eq!(permuted["ok"],true,"{permuted}");
         assert_eq!(permuted["rows"],first["rows"],"input insertion order does not change the semantic result");
