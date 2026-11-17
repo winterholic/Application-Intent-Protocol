@@ -1,8 +1,8 @@
 //! V4 쓰기 확장. 서버가 소유한 트랜잭션에서만 공개 전이를 실행한다.
 use crate::{check_read_record, rej, Worker};
 use serde_json::{json, Value};
-use spike_v2_read::id_wire::{emit_entity_id, emit_id, parse_id, IdWire, MAX_SAFE_ID};
-use spike_v2_read::plan::{Caller, Reject};
+use spike_v2_read::id_wire::{emit_entity_id, emit_id, encode_rows, parse_id, IdWire, MAX_SAFE_ID};
+use spike_v2_read::plan::{plan_read_with_wire, Caller, Reject};
 use spike_v3_write::{
     apply_in_with_wire, before_commit_rejection, checks_in, classify_write_error, connection_failed, isolation_sql, lost_before_commit, send_commit,
     CommitFailure, Knobs,
@@ -426,8 +426,14 @@ async fn run_write_in(
                     m.as_object().unwrap().keys().find(|k| !["type", "call", "token", "op", "name", "input"].contains(&k.as_str()))
                 {
                     rej("WIRE.UNKNOWN_KEY", format!("ctx 요청에 알 수 없는 키 `{k}`"))
+                } else if m["op"] == "read" {
+                    let left = expires.saturating_duration_since(Instant::now());
+                    match tokio::time::timeout(left, ctx_read_in(tx, facts, &allowed, &m, caller, wire)).await {
+                        Ok(result) => result,
+                        Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 읽기가 기한 안에 끝나지 않음"),
+                    }
                 } else if m["op"] != "apply" {
-                    rej("WIRE.UNSUPPORTED", "쓰기 확장 ctx는 apply만")
+                    rej("WIRE.UNSUPPORTED", "PostgreSQL 쓰기 확장 ctx는 apply·read만(create·mongo·redis 미지원)")
                 } else if !allowed.iter().any(|a| m["name"] == json!(a)) {
                     rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `{}` 쓰기가 없음", m["name"]))
                 } else {
@@ -489,6 +495,44 @@ async fn run_write_in(
         Err(_) => return rej("WIRE.DEADLINE_EXCEEDED", "커밋 검사가 기한 안에 끝나지 않음"),
     }
     Ok(PreparedWrite { output, expires })
+}
+
+/// `ctx.data.read` of a PostgreSQL write extension (access `read.<Resource>`): the caller's public read, planned with the same
+/// facts, wire and row/field policies as `/read`, but executed in the extension's own transaction so it sees that transaction's
+/// uncommitted writes. `caller` is the verified principal the server captured; nothing in the worker message can replace it.
+async fn ctx_read_in(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    allowed: &[String],
+    message: &Value,
+    caller: &Caller,
+    wire: IdWire,
+) -> Result<Value, Reject> {
+    let resource = message["name"].as_str().unwrap_or("");
+    if !allowed.iter().any(|grant| grant.strip_prefix("read.") == Some(resource)) {
+        return rej("WIRE.ACCESS_NOT_DECLARED", "read가 확장 access에 선언되지 않음");
+    }
+    if message["input"]["read"].as_str() != Some(resource) {
+        return rej("WIRE.BAD_VALUE", "ctx.data.read 요청의 read 이름이 다름");
+    }
+    let plan = plan_read_with_wire(facts, &message["input"], caller, wire)?;
+    // /read decrypts and blind-indexes in the transport layer, which this transaction does not reach: refuse rather than return ciphertext.
+    if declares_encrypted(&plan.output_type) {
+        return rej("WIRE.UNSUPPORTED", "암호화 필드는 PostgreSQL 쓰기 확장 ctx.data.read에서 지원하지 않음");
+    }
+    let rows = match tokio::time::timeout(Duration::from_millis(plan.deadline_ms), spike_v2_read::execute_in(tx, &plan)).await {
+        Ok(rows) => rows?,
+        Err(_) => return rej("WIRE.DEADLINE_EXCEEDED", format!("읽기가 {}ms 안에 끝나지 않음", plan.deadline_ms)),
+    };
+    Ok(json!({"rows": encode_rows(rows, &plan.output_type, wire)?}))
+}
+
+fn declares_encrypted(output_type: &Value) -> bool {
+    match output_type {
+        Value::Object(object) => object.contains_key("encrypted") || object.values().any(declares_encrypted),
+        Value::Array(items) => items.iter().any(declares_encrypted),
+        _ => false,
+    }
 }
 
 fn check_write_record(facts: &Value, declaration: &Value, value: &Value, what: &str, wire: IdWire) -> Result<(), Reject> {
@@ -684,5 +728,18 @@ mod write_isolation_selection_tests {
         assert!(write_needs_serializable(&facts, "Event.mixed"));
         assert!(write_needs_serializable(&facts, "Event.guarded"));
         assert!(!write_needs_serializable(&facts, "Event.missing"));
+    }
+}
+
+#[cfg(test)]
+mod ctx_read_tests {
+    use super::declares_encrypted;
+    use serde_json::json;
+
+    #[test]
+    fn encrypted_output_metadata_is_found_at_any_depth() {
+        assert!(!declares_encrypted(&json!({"id": {"kind": "Id"}, "title": {"kind": "Text"}})));
+        assert!(declares_encrypted(&json!({"id": {"kind": "Id"}, "email": {"kind": "Text", "encrypted": {"alg": "x"}}})));
+        assert!(declares_encrypted(&json!({"rows": [{"nested": {"encrypted": true}}]})));
     }
 }

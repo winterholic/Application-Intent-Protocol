@@ -15,13 +15,14 @@ from unittest.mock import patch
 
 UPSTREAM = Path(__file__).resolve().parents[1] / "upstream"
 ORDER_FIXTURE = json.loads((Path(__file__).with_name("post-order-regression.json")).read_text())
+MOVE_FIXTURE = json.loads((Path(__file__).with_name("topic-move-regression.json")).read_text())
 UNHIDE_CASES = ORDER_FIXTURE["unhide_cases"]
 sys.path.insert(0, str(UPSTREAM))
 
 from flaskbb import create_app  # noqa: E402
 from flaskbb.configs.testing import TestingConfig  # noqa: E402
 from flaskbb.extensions import db  # noqa: E402
-from flaskbb.forum.models import Category, Forum, Post, Topic  # noqa: E402
+from flaskbb.forum.models import Category, Forum, Post, Topic, TopicsRead  # noqa: E402
 from flaskbb.user.models import Group, User  # noqa: E402
 from sqlalchemy import event  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
@@ -316,6 +317,102 @@ class PostOracleGap(unittest.TestCase):
         forum.last_post_created = last.date_created
         db.session.commit()
         return forum, topics, rows
+
+    def test_topic_move_projection_matches_shared_regression_fixture(self):
+        """Run the shared move input through upstream Topic.move and export this Run's result."""
+        case = MOVE_FIXTURE
+        group = Group(name="ordinary", description="Topic.move oracle fixture")
+        db.session.add(group)
+        db.session.flush()
+        users = {}
+        for key, name in ((2, "member-alice"), (3, "admin-bob")):
+            user = User(username=name, email=name + "@example.invalid",
+                        _password="not-used", primary_group=group)
+            user.id = key
+            users[key] = user
+            db.session.add(user)
+        category = Category(title="topic-move-oracle-category")
+        db.session.add(category)
+        db.session.flush()
+        forums = {}
+        for forum_id in case["forums"]:
+            forum = Forum(id=forum_id, category_id=category.id,
+                          title="oracle-forum-{}".format(forum_id))
+            forums[forum_id] = forum
+            db.session.add(forum)
+        db.session.flush()
+        topics, posts = {}, {}
+        for item in case["topics"]:
+            topic = Topic(title=item["title"], user=users[item["user"]])
+            topic.id = item["source_id"]
+            topic.forum = forums[item["forum"]]
+            topic.post_count = item["post_count"]
+            db.session.add(topic)
+            db.session.flush()
+            topics[item["key"]] = topic
+        for item in case["posts"]:
+            row = Post(content="body-{}".format(item["source_id"]),
+                       user=users[item["user"]], topic=topics[item["topic"]])
+            row.id = item["source_id"]
+            row.date_created = self.parse_time(item["date_created"])
+            row.hidden = False
+            db.session.add(row)
+            db.session.flush()
+            posts[item["source_id"]] = row
+            if item.get("first"):
+                topics[item["topic"]].first_post = row
+        for item in case["topics"]:
+            topic = topics[item["key"]]
+            topic.last_post = posts[item["last_post"]]
+            topic.last_updated = self.parse_time(next(
+                post["date_created"] for post in case["posts"]
+                if post["source_id"] == item["last_post"]))
+        for forum_id, counts in ((1, (2, 3)), (2, (1, 1)), (3, (0, 0))):
+            forums[forum_id].topic_count, forums[forum_id].post_count = counts
+        for key, forum_id in (("source", 1), ("destination", 2)):
+            seeded = case["before_move_projection"][key]
+            forum = forums[forum_id]
+            forum.last_post = posts[seeded["last_post"]]
+            forum.last_post_user = users[seeded["last_post_user"]]
+            forum.last_post_title = seeded["last_post_title"]
+            forum.last_post_username = seeded["last_post_username"]
+            forum.last_post_created = self.parse_time(seeded["last_post_created"])
+        for item in case["read_rows"]:
+            db.session.add(TopicsRead(user=users[item["user"]],
+                                      topic=topics[item["topic"]],
+                                      forum=forums[item["forum"]]))
+        db.session.commit()
+
+        def projection(forum):
+            return {
+                "last_post": forum.last_post_id,
+                "last_post_user": forum.last_post_user_id,
+                "last_post_title": forum.last_post_title,
+                "last_post_username": forum.last_post_username,
+                "last_post_created": forum.last_post_created.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if forum.last_post_created else None,
+            }
+
+        self.assertTrue(topics["moving"].move(forums[2]))
+        db.session.commit()
+        after_move = {"source": projection(forums[1]),
+                      "destination": projection(forums[2])}
+        self.assertEqual(after_move, case["after_move"]["forum_projection"])
+        self.assertEqual(TopicsRead.query.filter_by(
+            topic_id=topics["moving"].id).count(), 0)
+        self.assertTrue(topics["source_remaining"].move(forums[2]))
+        db.session.commit()
+        after_empty = {"source": projection(forums[1])}
+        self.assertEqual(after_empty["source"],
+                         case["after_move"]["empty_source_projection"])
+        output = os.environ.get("FLASKBB_TOPIC_MOVE_ORACLE_OUTPUT")
+        if not output:
+            raise RuntimeError("FLASKBB_TOPIC_MOVE_ORACLE_OUTPUT must be set for same-Run HTTP comparison")
+        Path(output).write_text(json.dumps({"after_move": after_move,
+                                            "after_empty": after_empty}, sort_keys=True) + "\n")
+        print("TOPIC_MOVE_ORM_ORACLE source={} destination={} empty_source={}".format(
+            json.dumps(after_move["source"], sort_keys=True),
+            json.dumps(after_move["destination"], sort_keys=True),
+            json.dumps(after_empty["source"], sort_keys=True)))
 
     def run_pointer_cases(self, action):
         for case in ORDER_FIXTURE["pointer_cases"]:
