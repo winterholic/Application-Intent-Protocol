@@ -1,6 +1,9 @@
 name: AIP 1.0 release gate
 
 on:
+  # NOTE: the push event for d327b264 started no runs; manual dispatch lets a
+  # missed main SHA still get its release gate.
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
