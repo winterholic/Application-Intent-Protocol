@@ -98,12 +98,12 @@ resource Event {
     budget { rows 20; depth 2; deadline 2s; cost 1000 }
   }
   aggregate voteCount: Int { source Vote; sourceAccess visibleVotes(actor); groupKey event; callerFilter none; rowOutput none; release count }
-  aggregate emptySum: Int { source Metric; sourceAccess visibleMetrics(actor); groupKey event; callerFilter none; rowOutput none; release sum(amount) }
+  aggregate emptySum: Decimal(10,2) { source Metric; sourceAccess visibleMetrics(actor); groupKey event; callerFilter none; rowOutput none; release sum(amount) }
   aggregate emptyMin: Int? { source Metric; sourceAccess visibleMetrics(actor); groupKey event; callerFilter none; rowOutput none; release min(amount) }
   aggregate emptyMax: Int? { source Metric; sourceAccess visibleMetrics(actor); groupKey event; callerFilter none; rowOutput none; release max(amount) }
 }
 resource Vote { fields { id: Id; event: Event } rows read when true }
-resource Metric { fields { id: Id; event: Event; amount: Int } rows read when true }
+resource Metric { fields { id: Id; event: Event; amount: Decimal(10,2) } rows read when true }
 "#;
 
 async fn command(config: &Path, args: &[&str]) -> Value {
