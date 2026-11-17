@@ -221,7 +221,7 @@ assert.equal(after.rows[0].id, "1");
 assert.equal(after.rows[0].note, null, "explicit null clears nullable field");
 assert.equal(after.rows[0].amount, "987654321012.3456", "Decimal is returned without float rounding");
 assert.equal(after.rows[0].secret, "owner-only");
-assert.equal(after.rows[0].applies, 3, "temporary RED control: the wrong expected effect count must fail against PostgreSQL");
+assert.equal(after.rows[0].applies, 2, "the replay did not increment the DB effect counter a second time");
 const drift = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, { ...contract, fingerprint: "0".repeat(64) });
 await assert.rejects(drift.read({ read: "Record", select: ["id"] }), error => error.code === "WIRE.CONTRACT_MISMATCH");
 for (const [id, code] of [["3", "WIRE.FORBIDDEN"], ["4", "WIRE.MISSING_TARGET"], ["404", "WIRE.MISSING_TARGET"]]) {
