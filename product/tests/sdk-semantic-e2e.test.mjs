@@ -167,7 +167,10 @@ function assertMigratedStored(fixtureValue, expectedTitle, expectedMigrated, exp
   assert.equal(psql(`SELECT r.owner_id::text || '|' || m.org FROM ${fixtureValue.schema}.record r JOIN ${fixtureValue.schema}.member m ON m.id=r.owner_id WHERE r.id=1`), "42|red", "the related row and relationship survive migration in PostgreSQL");
 }
 
+let preparedSdk;
 async function prepareSdk() {
+  if (preparedSdk) return preparedSdk;
+  preparedSdk = (async () => {
   const packageDir = join(temp, "sdk");
   const packDir = join(temp, "pack");
   const consumer = join(temp, "consumer");
@@ -180,6 +183,8 @@ async function prepareSdk() {
   writeFileSync(join(consumer, "package.json"), '{"private":true,"type":"module"}\n');
   run("npm", ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", consumer, tarball], { env: { npm_config_cache: npmCache } });
   return { consumer, tarball };
+  })();
+  return preparedSdk;
 }
 
 before(() => {
@@ -326,7 +331,7 @@ const { replayed: _replayed, ...replayResult } = replay;
 const { replayed: _firstReplay, ...firstResult } = first;
 assert.deepEqual(replayResult, firstResult, "the first and replayed SDK results match");
 writeFileSync(${JSON.stringify(join(f.dir, "idempotency-result.json"))}, JSON.stringify(first));
-const row = await client.read({ read: "Record", select: ["id", "note", "amount", { owner: { select: ["id", "org"] } }] });
+const row = await client.read({ read: "Record", select: ["id", "note", "amount", { owner: { select: ["id", "org"] } }], sort: [{ field: "id", dir: "asc" }] });
 assert.equal(row.rows[0].id, "1");
 assert.equal(row.rows[0].note, null);
 assert.equal(row.rows[0].amount, "987654321012.3456");
@@ -347,7 +352,7 @@ assert first["ok"] is True and replay["replayed"] is True
 assert {key:value for key,value in replay.items() if key != "replayed"} == {key:value for key,value in first.items() if key != "replayed"}
 with open(${JSON.stringify(join(f.dir, "idempotency-result.json"))}, "w", encoding="utf-8") as result_file:
     json.dump(first, result_file, ensure_ascii=False)
-rows = read_record(client, {"read":"Record","select":["id","note","amount",{"owner":{"select":["id","org"]}}]})
+rows = read_record(client, {"read":"Record","select":["id","note","amount",{"owner":{"select":["id","org"]}}],"sort":[{"field":"id","dir":"asc"}]})
 assert rows[0]["id"] == "1" and rows[0]["note"] is None and rows[0]["amount"] == "987654321012.3456", rows[0]
 assert rows[0]["owner"] == {"id":"42","org":"red"}, rows[0]
 `);
@@ -359,7 +364,8 @@ assert rows[0]["owner"] == {"id":"42","org":"red"}, rows[0]
       assert.equal(psql(`SELECT count(*) FROM ${f.schema}.aip_idem`), "1", "the old binding creates one committed idempotency result");
 
       const v2 = app.replace("amount: Decimal(18,4)?; secret:", "amount: Decimal(18,4)?; migrated: Text?; secret:")
-        .replace("patch title, note, amount;", "patch title, note, amount, migrated;");
+        .replace("patch title, note, amount;", "patch title, note, amount, migrated;")
+        .replace("select id, org, owner, title, note, amount, secret, checked, applies", "select id, org, owner, title, note, amount, migrated, secret, checked, applies");
       writeFileSync(f.appPath, v2);
       if (language === "ts") {
         run(binary, ["service", "gen", f.appPath, "--wire", "decimal", "--out", join(f.dir, "binding-v2.ts"), "--sdk-import", "@aip/sdk"]);
@@ -394,7 +400,7 @@ const base = ${JSON.stringify(`http://${f.address}`)};
 const token = ${JSON.stringify(f.token)};
 const client = connect(base, token, newContract);
 assert.deepEqual(await client.session(), { actorId: "42" }, "actor binding survives migration and service restart");
-const row = await client.read({ read: "Record", select: ["id", "title", "note", "amount", "migrated", { owner: { select: ["id", "org"] } }] });
+const row = await client.read({ read: "Record", select: ["id", "title", "note", "amount", "migrated", { owner: { select: ["id", "org"] } }], sort: [{ field: "id", dir: "asc" }] });
 assert.equal(row.rows[0].id, "1");
 assert.equal(row.rows[0].note, null);
 assert.equal(row.rows[0].amount, "987654321012.3456");
@@ -411,7 +417,9 @@ const first = await client.apply(update, { key: "sdk-ts-migration-write" });
 const replay = await client.apply(update, { key: "sdk-ts-migration-write" });
 assert.equal(first.ok, true);
 assert.equal(replay.replayed, true);
-assert.equal((await client.read({ read: "Record", select: ["id", "migrated", "applies"] })).rows[0].applies, 2);
+const afterWrite = await client.read({ read: "Record", select: ["id", "migrated", "applies"], sort: [{ field: "id", dir: "asc" }] });
+assert.equal(afterWrite.rows[0].id, "1");
+assert.equal(afterWrite.rows[0].applies, 2);
 `);
         writeFileSync(join(sdk.consumer, "stale-binding.mjs"), `
 import assert from "node:assert/strict";
@@ -419,10 +427,14 @@ import { connect } from "@aip/sdk";
 import { contract } from "./binding.js";
 const oldClient = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, contract);
 await assert.rejects(oldClient.read({ read: "Record", select: ["id"] }), error => error.code === "WIRE.CONTRACT_MISMATCH");
+await assert.rejects(oldClient.apply({ apply: "Record.edit", target: { ids: ["1"] }, values: { title: "stale-ts-write" } }, { key: ${JSON.stringify(`sdk-ts-stale-apply-${f.schema}`)} }), error => error.code === "WIRE.CONTRACT_MISMATCH");
 `);
+        const beforeStaleApply = psql(`SELECT title || '|' || coalesce(migrated,'<null>') || '|' || applies::text FROM ${f.schema}.record WHERE id=1`);
+        const idemBeforeStaleApply = psql(`SELECT count(*) FROM ${f.schema}.aip_idem`);
         run(process.execPath, [join(sdk.consumer, "stale-binding.mjs")], { cwd: sdk.consumer });
+        assert.equal(psql(`SELECT title || '|' || coalesce(migrated,'<null>') || '|' || applies::text FROM ${f.schema}.record WHERE id=1`), beforeStaleApply, "stale-binding apply caused no record effect");
         assert.equal(psql(`SELECT applies::text FROM ${f.schema}.record WHERE id=1`), "1", "stale-binding rejection caused no record effect");
-        assert.equal(psql(`SELECT count(*) FROM ${f.schema}.aip_idem`), "1", "stale-binding rejection created no idempotency result");
+        assert.equal(psql(`SELECT count(*) FROM ${f.schema}.aip_idem`), idemBeforeStaleApply, "stale-binding apply created no idempotency result");
         run(process.execPath, [join(sdk.consumer, "after-migration.mjs")], { cwd: sdk.consumer });
       } else {
         writeFileSync(join(f.dir, "after-migration.py"), `
@@ -433,7 +445,7 @@ base = ${JSON.stringify(`http://${f.address}`)}
 token = ${JSON.stringify(f.token)}
 client = connect(base, token, NEW_FINGERPRINT)
 assert client.session() == {"actorId":"42"}, "actor binding survives migration and service restart"
-rows = read_record(client, {"read":"Record","select":["id","title","note","amount","migrated",{"owner":{"select":["id","org"]}}]})
+rows = read_record(client, {"read":"Record","select":["id","title","note","amount","migrated",{"owner":{"select":["id","org"]}}],"sort":[{"field":"id","dir":"asc"}]})
 assert rows[0]["id"] == "1" and rows[0]["note"] is None and rows[0]["amount"] == "987654321012.3456" and rows[0]["migrated"] is None, rows[0]
 assert rows[0]["owner"] == {"id":"42","org":"red"}, rows[0]
 prior = apply_record_edit(client, {"ids":["1"]}, {"title":"python-before-migration","note":None,"amount":"987654321012.3456"}, key="sdk-python-migration-replay")
@@ -442,21 +454,31 @@ assert {key:value for key,value in prior.items() if key != "replayed"} == {key:v
 update = apply_record_edit(client, {"ids":["1"]}, {"title":"python-after-migration","migrated":"new-schema"}, key="sdk-python-migration-write")
 replay = apply_record_edit(client, {"ids":["1"]}, {"title":"python-after-migration","migrated":"new-schema"}, key="sdk-python-migration-write")
 assert update["ok"] is True and replay["replayed"] is True
-assert read_record(client, {"read":"Record","select":["id","migrated","applies"]})[0]["applies"] == 2
+after_write = read_record(client, {"read":"Record","select":["id","migrated","applies"],"sort":[{"field":"id","dir":"asc"}]})
+assert after_write[0]["id"] == "1" and after_write[0]["applies"] == 2, after_write[0]
 `);
         writeFileSync(join(f.dir, "stale-binding.py"), `
 from aip_sdk import AipError, connect
-from binding import CONTRACT_FINGERPRINT
+from binding import CONTRACT_FINGERPRINT, apply_record_edit
 try:
     connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, CONTRACT_FINGERPRINT).read({"read":"Record","select":["id"]})
 except AipError as error:
     assert error.code == "WIRE.CONTRACT_MISMATCH"
 else:
     raise AssertionError("the old generated binding was accepted after migration")
+try:
+    apply_record_edit(connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, CONTRACT_FINGERPRINT), {"ids":["1"]}, {"title":"stale-python-write"}, key=${JSON.stringify(`sdk-python-stale-apply-${f.schema}`)})
+except AipError as error:
+    assert error.code == "WIRE.CONTRACT_MISMATCH", error.code
+else:
+    raise AssertionError("the old generated binding applied a write after migration")
 `);
+        const beforeStaleApply = psql(`SELECT title || '|' || coalesce(migrated,'<null>') || '|' || applies::text FROM ${f.schema}.record WHERE id=1`);
+        const idemBeforeStaleApply = psql(`SELECT count(*) FROM ${f.schema}.aip_idem`);
         run("python3", [join(f.dir, "stale-binding.py")], { cwd: f.dir, env: { PYTHONPATH: join(root, "product/python") } });
+        assert.equal(psql(`SELECT title || '|' || coalesce(migrated,'<null>') || '|' || applies::text FROM ${f.schema}.record WHERE id=1`), beforeStaleApply, "stale-binding apply caused no record effect");
         assert.equal(psql(`SELECT applies::text FROM ${f.schema}.record WHERE id=1`), "1", "stale-binding rejection caused no record effect");
-        assert.equal(psql(`SELECT count(*) FROM ${f.schema}.aip_idem`), "1", "stale-binding rejection created no idempotency result");
+        assert.equal(psql(`SELECT count(*) FROM ${f.schema}.aip_idem`), idemBeforeStaleApply, "stale-binding apply created no idempotency result");
         run("python3", [join(f.dir, "after-migration.py")], { cwd: f.dir, env: { PYTHONPATH: join(root, "product/python") } });
       }
       assertMigratedStored(f, `${language}-after-migration`, "new-schema", 2);
