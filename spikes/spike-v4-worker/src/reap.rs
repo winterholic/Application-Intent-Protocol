@@ -77,10 +77,22 @@ mod imp {
             }
         }
     }
+
+    /// Kills what is left of a process group whose leader was already reaped, so the leader's pid can no longer be signalled.
+    pub(crate) fn kill_group(pgid: u32) {
+        let Ok(pgid) = i32::try_from(pgid) else { return };
+        if pgid <= 1 {
+            return;
+        }
+        unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    }
 }
 
 #[cfg(unix)]
-pub(crate) use imp::kill_tree;
+pub(crate) use imp::{kill_group, kill_tree};
 
 #[cfg(not(unix))]
 pub(crate) fn kill_tree(_root: u32) {}
+
+#[cfg(not(unix))]
+pub(crate) fn kill_group(_pgid: u32) {}

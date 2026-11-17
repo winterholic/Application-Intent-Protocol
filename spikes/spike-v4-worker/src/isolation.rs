@@ -100,6 +100,10 @@ fn validate_executable(path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// One startup budget for the runtime `--version` probe. It is a single wait with no retry or extension:
+/// a runtime that has not printed its version by then is killed and the service refuses to start.
+const RUNTIME_PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Optional execution choices for a worker. Environment entries are explicit additions.
 #[derive(Clone, Debug)]
 pub struct WorkerLaunchConfig {
@@ -159,11 +163,16 @@ impl WorkerLaunchConfig {
         configure_environment(&mut command, self)?;
         set_working_directory(&mut command, self.isolation, &ext_dir);
         command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+        // Own process group so a timeout can signal the probe's whole tree, not just the direct child.
+        #[cfg(unix)]
+        command.process_group(0);
         let cgroup = crate::cgroup::create(self.cgroup_root.as_deref(), self.resource_limits)?;
         if let Some(cgroup) = &cgroup {
             cgroup.attach(&mut command)?;
         }
         let mut child = command.spawn()?;
+        // Read now: once `wait` has reaped the child, `id()` is `None` even if its descendants still hold the pipes.
+        let leader_pid = child.id().unwrap_or_default();
         #[cfg(target_os = "linux")]
         let probe_sequence = {
             static NEXT_PROBE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -179,7 +188,7 @@ impl WorkerLaunchConfig {
             eprintln!(
                 "AIP_PROBE_DIAG event=start sequence={probe_sequence} condition={} probe_kind={probe_kind} pid={} lang={lang:?} isolation={:?} runtime={program:?} launch_program={probe_program:?} launch_args={probe_args:?}",
                 std::env::var("AIP_EXPERIMENT_CONDITION").unwrap_or_else(|_| "unset".to_owned()),
-                child.id().unwrap_or_default(),
+                leader_pid,
                 self.isolation,
             );
         }
@@ -214,16 +223,23 @@ impl WorkerLaunchConfig {
             }
             Ok(())
         };
-        let result = match tokio::time::timeout(std::time::Duration::from_secs(2), probe).await {
+        let result = match tokio::time::timeout(RUNTIME_PROBE_DEADLINE, probe).await {
             Ok(result) => result,
             Err(_) => {
                 #[cfg(target_os = "linux")]
-                let pid = child.id().unwrap_or_default();
+                let pid = leader_pid;
                 let child_status = match child.try_wait() {
                     Ok(Some(status)) => format!("exited({status})"),
                     Ok(None) => "running".to_owned(),
                     Err(error) => format!("unknown({error})"),
                 };
+                // A running leader is not yet reaped, so its pid cannot have been reused and the whole tree may be walked.
+                // After the leader exited only its process group is signalled; a group id stays reserved while a member lives.
+                if child_status == "running" {
+                    crate::reap::kill_tree(leader_pid);
+                } else {
+                    crate::reap::kill_group(leader_pid);
+                }
                 let _kill_result = child.start_kill();
                 #[cfg(target_os = "linux")]
                 let process_sample = if diagnostic { linux_probe_process_sample(pid) } else { String::new() };
@@ -248,20 +264,23 @@ impl WorkerLaunchConfig {
                 #[cfg(target_os = "linux")]
                 let timeout_message = if diagnostic {
                     format!(
-                        "worker runtime probe exceeded 2 seconds; pid={pid}; child_status={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        "worker runtime probe exceeded {} seconds; pid={pid}; child_status={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        RUNTIME_PROBE_DEADLINE.as_secs(),
                         stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
                         stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
                     )
                 } else {
                     format!(
-                        "worker runtime probe exceeded 2 seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        "worker runtime probe exceeded {} seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        RUNTIME_PROBE_DEADLINE.as_secs(),
                         stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
                         stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
                     )
                 };
                 #[cfg(not(target_os = "linux"))]
                 let timeout_message = format!(
-                    "worker runtime probe exceeded 2 seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                    "worker runtime probe exceeded {} seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                    RUNTIME_PROBE_DEADLINE.as_secs(),
                     stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
                     stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
                 );
@@ -1042,10 +1061,65 @@ mod tests {
         let started = tokio::time::Instant::now();
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("exceeded 5 seconds"), "{error}");
         assert!(error.to_string().contains("child_status=running"));
         assert!(error.to_string().contains("stdout_bytes_read=0"));
         assert!(error.to_string().contains("stderr_bytes_read=0"));
-        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        // A hung runtime still fails at the single 5 second budget, with no retry or extension.
+        assert!(started.elapsed() >= std::time::Duration::from_secs(5));
+        assert!(started.elapsed() < std::time::Duration::from_secs(8));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_probe_accepts_version_output_later_than_two_seconds() {
+        let dir = TempDir::new("probe-delayed");
+        let config = probe_runtime("delayed-runtime.sh");
+        let started = tokio::time::Instant::now();
+        config.probe(Lang::Node, dir.path()).await.expect("a runtime that prints its version after 3 seconds is inside the 5 second budget");
+        assert!(started.elapsed() >= std::time::Duration::from_secs(3));
+    }
+
+    /// `ps` stat of a process, or `None` when it no longer exists. A zombie is already dead.
+    #[cfg(unix)]
+    fn process_is_running(pid: i32) -> bool {
+        let output = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+        let stat = String::from_utf8_lossy(&output.stdout);
+        let stat = stat.trim();
+        !stat.is_empty() && !stat.starts_with('Z')
+    }
+
+    #[cfg(unix)]
+    async fn assert_timed_out_probe_leaves_no_descendant(fixture: &str) {
+        let dir = TempDir::new("probe-descendant");
+        let pid_file = dir.path().join("descendant.pid");
+        let mut config = probe_runtime(fixture);
+        config.environment.insert("AIP_PROBE_DESCENDANT_PID_FILE".into(), pid_file.to_string_lossy().into_owned());
+        let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        let pid: i32 = std::fs::read_to_string(&pid_file).expect("fixture recorded its background child").trim().parse().unwrap();
+        // Observe for a bounded time only; a process in uninterruptible I/O may take longer to disappear.
+        let observation_ends = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        while process_is_running(pid) && tokio::time::Instant::now() < observation_ends {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let survived = process_is_running(pid);
+        if survived {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+        assert!(!survived, "probe descendant {pid} was still running 3 seconds after the probe timed out");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_probe_timeout_leaves_no_descendant_process() {
+        assert_timed_out_probe_leaves_no_descendant("descendant-runtime.sh").await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_probe_timeout_leaves_no_descendant_after_the_runtime_itself_exited() {
+        assert_timed_out_probe_leaves_no_descendant("orphaned-runtime.sh").await;
     }
 
     #[test]
