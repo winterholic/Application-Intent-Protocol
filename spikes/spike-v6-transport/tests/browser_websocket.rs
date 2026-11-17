@@ -183,6 +183,29 @@ async fn browser_authenticates_in_first_frame_before_subscribing_and_origin_is_r
     server.shutdown().await.unwrap();
 }
 
+/// 서버는 Close 프레임을 쓴 뒤에 `serve_ws`가 반환되고, 그 다음에야 `BrowserSlots`의 마지막 Arc가 Drop되어 슬롯을 돌려준다.
+/// 클라이언트가 Close를 읽었다는 사실은 슬롯 반환을 보장하지 않으므로, 종료 직후의 재접속만 제한 시간 동안 `WIRE.SERVER_BUSY`에 한해 다시 시도한다.
+/// 다른 오류는 즉시 실패하고, 상한 거절 자체를 단언하는 검사는 이 헬퍼를 쓰지 않는다.
+async fn connect_once_slot_returns(
+    address: SocketAddr,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let attempt = tokio::time::timeout_at(deadline, tokio_tungstenite::connect_async(browser_request(address, true)))
+            .await
+            .expect("the realtime slot must be returned within the deadline after the previous socket closed");
+        match attempt {
+            Ok((socket, _)) => return socket,
+            Err(tokio_tungstenite::tungstenite::Error::Http(response))
+                if response.body().as_deref().is_some_and(|body| String::from_utf8_lossy(body).contains("\"code\":\"WIRE.SERVER_BUSY\"")) =>
+            {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(error) => panic!("unexpected browser connect failure after close: {error:?}"),
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn browser_auth_frame_is_bounded_and_invalid_auth_never_reaches_subscription() {
     let _schema_lock = SCHEMA_LOCK.lock().await;
@@ -201,11 +224,7 @@ async fn browser_auth_frame_is_bounded_and_invalid_auth_never_reaches_subscripti
     assert!(matches!(close, Some(Ok(Message::Close(_))) | None), "missing-auth rejection must close before the next browser connection: {close:?}");
     drop(missing_auth);
 
-    let replacement = tokio_tungstenite::connect_async(browser_request(server.address, true)).await;
-    assert!(replacement.is_ok(), "the pre-auth realtime slot must be returned after the missing-auth close: {:?}", replacement.err());
-    drop(replacement);
-
-    let (mut socket, _) = tokio_tungstenite::connect_async(browser_request(server.address, true)).await.unwrap();
+    let mut socket = connect_once_slot_returns(server.address).await;
     socket.send(Message::Text(json!({"type":"auth","token":"revoked-or-unknown"}).to_string().into())).await.unwrap();
     let first = tokio::time::timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
     let first: serde_json::Value = serde_json::from_str(&first.into_text().unwrap()).unwrap();
@@ -214,7 +233,7 @@ async fn browser_auth_frame_is_bounded_and_invalid_auth_never_reaches_subscripti
     let next = tokio::time::timeout(Duration::from_secs(2), socket.next()).await.unwrap();
     assert!(matches!(next, Some(Ok(Message::Close(_))) | None));
 
-    let (mut oversized, _) = tokio_tungstenite::connect_async(browser_request(server.address, true)).await.unwrap();
+    let mut oversized = connect_once_slot_returns(server.address).await;
     oversized.send(Message::Text(format!("{{\"type\":\"auth\",\"token\":\"{}\"}}", "x".repeat(20 * 1024)).into())).await.unwrap();
     let oversized_reply = tokio::time::timeout(Duration::from_secs(3), oversized.next()).await.unwrap();
     assert!(matches!(oversized_reply, None | Some(Err(_)) | Some(Ok(Message::Close(_)))), "oversized first frame must close: {oversized_reply:?}");
