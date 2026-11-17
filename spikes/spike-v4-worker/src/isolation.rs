@@ -151,8 +151,11 @@ impl WorkerLaunchConfig {
         let mut child = command.spawn()?;
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("worker runtime probe stdout pipe was not created"))?;
         let stderr = child.stderr.take().ok_or_else(|| std::io::Error::other("worker runtime probe stderr pipe was not created"))?;
+        let stdout_bytes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let stderr_bytes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let probe = async {
-            let (status, stdout, stderr) = tokio::join!(child.wait(), capture_bounded(stdout, 4096), capture_bounded(stderr, 4096));
+            let (status, stdout, stderr) =
+                tokio::join!(child.wait(), capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));
             let status = status?;
             let stdout = stdout?;
             let stderr = stderr?;
@@ -171,8 +174,20 @@ impl WorkerLaunchConfig {
         let result = match tokio::time::timeout(std::time::Duration::from_secs(2), probe).await {
             Ok(result) => result,
             Err(_) => {
+                let child_status = match child.try_wait() {
+                    Ok(Some(status)) => format!("exited({status})"),
+                    Ok(None) => "running".to_owned(),
+                    Err(error) => format!("unknown({error})"),
+                };
                 let _ = child.start_kill();
-                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "worker runtime probe exceeded 2 seconds"))
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "worker runtime probe exceeded 2 seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                        stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                    ),
+                ))
             }
         };
         if let Some(cgroup) = cgroup {
@@ -235,7 +250,11 @@ pub(crate) fn configure_environment(command: &mut tokio::process::Command, confi
     Ok(())
 }
 
-async fn capture_bounded<R: tokio::io::AsyncRead + Unpin>(mut reader: R, limit: usize) -> std::io::Result<Vec<u8>> {
+async fn capture_bounded<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    limit: usize,
+    bytes_read: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) -> std::io::Result<Vec<u8>> {
     use tokio::io::AsyncReadExt;
     let mut output = Vec::with_capacity(limit.min(1024));
     let mut buffer = [0u8; 1024];
@@ -244,6 +263,7 @@ async fn capture_bounded<R: tokio::io::AsyncRead + Unpin>(mut reader: R, limit: 
         if read == 0 {
             return Ok(output);
         }
+        bytes_read.fetch_add(read, std::sync::atomic::Ordering::Relaxed);
         let remaining = limit.saturating_sub(output.len());
         output.extend_from_slice(&buffer[..read.min(remaining)]);
     }
@@ -694,8 +714,8 @@ mod tests {
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert!(error.to_string().contains("child_status=running"));
-        assert!(error.to_string().contains("stdout_captured=0"));
-        assert!(error.to_string().contains("stderr_captured=0"));
+        assert!(error.to_string().contains("stdout_bytes_read=0"));
+        assert!(error.to_string().contains("stderr_bytes_read=0"));
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 
