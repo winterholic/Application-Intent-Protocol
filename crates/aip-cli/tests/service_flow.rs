@@ -111,6 +111,13 @@ async fn command(config: &Path, args: &[&str]) -> Value {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     serde_json::from_slice(&output.stdout).unwrap()
 }
+fn rejection_body_without_request_id(mut body: Value) -> Value {
+    if let Some(object) = body.as_object_mut() {
+        object.remove("requestId");
+    }
+    body
+}
+
 async fn post(address: &str, path: &str, token: &str, contract: &str, body: Value) -> Value {
     let text = body.to_string();
     let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
@@ -890,7 +897,11 @@ async fn service_policy_caller_filter_read_and_none_boundaries() {
             json!({"query":{"aggregate":"Record.ownVoteCount","input":{},"filter":[]}}),
         )
         .await;
-        assert_eq!(changed_hidden_source, rejected, "callerFilter rejection body is identical after hidden source row value changes");
+        assert_eq!(
+            rejection_body_without_request_id(changed_hidden_source.clone()),
+            rejection_body_without_request_id(rejected.clone()),
+            "callerFilter rejection body, excluding the per-request correlation id, is identical after hidden source row value changes"
+        );
         assert!(!changed_hidden_source.to_string().contains("-901"));
     })
     .catch_unwind()
@@ -937,7 +948,11 @@ async fn service_policy_http_hidden_fields_cannot_filter_or_sort() {
             json!({"query":{"read":"Record","select":["id"],"filter":[{"field":"secret","op":"eq","value":"replacement-hidden-secret"}]}}),
         )
         .await;
-        assert_eq!(changed_value_filter, hidden_filter, "hidden filter rejection body is identical across different underlying secret values");
+        assert_eq!(
+            rejection_body_without_request_id(changed_value_filter.clone()),
+            rejection_body_without_request_id(hidden_filter.clone()),
+            "hidden filter denial, excluding the per-request correlation id, is identical across different underlying secret values"
+        );
         assert!(!changed_value_filter.to_string().contains("replacement-hidden-secret"));
         let changed_hidden_sort = post(
             &fixture.address,
@@ -947,7 +962,11 @@ async fn service_policy_http_hidden_fields_cannot_filter_or_sort() {
             json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"secret","dir":"asc"}]}}),
         )
         .await;
-        assert_eq!(changed_hidden_sort, hidden_sort, "hidden sort rejection body is identical across different underlying secret values");
+        assert_eq!(
+            rejection_body_without_request_id(changed_hidden_sort.clone()),
+            rejection_body_without_request_id(hidden_sort.clone()),
+            "hidden sort denial, excluding the per-request correlation id, is identical across different underlying secret values"
+        );
         assert!(
             !changed_hidden_sort.to_string().contains("replacement-hidden-secret"),
             "sort rejection must not return changed hidden values: {changed_hidden_sort}"
