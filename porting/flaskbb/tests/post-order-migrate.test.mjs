@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {spawnSync} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {GROUPS_SQL, USERS_SQL, binary, definition, startFixture} from './harness.mjs';
+import {deriveLegacyDefinition} from './post-order-migrate-legacy.mjs';
 
 test('FlaskBB PostOrder schema upgrade preserves legacy UUIDs and requires the exact migration digest', {timeout: 120000}, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'aip-flaskbb-order-upgrade-'));
@@ -12,44 +14,12 @@ test('FlaskBB PostOrder schema upgrade preserves legacy UUIDs and requires the e
     // Derive the immediately preceding schema without a second full app copy.
     // Each removal must be unique so a changed definition cannot silently turn
     // this into a migration from the new schema to itself.
-    let legacy = readFileSync(definition, 'utf8');
-    // This is a preceding-schema fixture, not the old behavior implementation.
-    // Remove the new Topic ordering behavior before removing its nullable fields.
-    const orderPredicates=legacy.match(/^predicate topicHide(?:OrderKnown|ReplacesForum|NullReplacement).*$/gm);
-    assert.equal(orderPredicates?.length,3);
-    legacy=legacy.replace(/^predicate topicHide(?:OrderKnown|ReplacesForum|NullReplacement).*\n/gm,'');
-    const deletePredicates=legacy.match(/^predicate topicDelete(?:Candidate|RecalculatesForum|KeepsForum).*$/gm);
-    assert.equal(deletePredicates?.length,3);
-    legacy=legacy.replace(/^predicate topicDelete(?:Candidate|RecalculatesForum|KeepsForum).*\n/gm,'');
-    const deleteStart=legacy.indexOf('  transition delete {',legacy.indexOf('resource Topic {'));
-    const deleteEnd=legacy.indexOf('  expose apply delete { target id; bulk maxRows 1 }',deleteStart);
-    assert.ok(deleteStart>0 && deleteEnd>deleteStart);
-    legacy=legacy.slice(0,deleteStart)+'  transition delete { allow canDeleteTopic(actor, this); from deleted = false; to deleted = true }\n'+legacy.slice(deleteEnd);
-    const hideStart=legacy.indexOf('  transition hide {',legacy.indexOf('resource Topic {'));
-    const hideEnd=legacy.indexOf('  expose apply hide { target id; bulk maxRows 1 }',hideStart);
-    assert.ok(hideStart>0 && hideEnd>hideStart);
-    legacy=legacy.slice(0,hideStart)+'  transition hide { allow canHide(actor, forum); from hidden != true and deleted = false; to hidden = true, hidden_at = now, hidden_by = actor }\n'+legacy.slice(hideEnd);
-    const removeOnce = text => {
-      assert.equal(legacy.split(text).length, 2, `legacy schema anchor must be unique: ${text}`);
-      legacy = legacy.replace(text, '');
-    };
-    removeOnce('predicate postOrderKnownForForum(targetPost: Post) = not (exists Post where forum = targetPost.forum and published and not deleted and not topic.deleted and hidden != true and source_order = null)\n');
-    assert.equal(legacy.split(' and postOrderKnownForForum(this)').length, 3);
-    legacy = legacy.replaceAll(' and postOrderKnownForForum(this)', '');
-    assert.equal((legacy.match(/order by candidate\.source_order\.id/g) ?? []).length, 10);
-    legacy = legacy.replaceAll('order by candidate.source_order.id', 'order by candidate.date_created');
-    removeOnce('    source_order: PostOrder?\n');
-    // This fixture preserves the prior schema, without guessing a historical Topic pointer.
-    assert.equal(legacy.split('resource Topic {\n  fields {\n    id: Uuid\n    last_post: Post?\n').length,2);
-    legacy=legacy.replace('resource Topic {\n  fields {\n    id: Uuid\n    last_post: Post?\n','resource Topic {\n  fields {\n    id: Uuid\n');
-    removeOnce('    update Topic where id = this.topic { last_post = this; last_updated = now }\n');
-    legacy=legacy.replace('last_post = this.last_post\n','last_post = this.forum.last_post\n');
-    removeOnce('  unique source_order\n  check sourceOrderBelongsToPost when source_order = null or source_order.post = this\n');
-    removeOnce(' and not (exists Post where published = true and source_order = null)');
-    removeOnce('    create PostOrder { post = this }\n    update Post where id = this { source_order = latest PostOrder mapped where mapped.post = this order by mapped.id select mapped.id }\n');
-    removeOnce('resource PostOrder {\n  fields { id: Id; post: Post }\n  unique post\n  rows read when canReadPost(actor, post)\n}\n');
+    const legacy = deriveLegacyDefinition(readFileSync(definition, 'utf8'));
     const oldFile = join(dir, 'legacy.aip');
     writeFileSync(oldFile, legacy);
+    const legacyCheck = spawnSync(binary, ['service', 'check', oldFile], {encoding: 'utf8', timeout: 30000});
+    assert.equal(legacyCheck.status, 0, `${legacyCheck.stdout}\n${legacyCheck.stderr}\n${legacyCheck.error?.message ?? ''}`);
+    assert.equal(JSON.parse(legacyCheck.stdout).ok, true, legacyCheck.stdout);
     const post = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
     const topic = '00000000-0000-4000-8000-400000000001';
     fx = await startFixture({definitionFile: oldFile, prefix: 'aip-flaskbb-order-upgrade-db-',
