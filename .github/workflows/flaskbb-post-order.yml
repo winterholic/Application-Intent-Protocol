@@ -20,6 +20,9 @@ on:
       - 'spikes/spike-v1-fixture/src/isolation.rs'
       - 'spikes/spike-v1-fixture/src/syntax_card.rs'
       - 'spikes/spike-v3-write/tests/latest_effect_match.rs'
+      - 'spikes/spike-v4-worker/src/write.rs'
+      - 'spikes/spike-v4-worker/tests/write_read_in_transaction.rs'
+      - 'spikes/spike-v2-read/src/lib.rs'
       - 'porting/flaskbb/seed/*post_order*'
       - 'porting/flaskbb/tests/test_post_order_import.py'
       - 'porting/flaskbb/tests/test_post_oracle_gap.py'
@@ -216,6 +219,24 @@ jobs:
       - name: Verify selected target transactions
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --target-dir target --test latest_effect_match
+      - name: Reject the legacy PostgreSQL write-extension read refusal negative control
+        id: negative-write-read
+        if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          source=spikes/spike-v4-worker/src/write.rs
+          cp "$source" "$RUNNER_TEMP/write.rs.restore"
+          trap 'cp "$RUNNER_TEMP/write.rs.restore" "$source"' EXIT
+          sed -i 's/} else if m\["op"\] == "read" {/} else if m["op"] == "read-disabled" {/' "$source"
+          ! cmp -s "$source" "$RUNNER_TEMP/write.rs.restore"
+          python3 porting/flaskbb/tests/record_command.py --name negative-write-extension-read --expect-failure-marker 'peek refused: WIRE.EXTENSION_ERROR' -- cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked --target-dir target --test write_read_in_transaction
+      - name: Verify PostgreSQL write-extension ctx.data.read policy inside the owned transaction
+        if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- spikes/spike-v4-worker/src/write.rs
+          python3 porting/flaskbb/tests/record_command.py --name write-extension-read -- cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked --target-dir target --test write_read_in_transaction
+          cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked --target-dir target --lib ctx_read_tests
       - name: Verify active FlaskBB native ordering and the legacy allocation fence
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         env:

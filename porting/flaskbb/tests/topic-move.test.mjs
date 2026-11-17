@@ -145,16 +145,27 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       assert.deepEqual(lastResponse.body.output, {moved: false});
       assert.equal(snapshot(), before);
     });
-    await journey('destination-moderator-denial', async before => {
-      lastResponse = await move('alice-sub', topics.moving, '2', 'topic-move-denied');
-      assert.equal(lastResponse.body.ok, false, JSON.stringify(lastResponse));
-      assert.equal(snapshot(), before);
-    });
-    await journey('source-moderator-denial', async before => {
-      lastResponse = await move('carol-sub', topics.moving, '2', 'topic-move-source-denied');
-      assert.equal(lastResponse.body.ok, false, JSON.stringify(lastResponse));
-      assert.equal(snapshot(), before);
-    });
+    // The server hides why an extension was refused, so a refusal alone cannot be told from any other failure.
+    // Granting only the missing moderator role and resending must then move the Topic: the role was the cause.
+    const deniedUntilModerator = async (name, subject, grantRow, key) => {
+      await journey(name, async before => {
+        lastResponse = await move(subject, topics.moving, '2', `${key}-denied`);
+        assert.equal(lastResponse.body.ok, false, JSON.stringify(lastResponse));
+        assert.equal(lastResponse.body.code, 'WIRE.EXTENSION_ERROR', JSON.stringify(lastResponse));
+        assert.equal(snapshot(), before);
+        sql(`INSERT INTO ${q}.forum_moderator(id,forum_id,user_id) VALUES ${grantRow};`);
+        try {
+          lastResponse = await move(subject, topics.moving, '2', `${key}-granted`);
+          assert.equal(lastResponse.body.ok, true, JSON.stringify(lastResponse));
+          assert.deepEqual(lastResponse.body.output, {moved: true});
+          assert.equal(sql(`SELECT forum_id FROM ${q}.topic WHERE id='${topics.moving}'`), '2');
+        } finally {
+          sql(`DELETE FROM ${q}.forum_moderator WHERE id>2;`);
+        }
+      });
+    };
+    await deniedUntilModerator('destination-moderator-denial', 'alice-sub', '(3,2,2)', 'topic-move-destination');
+    await deniedUntilModerator('source-moderator-denial', 'carol-sub', '(4,1,6)', 'topic-move-source');
     await journey('internal-transition-direct-http-denial', async before => {
       lastResponse = await post('admin-sub', 'topic-move-internal-direct', {
         atomic: [{apply: 'Topic.relocate', target: {ids: [topics.moving]}, values: {forum: '2'}}],
