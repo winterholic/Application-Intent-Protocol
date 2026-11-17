@@ -5,9 +5,11 @@
     {"id":"13", "title":"boundary", "note":null, "amount":null, "phase":"READY", "score":"99999999.99", "checked":false, "votes":[]}
   ],
   "expected": {
-    "missingFields": ["phase"],
+    "missingFields": ["checked"],
     "null": null,
     "value": "kept",
+    "policyNull": null,
+    "policyVisible": "READY",
     "emptyCount": 0,
     "nullEqualityMatches": false,
     "nonNullEqualityMatches": true,
