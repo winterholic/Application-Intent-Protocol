@@ -69,6 +69,14 @@ jobs:
             echo "$sandbox_bin" >> "$GITHUB_PATH"
           fi
 
+      - name: Diagnose Bubblewrap runtime startup path
+        continue-on-error: true
+        run: >-
+          AIP_TEST_BWRAP_DIAGNOSTICS=1 cargo test
+          --manifest-path spikes/spike-v4-worker/Cargo.toml --lib --locked --target-dir target
+          isolation::tests::linux_bwrap_startup_diagnostics_compare_direct_sequential_and_concurrent
+          -- --exact --nocapture
+
       - name: Verify Bubblewrap filesystem and network isolation
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
 

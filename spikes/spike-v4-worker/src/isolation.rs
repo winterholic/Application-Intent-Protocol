@@ -576,6 +576,135 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    async fn sample_linux_startup(label: &str, program: OsString, args: Vec<OsString>) -> String {
+        use tokio::io::AsyncReadExt;
+
+        let mut command = tokio::process::Command::new(&program);
+        command.args(&args).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default());
+        command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+        let mut child = command.spawn().unwrap_or_else(|error| panic!("{label}: spawn {program:?}: {error}"));
+        let pid = child.id().expect("startup child has a PID");
+        let child_stdout = child.stdout.take().unwrap();
+        let child_stderr = child.stderr.take().unwrap();
+        let stdout = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            child_stdout.read_to_end(&mut bytes).await.unwrap();
+            bytes
+        });
+        let stderr = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            child_stderr.read_to_end(&mut bytes).await.unwrap();
+            bytes
+        });
+        let started = tokio::time::Instant::now();
+        let mut snapshots = Vec::new();
+        let mut snapshot_after_ms = [0, 50, 250, 750, 1250, 1750].into_iter().peekable();
+        let status = loop {
+            match child.try_wait().unwrap() {
+                Some(status) => break status,
+                None => {
+                    if snapshot_after_ms.peek().is_some_and(|checkpoint| started.elapsed().as_millis() >= *checkpoint) {
+                        snapshots.push(linux_process_tree(pid));
+                        snapshot_after_ms.next();
+                    }
+                    if started.elapsed() >= std::time::Duration::from_secs(2) {
+                        let _ = child.start_kill();
+                        break child.wait().await.unwrap();
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            }
+        };
+        let stdout = stdout.await.unwrap();
+        let stderr = stderr.await.unwrap();
+        let observed_pids = snapshots
+            .iter()
+            .flat_map(|snapshot| snapshot.split("pid=").skip(1).filter_map(|entry| entry.split_whitespace().next()?.parse::<u32>().ok()))
+            .collect::<std::collections::HashSet<_>>();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let residual_pids =
+            observed_pids.into_iter().filter(|observed| std::path::PathBuf::from("/proc").join(observed.to_string()).exists()).collect::<Vec<_>>();
+        let observation = format!(
+            "{label}: pid={pid} program={program:?} elapsed_ms={} status={status} stdout_bytes={} stdout_eof=true stderr_bytes={} stderr_eof=true residual_pids={residual_pids:?} proc_samples={snapshots:?}",
+            started.elapsed().as_millis(), stdout.len(), stderr.len()
+        );
+        assert!(status.success(), "{observation}; stderr={:?}", String::from_utf8_lossy(&stderr));
+        assert!(!stdout.is_empty(), "{observation}: expected Node version output");
+        assert!(residual_pids.is_empty(), "{observation}: process remains after wait");
+        observation
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_process_tree(root: u32) -> String {
+        fn visit(pid: u32, depth: usize, result: &mut Vec<String>) {
+            if depth > 4 || result.len() >= 24 {
+                return;
+            }
+            let base = std::path::PathBuf::from("/proc").join(pid.to_string());
+            let read = |name: &str| std::fs::read_to_string(base.join(name)).unwrap_or_default().replace('\n', " ");
+            let cmdline = std::fs::read(base.join("cmdline"))
+                .unwrap_or_default()
+                .split(|byte| *byte == 0)
+                .filter(|part| !part.is_empty())
+                .map(|part| String::from_utf8_lossy(part).into_owned())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let status = read("status").lines().find(|line| line.starts_with("State:")).unwrap_or_default().to_owned();
+            let children =
+                read(format!("task/{pid}/children").as_str()).split_whitespace().filter_map(|item| item.parse::<u32>().ok()).collect::<Vec<_>>();
+            result.push(format!(
+                "pid={pid} comm={} {status} wchan={} syscall={} cmd={cmdline:?} children={children:?}",
+                read("comm").trim(),
+                read("wchan").trim(),
+                read("syscall").trim()
+            ));
+            for child in children {
+                visit(child, depth + 1, result);
+            }
+        }
+        let mut result = Vec::new();
+        visit(root, 0, &mut result);
+        result.join(" | ")
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn linux_bwrap_startup_diagnostics_compare_direct_sequential_and_concurrent() {
+        if std::env::var("AIP_TEST_BWRAP_DIAGNOSTICS").as_deref() != Ok("1") {
+            return;
+        }
+        let ext = TempDir::new("startup-diagnostics");
+        let config = WorkerLaunchConfig::default();
+        let runtime = super::runtime_path(Lang::Node, &config).unwrap();
+        let bwrap = super::command_spec(Isolation::LinuxBubblewrap, runtime.as_os_str(), &[OsString::from("--version")], ext.path(), &[]).unwrap();
+        eprintln!(
+            "startup diagnostics: runtime={} bwrap={:?} args={:?} loadavg={} mem_available={} cpu_pressure={} process_count={}",
+            runtime.display(),
+            bwrap.program,
+            bwrap.args,
+            std::fs::read_to_string("/proc/loadavg").unwrap_or_default().trim(),
+            std::fs::read_to_string("/proc/meminfo").unwrap_or_default().lines().find(|line| line.starts_with("MemAvailable:")).unwrap_or_default(),
+            std::fs::read_to_string("/proc/pressure/cpu").unwrap_or_default().trim(),
+            std::fs::read_dir("/proc")
+                .map(|entries| entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_name().to_string_lossy().bytes().all(|byte| byte.is_ascii_digit()))
+                    .count())
+                .unwrap_or_default()
+        );
+        for index in 0..5 {
+            eprintln!("{}", sample_linux_startup(&format!("direct-{index}"), runtime.as_os_str().to_owned(), vec!["--version".into()]).await);
+        }
+        for index in 0..5 {
+            eprintln!("{}", sample_linux_startup(&format!("bwrap-sequential-{index}"), bwrap.program.clone(), bwrap.args.clone()).await);
+        }
+        let concurrent = (0..4).map(|index| sample_linux_startup(&format!("bwrap-concurrent-{index}"), bwrap.program.clone(), bwrap.args.clone()));
+        for observation in futures_util::future::join_all(concurrent).await {
+            eprintln!("{observation}");
+        }
+    }
+
     #[cfg(unix)]
     fn probe_runtime(fixture: &str) -> WorkerLaunchConfig {
         // Linux CI reported ETXTBSY for the freshly written hang fixture. Use checked-in scripts,
@@ -703,6 +832,22 @@ mod tests {
         let dir = TempDir::new("probe-large-output");
         let config = probe_runtime("large-output-runtime.sh");
         config.probe(Lang::Node, dir.path()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn capture_bounded_caps_stored_bytes_and_drains_to_eof() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, reader) = tokio::io::duplex(8192);
+        let writer = tokio::spawn(async move {
+            writer.write_all(&vec![b'x'; 8192]).await.unwrap();
+        });
+        let bytes_read = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let captured = super::capture_bounded(reader, 4096, bytes_read.clone()).await.unwrap();
+        writer.await.unwrap();
+
+        assert_eq!(captured.len(), 4096);
+        assert_eq!(bytes_read.load(Ordering::Relaxed), 8192);
     }
 
     #[cfg(unix)]
