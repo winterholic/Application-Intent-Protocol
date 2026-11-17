@@ -95,7 +95,7 @@ jobs:
             echo "condition=$AIP_EXPERIMENT_CONDITION"
             echo "runner=$(uname -a)"
             echo "node_path=$(command -v node)"
-            echo 'timeout_seconds=2; AIP_TEST_BWRAP=1; cargo default test parallelism; no timeout, isolation, mount, cache, or host setting changes'
+            echo 'timeout_seconds=5 (single probe budget, no retry; was 2 when the prior runs below were taken); AIP_TEST_BWRAP=1; cargo default test parallelism; no isolation, mount, cache, or host setting changes'
             echo 'prior_suite_results_run_44024129940: baseline=16/16, bwrap-version-first=16/16, delegated-cgroup-v2=2/2'
             echo 'prior_run_44024129940: direct isolated probe sequence=2 baseline=634ms/bwrap-version-first=440ms; both exit=0; these bwrap-version values do not measure Node startup'
             echo 'prior_negative_control_run_44024129940: sequence=3 timeout was expected hung-runtime.sh, not Node'
