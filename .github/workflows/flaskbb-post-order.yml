@@ -2,7 +2,7 @@ name: FlaskBB PostOrder
 
 on:
   push:
-    branches: [main, cycle/p1-flaskbb-g6-20261117, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106, verify/flaskbb-orm-oracle-20261107]
+    branches: [main, cycle/p1-flaskbb-g6-20261117, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106, verify/flaskbb-orm-oracle-20261107, verify/post-unhide-flaskbb-20261117]
     paths:
       - '.github/workflows/flaskbb-post-order.yml'
       - 'porting/flaskbb/app.aip'
@@ -10,6 +10,7 @@ on:
       - 'porting/flaskbb/seed/install.py'
       - 'porting/flaskbb/tests/harness.mjs'
       - 'porting/flaskbb/tests/post-order-*.test.mjs'
+      - 'porting/flaskbb/tests/post-unhide-pointer.test.mjs'
       - 'porting/flaskbb/tests/last-post-recompute.test.mjs'
       - 'porting/flaskbb/tests/post-order-regression.json'
       - 'porting/flaskbb/tests/aip-read.test.mjs'
@@ -188,6 +189,11 @@ jobs:
         env:
           AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
         run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs porting/flaskbb/tests/post-order-pointer.test.mjs porting/flaskbb/tests/last-post-recompute.test.mjs porting/flaskbb/tests/aip-read.test.mjs
+      - name: Reproduce Post.unhide over the shared fixture through Service HTTP and PostgreSQL
+        id: unhide-http
+        if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
+        continue-on-error: true
+        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-unhide-pointer.test.mjs
       - name: Verify FlaskBB UI atomic publish requests
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host
@@ -203,13 +209,14 @@ jobs:
           IMPORT: ${{ steps.upstream-import.outcome }}
           SCHEMA: ${{ steps.oracle-schema.outcome }}
           REGRESSION: ${{ steps.oracle-regression.outcome }}
+          UNHIDE_HTTP: ${{ steps.unhide-http.outcome }}
           NEGATIVE_DATE: ${{ steps.negative-date.outcome }}
           NEGATIVE_TOPIC_VISIBILITY: ${{ steps.negative-topic-visibility.outcome }}
           SCHEMA_CLEANUP: ${{ steps.oracle-schema-cleanup.outcome }}
           RECORD_COMMAND_TESTS: ${{ steps.record-command-tests.outcome }}
         run: >-
           python3 porting/flaskbb/tests/record_command.py --name stage-outcomes --
-          python3 -c 'import os,sys; keys=("RECORD_COMMAND_TESTS","FIXTURE_TOOLS","SETUP_PYTHON","VENV","INSTALLER","REQUIREMENTS","INSTALL","IMPORT","SCHEMA","REGRESSION","NEGATIVE_DATE","NEGATIVE_TOPIC_VISIBILITY","SCHEMA_CLEANUP"); results={key:os.environ.get(key,"missing") for key in keys}; print("FLASKBB_STAGE_OUTCOMES", results); failed=[key for key,value in results.items() if value != "success"]; sys.exit(1 if failed else 0)'
+          python3 -c 'import os,sys; keys=("RECORD_COMMAND_TESTS","FIXTURE_TOOLS","SETUP_PYTHON","VENV","INSTALLER","REQUIREMENTS","INSTALL","IMPORT","SCHEMA","REGRESSION","UNHIDE_HTTP","NEGATIVE_DATE","NEGATIVE_TOPIC_VISIBILITY","SCHEMA_CLEANUP"); results={key:os.environ.get(key,"missing") for key in keys}; print("FLASKBB_STAGE_OUTCOMES", results); failed=[key for key,value in results.items() if value != "success"]; sys.exit(1 if failed else 0)'
       - name: Upload stage-by-stage FlaskBB evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
