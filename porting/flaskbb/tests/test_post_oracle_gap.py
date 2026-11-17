@@ -20,7 +20,7 @@ sys.path.insert(0, str(UPSTREAM))
 from flaskbb import create_app  # noqa: E402
 from flaskbb.configs.testing import TestingConfig  # noqa: E402
 from flaskbb.extensions import db  # noqa: E402
-from flaskbb.forum.models import Category, Forum, Post, Topic  # noqa: E402
+from flaskbb.forum.models import Category, Forum, Post, Topic, TopicsRead  # noqa: E402
 from flaskbb.user.models import Group, User  # noqa: E402
 from sqlalchemy import event  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
@@ -383,6 +383,81 @@ class PostOracleGap(unittest.TestCase):
             self.assertEqual(wrong_filter_id, source_candidate.id)
         print("NEGATIVE_CONTROL topic_visibility_filter_rejected expected_id=120 actual_id={}".format(
             wrong_filter_id))
+
+    def test_topic_move_updates_both_forums_and_removes_only_moved_topic_reads(self):
+        fixture = json.loads((Path(__file__).with_name("topic-move-regression.json")).read_text())
+        group = Group(name="ordinary", description="topic move oracle")
+        db.session.add(group)
+        db.session.flush()
+        users = {}
+        for user_id, name in ((2, "member-alice"), (3, "admin-bob")):
+            user = User(id=user_id, username=name, email=name + "@example.invalid",
+                        _password="not-used", primary_group=group)
+            db.session.add(user)
+            users[user_id] = user
+        category = Category(title="move-category")
+        db.session.add(category)
+        db.session.flush()
+        forums = {}
+        for forum_id in fixture["forums"]:
+            forum = Forum(id=forum_id, category_id=category.id, title="Forum {}".format(forum_id))
+            db.session.add(forum)
+            forums[forum_id] = forum
+        db.session.flush()
+        topics = {}
+        for item in fixture["topics"]:
+            topic = Topic(id=item["source_id"], title=item["title"], user=users[item["user"]])
+            topic.forum = forums[item["forum"]]
+            topic.post_count = item["post_count"]
+            db.session.add(topic)
+            topics[item["key"]] = topic
+        db.session.flush()
+        posts = {}
+        for item in fixture["posts"]:
+            topic = topics[item["topic"]]
+            post = Post(id=item["source_id"], content="body", user=users[item["user"]], topic=topic)
+            post.date_created = self.parse_time(item["date_created"])
+            db.session.add(post)
+            posts[item["source_id"]] = post
+            if item.get("first"):
+                topic.first_post = post
+        db.session.flush()
+        for item in fixture["topics"]:
+            topics[item["key"]].last_post = posts[item["last_post"]]
+        for forum, post_id in ((forums[1], 42), (forums[2], 44)):
+            post = posts[post_id]
+            forum.last_post = post
+            forum.last_post_user = post.user
+            forum.last_post_title = post.topic.title
+            forum.last_post_username = post.username
+            forum.last_post_created = post.date_created
+        forums[1].topic_count, forums[1].post_count = 2, 3
+        forums[2].topic_count, forums[2].post_count = 1, 1
+        for item in fixture["read_rows"]:
+            read = TopicsRead(user=users[item["user"]], topic=topics[item["topic"]],
+                              forum=forums[item["forum"]])
+            read.last_read = datetime(2025, 1, 6, tzinfo=timezone.utc)
+            db.session.add(read)
+        db.session.commit()
+
+        moved = topics["moving"]
+        self.assertTrue(moved.move(forums[2]))
+        db.session.expire_all()
+        moved = Topic.query.filter_by(id=10).one()
+        self.assertEqual(moved.forum_id, fixture["after_move"]["topic_forum"])
+        self.assertEqual(sorted(post.id for post in moved.posts.all()), fixture["after_move"]["topic_posts"])
+        self.assertEqual(forums[1].last_post_id, fixture["after_move"]["source_last_post"])
+        self.assertEqual(forums[2].last_post_id, fixture["after_move"]["destination_last_post"])
+        self.assertEqual((forums[1].topic_count, forums[1].post_count),
+                         (fixture["after_move"]["source_topic_count"], fixture["after_move"]["source_post_count"]))
+        self.assertEqual((forums[2].topic_count, forums[2].post_count),
+                         (fixture["after_move"]["destination_topic_count"], fixture["after_move"]["destination_post_count"]))
+        self.assertEqual(TopicsRead.query.filter_by(topic_id=10).count(), 0)
+        self.assertEqual(TopicsRead.query.count(), fixture["after_move"]["remaining_read_rows"])
+        self.assertEqual(sorted(TopicsRead.query.with_entities(TopicsRead.topic_id).all()), [(11,), (20,)])
+        print("TOPIC_MOVE source_last={} destination_last={} posts={} read_rows={}".format(
+            forums[1].last_post_id, forums[2].last_post_id,
+            sorted(post.id for post in moved.posts.all()), TopicsRead.query.count()))
 
 
 if __name__ == "__main__":

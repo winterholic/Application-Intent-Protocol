@@ -2,7 +2,7 @@ name: FlaskBB PostOrder
 
 on:
   push:
-    branches: [main, cycle/p1-flaskbb-g6-20261117, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106, verify/flaskbb-orm-oracle-20261107]
+    branches: [main, cycle/p1-flaskbb-g6-20261117, verify/topic-move-flaskbb-20261117, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106, verify/flaskbb-orm-oracle-20261107]
     paths:
       - '.github/workflows/flaskbb-post-order.yml'
       - 'porting/flaskbb/app.aip'
@@ -25,6 +25,10 @@ on:
       - 'porting/flaskbb/tests/test_post_oracle_gap.py'
       - 'porting/flaskbb/tests/record_command.py'
       - 'porting/flaskbb/tests/test_record_command.py'
+      - 'porting/flaskbb/tests/topic-move-regression.json'
+      - 'porting/flaskbb/tests/topic-move.test.mjs'
+      - 'porting/flaskbb/tests/fixtures/topic-move-private-grant-repro.aip'
+      - 'porting/flaskbb/tests/fixtures/topic-move-internal-grant-repro.aip'
 
 permissions:
   contents: read
@@ -129,7 +133,7 @@ jobs:
         run: python3 porting/flaskbb/tests/record_command.py --name oracle-schema-create -- psql "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA flaskbb_orm_oracle'
       - name: Run actual ORM regression suite on PostgreSQL
         id: oracle-regression
-        if: ${{ always() && steps.upstream-install.outcome == 'success' && steps.oracle-schema.outcome == 'success' }}
+        if: ${{ always() && steps.upstream-install.outcome == 'success' && steps.upstream-import.outcome == 'success' && steps.oracle-schema.outcome == 'success' }}
         continue-on-error: true
         env:
           FLASKBB_ORACLE_DATABASE_URI: postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle
@@ -170,6 +174,17 @@ jobs:
       - name: Build the product CLI
         id: product-build
         run: cargo build -p aip-cli --locked
+      - name: Verify Topic.move private transition grant boundary
+        if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
+        run: |
+          set +e
+          negative=$(target/debug/aip service check porting/flaskbb/tests/fixtures/topic-move-private-grant-repro.aip 2>&1)
+          status=$?
+          set -e
+          printf 'TOPIC_MOVE_COMPILER_NEGATIVE source_revision=%s exit=%s output=%s\n' "$GITHUB_SHA" "$status" "$negative"
+          test "$status" -eq 1
+          printf '%s' "$negative" | python3 -c 'import json,sys; result=json.load(sys.stdin); assert result["ok"] is False; assert any(d["code"] == "DEF.UNKNOWN_SYMBOL" and "expose apply" in d["message"] for d in result["diagnostics"]); print("TOPIC_MOVE_COMPILER_BOUNDARY_OK code=DEF.UNKNOWN_SYMBOL")'
+          target/debug/aip service check porting/flaskbb/tests/fixtures/topic-move-internal-grant-repro.aip
       - name: Verify import approval and SQL emission
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s porting/flaskbb/tests -p test_post_order_import.py -v
       - name: Verify PostOrder manifest duplicates, omissions, conflicts and high-water
@@ -187,7 +202,7 @@ jobs:
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         env:
           AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
-        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs porting/flaskbb/tests/post-order-pointer.test.mjs porting/flaskbb/tests/last-post-recompute.test.mjs porting/flaskbb/tests/aip-read.test.mjs
+        run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs porting/flaskbb/tests/post-order-pointer.test.mjs porting/flaskbb/tests/last-post-recompute.test.mjs porting/flaskbb/tests/aip-read.test.mjs porting/flaskbb/tests/topic-move.test.mjs
       - name: Verify FlaskBB UI atomic publish requests
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         run: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host

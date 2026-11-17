@@ -1,0 +1,22 @@
+resource Member { fields { id: Id } }
+actor Member
+
+resource Forum {
+  fields { id: Id; moderator: Member? }
+  rows read when true
+}
+
+resource Topic {
+  fields { id: Id; forum: Forum }
+  rows read when true
+  transition relocate { allow true; from true; to forum = forum }
+  expose apply relocate { target id; bulk maxRows 1; internal }
+  extension write moveToForum {
+    input { topic: Topic.Id; destination: Forum.Id }
+    output { moved: Bool }
+    access Topic.relocate
+    effect db
+    deadline 5s
+    implementation "topic.moveToForum"
+  }
+}
