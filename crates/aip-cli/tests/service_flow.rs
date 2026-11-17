@@ -190,7 +190,7 @@ async fn policy_db_execute(schema: &str, statement: &str) {
     db.batch_execute(&format!("SET search_path TO {schema}; {statement}")).await.unwrap();
 }
 
-async fn policy_vote_metrics(schema: &str) -> (i64, i32, i32, f64) {
+async fn policy_vote_metrics(schema: &str) -> (i64, i64, i64, f64) {
     let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
     let row = db
         .query_one(&format!("SELECT count(*), min(amount), max(amount), avg(amount)::float8 FROM {schema}.vote WHERE record_id=1"), &[])
