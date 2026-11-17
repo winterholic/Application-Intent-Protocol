@@ -577,62 +577,118 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    async fn sample_linux_startup(label: &str, program: OsString, args: Vec<OsString>) -> String {
+    struct LinuxStartupSample {
+        passed: bool,
+        details: String,
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn collect_startup_pipe(mut task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>) -> (usize, bool) {
+        match tokio::time::timeout(std::time::Duration::from_millis(250), &mut task).await {
+            Ok(Ok(Ok(bytes))) => (bytes.len(), true),
+            _ => {
+                task.abort();
+                (0, false)
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn sample_linux_startup(label: String, program: OsString, args: Vec<OsString>) -> LinuxStartupSample {
         use tokio::io::AsyncReadExt;
 
         let mut command = tokio::process::Command::new(&program);
         command.args(&args).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default());
         command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
-        let mut child = command.spawn().unwrap_or_else(|error| panic!("{label}: spawn {program:?}: {error}"));
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                return LinuxStartupSample { passed: false, details: format!("{label}: spawn {program:?} failed: {error}") };
+            }
+        };
         let pid = child.id().expect("startup child has a PID");
-        let child_stdout = child.stdout.take().unwrap();
-        let child_stderr = child.stderr.take().unwrap();
+        let mut child_stdout = child.stdout.take().unwrap();
+        let mut child_stderr = child.stderr.take().unwrap();
         let stdout = tokio::spawn(async move {
             let mut bytes = Vec::new();
-            child_stdout.read_to_end(&mut bytes).await.unwrap();
-            bytes
+            let read = child_stdout.read_to_end(&mut bytes).await;
+            read.map(|_| bytes)
         });
         let stderr = tokio::spawn(async move {
             let mut bytes = Vec::new();
-            child_stderr.read_to_end(&mut bytes).await.unwrap();
-            bytes
+            let read = child_stderr.read_to_end(&mut bytes).await;
+            read.map(|_| bytes)
         });
         let started = tokio::time::Instant::now();
         let mut snapshots = Vec::new();
         let mut snapshot_after_ms = [0, 50, 250, 750, 1250, 1750].into_iter().peekable();
+        let mut timed_out = false;
+        let mut wait_error = None;
         let status = loop {
-            match child.try_wait().unwrap() {
-                Some(status) => break status,
-                None => {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => {
                     if snapshot_after_ms.peek().is_some_and(|checkpoint| started.elapsed().as_millis() >= *checkpoint) {
                         snapshots.push(linux_process_tree(pid));
                         snapshot_after_ms.next();
                     }
                     if started.elapsed() >= std::time::Duration::from_secs(2) {
+                        timed_out = true;
                         let _ = child.start_kill();
-                        break child.wait().await.unwrap();
+                        break match tokio::time::timeout(std::time::Duration::from_millis(250), child.wait()).await {
+                            Ok(Ok(status)) => Some(status),
+                            Ok(Err(error)) => {
+                                wait_error = Some(error.to_string());
+                                let _ = child.start_kill();
+                                None
+                            }
+                            Err(_) => {
+                                wait_error = Some("child wait exceeded 250ms after kill".to_owned());
+                                let _ = child.start_kill();
+                                None
+                            }
+                        };
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
                 }
+                Err(error) => {
+                    wait_error = Some(format!("try_wait failed: {error}"));
+                    let _ = child.start_kill();
+                    break match tokio::time::timeout(std::time::Duration::from_millis(250), child.wait()).await {
+                        Ok(Ok(status)) => Some(status),
+                        Ok(Err(error)) => {
+                            wait_error = Some(format!("try_wait failed; wait after kill failed: {error}"));
+                            let _ = child.start_kill();
+                            None
+                        }
+                        Err(_) => {
+                            wait_error = Some("try_wait failed; child wait exceeded 250ms after kill".to_owned());
+                            let _ = child.start_kill();
+                            None
+                        }
+                    };
+                }
             }
         };
-        let stdout = stdout.await.unwrap();
-        let stderr = stderr.await.unwrap();
+        let (stdout, stdout_eof) = collect_startup_pipe(stdout).await;
+        let (stderr, stderr_eof) = collect_startup_pipe(stderr).await;
         let observed_pids = snapshots
             .iter()
             .flat_map(|snapshot| snapshot.split("pid=").skip(1).filter_map(|entry| entry.split_whitespace().next()?.parse::<u32>().ok()))
+            .chain(std::iter::once(pid))
             .collect::<std::collections::HashSet<_>>();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let residual_pids =
             observed_pids.into_iter().filter(|observed| std::path::PathBuf::from("/proc").join(observed.to_string()).exists()).collect::<Vec<_>>();
-        let observation = format!(
-            "{label}: pid={pid} program={program:?} elapsed_ms={} status={status} stdout_bytes={} stdout_eof=true stderr_bytes={} stderr_eof=true residual_pids={residual_pids:?} proc_samples={snapshots:?}",
-            started.elapsed().as_millis(), stdout.len(), stderr.len()
-        );
-        assert!(status.success(), "{observation}; stderr={:?}", String::from_utf8_lossy(&stderr));
-        assert!(!stdout.is_empty(), "{observation}: expected Node version output");
-        assert!(residual_pids.is_empty(), "{observation}: process remains after wait");
-        observation
+        let status_success = status.as_ref().is_some_and(|status| status.success());
+        let passed = !timed_out && status_success && stdout > 0 && stdout_eof && stderr_eof && residual_pids.is_empty() && wait_error.is_none();
+        LinuxStartupSample {
+            passed,
+            details: format!(
+                "{label}: pid={pid} program={program:?} elapsed_ms={} status={status:?} timed_out={timed_out} wait_error={wait_error:?} stdout_bytes={stdout} stdout_eof={stdout_eof} stderr_bytes={stderr} stderr_eof={stderr_eof} residual_pids={residual_pids:?} proc_samples={snapshots:?}",
+                started.elapsed().as_millis()
+            ),
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -693,16 +749,20 @@ mod tests {
                     .count())
                 .unwrap_or_default()
         );
+        let mut results = Vec::new();
         for index in 0..5 {
-            eprintln!("{}", sample_linux_startup(&format!("direct-{index}"), runtime.as_os_str().to_owned(), vec!["--version".into()]).await);
+            results.push(sample_linux_startup(format!("direct-{index}"), runtime.as_os_str().to_owned(), vec!["--version".into()]).await);
         }
         for index in 0..5 {
-            eprintln!("{}", sample_linux_startup(&format!("bwrap-sequential-{index}"), bwrap.program.clone(), bwrap.args.clone()).await);
+            results.push(sample_linux_startup(format!("bwrap-sequential-{index}"), bwrap.program.clone(), bwrap.args.clone()).await);
         }
-        let concurrent = (0..4).map(|index| sample_linux_startup(&format!("bwrap-concurrent-{index}"), bwrap.program.clone(), bwrap.args.clone()));
-        for observation in futures_util::future::join_all(concurrent).await {
-            eprintln!("{observation}");
+        let concurrent = (0..4).map(|index| sample_linux_startup(format!("bwrap-concurrent-{index}"), bwrap.program.clone(), bwrap.args.clone()));
+        results.extend(futures_util::future::join_all(concurrent).await);
+        let failures = results.iter().filter(|result| !result.passed).map(|result| result.details.as_str()).collect::<Vec<_>>();
+        for result in &results {
+            eprintln!("{}", result.details);
         }
+        assert!(failures.is_empty(), "all startup samples collected before failure: {failures:#?}");
     }
 
     #[cfg(unix)]
