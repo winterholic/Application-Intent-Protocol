@@ -206,6 +206,18 @@ async fn policy_vote_metrics(schema: &str) -> (i64, i64, i64, f64) {
     (row.get(0), row.get(1), row.get(2), row.get(3))
 }
 
+async fn policy_standalone_vote_values(fixture: &PolicyHttpFixture) -> Vec<Value> {
+    let mut values = Vec::new();
+    for name in ["ownVoteCount", "minOwnVote", "maxOwnVote"] {
+        let response =
+            post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":format!("Record.{name}"),"input":{}}}))
+                .await;
+        assert_eq!(response["ok"], true, "standalone {name}: {response}");
+        values.push(response["rows"][0].clone());
+    }
+    values
+}
+
 async fn service_policy_http_fixture() -> PolicyHttpFixture {
     let dir = tempfile::tempdir().unwrap();
     let schema = format!("aip_policyagg_{}", uuid::Uuid::new_v4().simple());
@@ -669,6 +681,8 @@ async fn service_policy_aggregate_noninterference_http_postgres() {
 
         let before_metrics = policy_vote_metrics(&fixture.schema).await;
         assert_eq!(before_metrics, (3, -900, 20, -870.0 / 3.0), "DB baseline includes hidden same-organization source rows");
+        let standalone_vote_baseline = policy_standalone_vote_values(&fixture).await;
+        assert_eq!(standalone_vote_baseline, vec![json!(2), json!(10), json!(20)]);
         // A vote owned by a different organization also belongs to the public count, while rowRead hides it
         // from this caller's source-value aggregates and to-many relation.
         policy_db_execute(&fixture.schema, "INSERT INTO vote(id,record_id,owner_id,amount) VALUES (6,1,100,-5000)").await;
@@ -680,16 +694,19 @@ async fn service_policy_aggregate_noninterference_http_postgres() {
         assert_eq!(after_cross_org_insert["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
         assert_eq!(after_cross_org_insert["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
         assert_eq!(after_cross_org_insert["rows"][0]["votes"], before["rows"][0]["votes"], "hidden cross-organization vote does not change the child relation");
+        assert_eq!(policy_standalone_vote_values(&fixture).await, standalone_vote_baseline, "standalone caller count/min/max ignore hidden cross-organization vote changes");
         policy_db_execute(&fixture.schema, "UPDATE vote SET amount=-6000 WHERE id=6").await;
         let after_cross_org_update = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
         assert_eq!(after_cross_org_update["rows"], after_cross_org_insert["rows"], "cross-organization hidden update leaves caller-visible rows and votes unchanged");
         assert_eq!(after_cross_org_update["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
         assert_eq!(after_cross_org_update["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
         assert_eq!(after_cross_org_update["rows"][0]["votes"], before["rows"][0]["votes"]);
+        assert_eq!(policy_standalone_vote_values(&fixture).await, standalone_vote_baseline, "standalone caller count/min/max ignore hidden cross-organization vote changes");
         policy_db_execute(&fixture.schema, "DELETE FROM vote WHERE id=6").await;
         let after_cross_org_delete = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
         assert_eq!(after_cross_org_delete["rows"], before["rows"], "cross-organization hidden delete restores the full baseline response");
         assert_eq!(after_cross_org_delete["rows"][0]["votes"], before["rows"][0]["votes"]);
+        assert_eq!(policy_standalone_vote_values(&fixture).await, standalone_vote_baseline, "standalone caller count/min/max ignore hidden cross-organization vote changes");
 
         policy_db_execute(&fixture.schema, "INSERT INTO vote(id,record_id,owner_id,amount) VALUES (6,1,99,-5000)").await;
         let after_insert = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
