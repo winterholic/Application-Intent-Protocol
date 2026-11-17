@@ -1,10 +1,233 @@
 {
   "scenario": "post-hide-forum-fallback-uses-source-id",
   "posts": [
-    {"source_id": 41, "date_created": "2025-01-01T12:00:00Z", "role": "first"},
-    {"source_id": 42, "date_created": "2025-01-03T12:00:00Z", "role": "date-newer-fallback"},
-    {"source_id": 43, "date_created": "2025-01-02T12:00:00Z", "role": "source-newer-fallback"},
-    {"source_id": 44, "date_created": "2025-01-04T12:00:00Z", "role": "target"}
+    {
+      "source_id": 41,
+      "date_created": "2025-01-01T12:00:00Z",
+      "role": "first"
+    },
+    {
+      "source_id": 42,
+      "date_created": "2025-01-03T12:00:00Z",
+      "role": "date-newer-fallback"
+    },
+    {
+      "source_id": 43,
+      "date_created": "2025-01-02T12:00:00Z",
+      "role": "source-newer-fallback"
+    },
+    {
+      "source_id": 44,
+      "date_created": "2025-01-04T12:00:00Z",
+      "role": "target"
+    }
   ],
-  "expected_forum_fallback_source_id": 43
+  "expected_forum_fallback_source_id": 43,
+  "pointer_cases": [
+    {
+      "name": "non-last-keeps-every-pointer",
+      "topics": [
+        {
+          "key": "A",
+          "title": "Nonlast topic",
+          "user": 2,
+          "last_post": 103,
+          "last_updated": "2025-03-01T00:00:00Z"
+        }
+      ],
+      "posts": [
+        {
+          "id": 101,
+          "topic": "A",
+          "user": 2,
+          "first": true,
+          "date_created": "2025-02-01T00:00:00Z"
+        },
+        {
+          "id": 102,
+          "topic": "A",
+          "user": 2,
+          "date_created": "2025-02-02T00:00:00Z"
+        },
+        {
+          "id": 103,
+          "topic": "A",
+          "user": 2,
+          "date_created": "2025-02-03T00:00:00Z"
+        }
+      ],
+      "forum_last_post": 103,
+      "target": 102,
+      "expect": {
+        "forum_last_post": 103,
+        "target_topic": "unchanged"
+      }
+    },
+    {
+      "name": "topic-last-but-not-forum-last-keeps-forum",
+      "topics": [
+        {
+          "key": "A",
+          "title": "Topic with hidden last",
+          "user": 2,
+          "last_post": 122,
+          "last_updated": "2025-02-02T00:00:00Z"
+        },
+        {
+          "key": "B",
+          "title": "Forum newest topic",
+          "user": 3,
+          "last_post": 92,
+          "last_updated": "2025-02-05T00:00:00Z"
+        }
+      ],
+      "posts": [
+        {
+          "id": 121,
+          "topic": "A",
+          "user": 2,
+          "first": true,
+          "date_created": "2025-02-01T00:00:00Z"
+        },
+        {
+          "id": 122,
+          "topic": "A",
+          "user": 2,
+          "date_created": "2025-02-02T00:00:00Z"
+        },
+        {
+          "id": 91,
+          "topic": "B",
+          "user": 3,
+          "first": true,
+          "date_created": "2025-02-04T00:00:00Z"
+        },
+        {
+          "id": 92,
+          "topic": "B",
+          "user": 3,
+          "date_created": "2025-02-05T00:00:00Z"
+        }
+      ],
+      "forum_last_post": 92,
+      "target": 122,
+      "expect": {
+        "forum_last_post": 92,
+        "target_topic": {
+          "last_post": 121
+        }
+      }
+    },
+    {
+      "name": "topic-and-forum-last-use-source-id-fallback",
+      "topics": [
+        {
+          "key": "A",
+          "title": "Topic losing last post",
+          "user": 2,
+          "last_post": 132,
+          "last_updated": "2025-02-06T00:00:00Z"
+        },
+        {
+          "key": "B",
+          "title": "Fallback topic",
+          "user": 3,
+          "last_post": 134,
+          "last_updated": "2025-02-03T00:00:00Z"
+        }
+      ],
+      "posts": [
+        {
+          "id": 131,
+          "topic": "A",
+          "user": 2,
+          "first": true,
+          "date_created": "2025-02-01T00:00:00Z"
+        },
+        {
+          "id": 132,
+          "topic": "A",
+          "user": 2,
+          "date_created": "2025-02-06T00:00:00Z"
+        },
+        {
+          "id": 133,
+          "topic": "B",
+          "user": 3,
+          "first": true,
+          "date_created": "2025-02-04T00:00:00Z"
+        },
+        {
+          "id": 134,
+          "topic": "B",
+          "user": 3,
+          "date_created": "2025-02-03T00:00:00Z"
+        }
+      ],
+      "forum_last_post": 132,
+      "target": 132,
+      "expect": {
+        "forum_last_post": 134,
+        "target_topic": {
+          "last_post": 131
+        }
+      }
+    },
+    {
+      "name": "multiple-unordered-topic-candidates-use-allowed-set",
+      "topics": [
+        {
+          "key": "A",
+          "title": "Four post topic",
+          "user": 2,
+          "last_post": 144,
+          "last_updated": "2025-02-04T00:00:00Z"
+        }
+      ],
+      "posts": [
+        {
+          "id": 141,
+          "topic": "A",
+          "user": 2,
+          "first": true,
+          "date_created": "2025-02-01T00:00:00Z"
+        },
+        {
+          "id": 142,
+          "topic": "A",
+          "user": 2,
+          "date_created": "2025-02-02T00:00:00Z"
+        },
+        {
+          "id": 143,
+          "topic": "A",
+          "user": 2,
+          "date_created": "2025-02-03T00:00:00Z"
+        },
+        {
+          "id": 144,
+          "topic": "A",
+          "user": 2,
+          "date_created": "2025-02-04T00:00:00Z"
+        }
+      ],
+      "forum_last_post": 144,
+      "target": 144,
+      "expect": {
+        "forum_last_post": 143,
+        "target_topic": {
+          "last_post_one_of": [
+            141,
+            142,
+            143
+          ]
+        }
+      }
+    }
+  ],
+  "pointer_rules": {
+    "source": "upstream flaskbb/forum/models.py 291-331 Post._deal_with_last_post",
+    "topic_last_updated": "unchanged cases keep the seeded value; changed cases equal the selected last Post date_created",
+    "unordered": "Topic.posts[-2] has no ORDER BY; multi-candidate cases assert allowed membership and last_updated consistency only"
+  }
 }
