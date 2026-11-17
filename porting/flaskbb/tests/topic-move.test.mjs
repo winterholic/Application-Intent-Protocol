@@ -95,7 +95,7 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       setup = sql(`SELECT concat_ws('|', (SELECT count(*) FROM ${q}.forum), (SELECT count(*) FROM ${q}.topic),
         (SELECT count(*) FROM ${q}.post), (SELECT count(*) FROM ${q}.topic_read),
         (SELECT count(*) FROM ${q}.forum_moderator WHERE user_id=2 AND forum_id=1),
-        (SELECT count(*) FROM ${q}.forum_moderator WHERE user_id=2 AND forum_id=2)`);
+        (SELECT count(*) FROM ${q}.forum_moderator WHERE user_id=2 AND forum_id=2))`);
       assert.equal(setup, '3|3|4|3|1|0', `setup seed/role mismatch: ${setup}`);
       assert.equal(sql(`SELECT string_agg(topic_id::text, ',' ORDER BY topic_id) FROM ${q}.topic_read`), `${topics.moving},${topics.source_remaining},${topics.destination_existing}`);
       console.log(`TOPIC_MOVE_SETUP_OK schema=${fx.schema} rows=${setup} source_moderator=1 destination_moderator=0 actors=bound`);
@@ -200,7 +200,8 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       lastResponse = await move('admin-sub', topics.source_remaining, '2', 'topic-move-empty-source');
       assert.equal(lastResponse.body.ok, true, JSON.stringify(lastResponse));
       assert.deepEqual(lastResponse.body.output, {moved: true});
-      assert.equal(sql(`SELECT concat_ws('|',last_post_id,last_post_user_id,last_post_title,last_post_username,last_post_created) FROM ${q}.forum WHERE id=1`), '||||');
+      // concat_ws skips NULLs, so it cannot distinguish "all NULL" from other shapes; test NULLs explicitly.
+      assert.equal(sql(`SELECT (last_post_id IS NULL AND last_post_user_id IS NULL AND last_post_title IS NULL AND last_post_username IS NULL AND last_post_created IS NULL)::text FROM ${q}.forum WHERE id=1`), 'true');
     });
     assert.deepEqual(failures, [], `Topic.move HTTP journey failures: ${JSON.stringify(failures)}`);
   } finally { await fx.stop(); }
