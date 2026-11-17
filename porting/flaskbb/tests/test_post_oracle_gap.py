@@ -287,6 +287,7 @@ class PostOracleGap(unittest.TestCase):
         for item in case["topics"]:
             topic = Topic(title=item["title"], user=users[item["user"]])
             topic.forum = forum
+            topic.hidden = bool(item.get("hidden"))
             db.session.add(topic)
             db.session.flush()
             topics[item["key"]] = topic
@@ -296,6 +297,7 @@ class PostOracleGap(unittest.TestCase):
             row.id = item["id"]
             row.date_created = self.parse_time(item["date_created"])
             row.topic = topic
+            row.hidden = bool(item.get("hidden"))
             rows[item["id"]] = row
             db.session.add(row)
             db.session.flush()
@@ -332,12 +334,20 @@ class PostOracleGap(unittest.TestCase):
                     target.delete()
                 db.session.commit()
                 expect = case["expect"]
-                expected_forum = rows[expect["forum_last_post"]]
                 self.assertEqual(forum.last_post_id, expect["forum_last_post"])
-                self.assertEqual(forum.last_post_user.username, expected_forum.user.username)
-                self.assertEqual(forum.last_post_title, expected_forum.topic.title)
-                self.assertEqual(forum.last_post_username, expected_forum.username)
-                self.assertEqual(forum.last_post_created, dates[expect["forum_last_post"]])
+                if expect["forum_last_post"] is None:
+                    # No Forum candidate: the source nulls the pointer and all four projection fields.
+                    self.assertIsNone(forum.last_post)
+                    self.assertIsNone(forum.last_post_user)
+                    self.assertIsNone(forum.last_post_title)
+                    self.assertIsNone(forum.last_post_username)
+                    self.assertIsNone(forum.last_post_created)
+                else:
+                    expected_forum = rows[expect["forum_last_post"]]
+                    self.assertEqual(forum.last_post_user.username, expected_forum.user.username)
+                    self.assertEqual(forum.last_post_title, expected_forum.topic.title)
+                    self.assertEqual(forum.last_post_username, expected_forum.username)
+                    self.assertEqual(forum.last_post_created, dates[expect["forum_last_post"]])
                 spec = expect["target_topic"]
                 if spec == "unchanged":
                     seeded = next(item for item in case["topics"]
@@ -346,6 +356,9 @@ class PostOracleGap(unittest.TestCase):
                     self.assertEqual(target_topic.last_updated, self.parse_time(seeded["last_updated"]))
                 else:
                     allowed = spec.get("last_post_one_of", [spec.get("last_post")])
+                    if isinstance(allowed, dict):
+                        # hide keeps the hidden target in Topic.posts; delete removes it by autoflush first.
+                        allowed = allowed[action]
                     self.assertIn(target_topic.last_post_id, allowed)
                     # last_post_id is assigned from posts[-2], but last_updated reads the stale loaded
                     # Topic.last_post relationship; the two values are computed independently.

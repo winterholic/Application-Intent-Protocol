@@ -12,11 +12,17 @@ const usernames = {2: 'member-alice', 3: 'admin-bob'};
 const postId = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const topicId = (c, key) => `00000000-0000-4000-9000-${String(c * 10 + key.charCodeAt(0) - 64).padStart(12, '0')}`;
 const iso = value => new Date(value).toISOString().replace('.000Z', 'Z');
+// Seeded hidden rows carry the moderator and time that Topic.hide/Post.hide would have written.
+const hiddenSql = row => row.hidden ? "true,3,'2025-02-10T00:00:00Z'" : 'false,NULL,NULL';
+// last_post_one_of may differ per action: hide keeps the hidden target in Topic.posts, delete removes it first.
+const perAction = (value, action) => value === undefined || Array.isArray(value) ? value : value[action];
 
 for (const action of ['hide', 'delete']) test(`Post.${action} updates Topic and Forum pointers only from the pre-state pointer conditions`, {timeout: 180000}, async () => {
   const cases = fixture.pointer_cases.map((item, index) => ({...item, forum: index + 1, index: index + 1}));
   const postsById = new Map(cases.flatMap(item => item.posts.map(post => [post.id, {...post, case: item}])));
   const forumProjection = (item, post) => {
+    // No remaining candidate: upstream sets last_post and all four projection fields to NULL.
+    if (post === null) return [null, null, null, null, null];
     const found = postsById.get(post);
     return [postId(post), found.user, item.topics.find(topic => topic.key === found.topic).title, usernames[found.user], iso(found.date_created)];
   };
@@ -29,10 +35,10 @@ for (const action of ['hide', 'delete']) test(`Post.${action} updates Topic and 
       for (const item of cases) {
         sql(`INSERT INTO ${q}.forum(id,category_id,title,description,position,locked,show_moderators) VALUES(${item.forum},1,'${item.name}','fixture',${item.forum},false,false);
           INSERT INTO ${q}.forum_group_access(id,forum_id,group_id) VALUES(${item.forum * 2 - 1},${item.forum},3),(${item.forum * 2},${item.forum},2);`);
-        for (const topic of item.topics) sql(`INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden)
-          VALUES('${topicId(item.index, topic.key)}',${item.forum},'${topic.title}',${topic.user},'${usernames[topic.user]}','2025-01-01T00:00:00Z','${topic.last_updated}',false,false,0,true,false,false);`);
-        for (const post of item.posts) sql(`INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted)
-          VALUES('${postId(post.id)}','${topicId(item.index, post.topic)}',${item.forum},${post.user},'${usernames[post.user]}','post-${post.id}','${post.date_created}',false,true,0,false);
+        for (const topic of item.topics) sql(`INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden,hidden_by_id,hidden_at)
+          VALUES('${topicId(item.index, topic.key)}',${item.forum},'${topic.title}',${topic.user},'${usernames[topic.user]}','2025-01-01T00:00:00Z','${topic.last_updated}',false,false,0,true,false,${hiddenSql(topic)});`);
+        for (const post of item.posts) sql(`INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,hidden_by_id,hidden_at,published,version,deleted)
+          VALUES('${postId(post.id)}','${topicId(item.index, post.topic)}',${item.forum},${post.user},'${usernames[post.user]}','post-${post.id}','${post.date_created}',${hiddenSql(post)},true,0,false);
           ${post.first ? `INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topicId(item.index, post.topic)}','${postId(post.id)}');` : ''}`);
       }
       // The original Post.id is the order key; UUID and date order are deliberately not used.
@@ -80,7 +86,7 @@ for (const action of ['hide', 'delete']) test(`Post.${action} updates Topic and 
       const spec = item.expect.target_topic;
       if (spec === 'unchanged') check(`${item.name} Topic pointer`, () => assert.deepEqual(topic, [postId(targetTopic.last_post), iso(targetTopic.last_updated)]));
       else {
-        const allowed = (spec.last_post_one_of ?? [spec.last_post]).map(postId);
+        const allowed = (perAction(spec.last_post_one_of, action) ?? [spec.last_post]).map(postId);
         check(`${item.name} Topic pointer set`, () => assert.ok(allowed.includes(topic[0]), `Topic.last_post ${topic[0]} not in ${allowed}`));
         // Upstream assigns last_post_id from posts[-2] but last_updated from the stale loaded relationship.
         check(`${item.name} Topic last_updated follows the upstream independent date rule`, () => assert.equal(topic[1], iso(postsById.get(spec.last_updated_post[action]).date_created)));

@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-17 Post.hide/delete 후보 없음·숨김 Topic 후보 회귀 보강
+
+PR #10 head `958afd50` 독립 검토(Run a6ab667f)가 찾은 두 공유 회귀 공백을 `tests/post-order-regression.json`의 `pointer_cases` 5·6번으로 추가했다. 같은 JSON을 원본 ORM(`test_post_oracle_gap.py`)과 AIP HTTP(`post-order-pointer.test.mjs`)가 hide·delete 두 전이로 읽는다. 5번 `no-candidate-clears-every-forum-projection`은 후보가 없을 때 Forum의 `last_post`와 네 projection 필드가 모두 NULL이 되는 원본 규칙(`forum/models.py` 298–319)을, 6번 `hidden-topic-visible-post-is-forum-candidate`는 Topic.hidden을 거르지 않는 원본 쿼리라 숨김 Topic의 visible Post(174)가 가장 큰 Post.id 후보가 되는 것을 확인한다. 6번은 174의 날짜를 후보 중 가장 이르게 두어 날짜 정렬이나 Topic 숨김 필터를 쓰면 171로 갈라진다. Forum 후보는 원본이 `Post.id desc`를 명시하므로 고정하지만, Topic.last_post는 무정렬 `posts[-2]`라 임의 순서로 고정하지 않는다. hide는 숨긴 대상이 관계에 남아 `{대상, 첫 글}` 중 하나, delete는 autoflush로 대상이 빠져 첫 글로만 허용하고 `last_updated`는 기존 독립 날짜 규칙(hide 대상 날짜, delete 첫 글 날짜)을 쓴다. 기존 source ID·timestamp 역전, 선행 포인터 보존, 단일 효과, 같은 key replay 단언은 그대로다.
+
+상태: 작성만 했고 PostgreSQL 17 Run 결과는 아직 없다. 두 사례가 AIP에서 실패하면 fixture 오류와 원본/AIP 불일치를 구분해 기록하며 기대값을 제품에 맞춰 바꾸지 않는다. 테스트 작성자의 자기 검증으로 독립 검증을 대신하지 않는다.
+
 ## 2026-11-17 Post.hide/delete 선행 포인터 조건·Topic 날짜 규칙
 
 RED [44017218587](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44017218587) (`5b19bbad`, job 133817917976)에서 공유 JSON `pointer_cases` 4건이 AIP 제품 결함과 oracle 단언 오류로 갈렸다. 제품 결함은 Node `post-order-pointer`의 hide/delete 2건 실패였다: non-last 글을 숨겨도 Topic.last_updated가 재계산됨, Topic-last-but-not-Forum-last에서 Forum 포인터를 무조건 재선택함, Topic.last_post를 갱신하지 않음. oracle 오류는 ORM 12 tests 중 4건(`test_post_oracle_gap.py:350`)이다. 같은 ORM 실행으로 원본은 `Topic.last_post_id`를 `posts[-2]`에서 대입하지만 `last_updated`는 갱신 전에 읽은 `Topic.last_post` 관계(대상 Post)의 날짜를 쓰는 것을 확인했다. 따라서 두 값은 독립이며, `last_updated`는 두 번째 마지막 글이 있으면(hide는 항상, delete는 남은 글 2개 이상) 대상 Post 날짜, 없으면 첫 글 날짜다. 이전 단언(선택한 last_post의 날짜)과 `last-post-recompute`의 hide 후 날짜 되돌림 단언은 잘못이었다.
