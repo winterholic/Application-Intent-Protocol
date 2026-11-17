@@ -93,6 +93,7 @@ resource Event {
   expose apply edit { target id; bulk maxRows 1 }
   expose read {
     select id, member, title, note, amount, phase, score, checked, voteCount, emptySum, emptyMin, emptyMax
+    filter note.eq
     traverse member { select id, name }
     sort score
     budget { rows 20; depth 2; deadline 2s; cost 1000 }
