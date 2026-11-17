@@ -11,8 +11,15 @@
     "policyNull": null,
     "policyVisible": "READY",
     "emptyCount": 0,
+    "emptySum": 0,
+    "emptyMin": null,
+    "emptyMax": null,
+    "decimalExact": "99999999.99",
     "nullEqualityMatches": false,
     "nonNullEqualityMatches": true,
     "sortIds": ["11", "12", "13"]
+  },
+  "unsupported": {
+    "avgAggregate": {"service": "unsupported"}
   }
 }

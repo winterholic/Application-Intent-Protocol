@@ -54,6 +54,8 @@ jobs:
         run: node --input-type=module -e 'import { requireTestDatabase } from "./product/test-support/postgres-guard.mjs"; const target = requireTestDatabase(); console.log(`${target.host}:${target.port}/${target.dbname}`)'
       - name: Run Core shared semantic fixture
         run: cargo test -p aip-sema --test shared_semantic_fixture --locked -- --nocapture
+      - name: Run Core runtime semantic fixture on PostgreSQL
+        run: cargo test -p aip-cli --features poc-runtime --test core_semantic_fixture --locked -- --nocapture
       - name: Run focused service policy regressions
         run: cargo test -p aip-cli --test service_flow --locked service_policy_ -- --nocapture
       - name: Run service HTTP and PostgreSQL contract tests
