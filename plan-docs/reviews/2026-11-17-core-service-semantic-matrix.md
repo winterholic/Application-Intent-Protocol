@@ -30,7 +30,7 @@
 정본: conformance/semantic-v1.json.
 
 - 공통 입력 세 행은 note = null, note = "kept", nullable Decimal의 null/값, 빈 vote 집합과 비어 있지 않은 집합, 동률 정렬을 포함한다.
-- 공통 기대 결과는 미선택 필드 생략, null과 값 구별, 빈 count=0, SQL NULL = 'kept'가 매치하지 않음, IS NULL 의미, 정렬된 id를 기록한다.
+- 공통 기대 결과는 미선택 필드 생략, null과 값 구별, 빈 count=0, SQL NULL = 'kept'가 매치하지 않음, 정렬된 id를 기록한다.
 - Core crates/aip-sema/tests/shared_semantic_fixture.rs는 같은 파일을 읽어 입력/기대의 일관성과 nullable output shape, empty count shape, 조건식이 IR까지 내려가는 것을 검사한다.
 - Service crates/aip-cli/tests/service_flow.rs는 같은 파일의 입력 행으로 PG를 채우고 HTTP read/apply 결과와 DB 상태를 기대 결과에 대조한다. Service 검증은 GitHub Actions Linux PostgreSQL 17에서 별도 실행한다.
 - 이번 fixture에는 Core PG runtime 실행은 포함하지 않는다. Core 쪽 결과는 compile/IR 계약 테스트이며 서비스 쪽 DB 성공과 구분한다.
