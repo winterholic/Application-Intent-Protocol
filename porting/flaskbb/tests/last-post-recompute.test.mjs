@@ -6,8 +6,8 @@ import {GROUPS_SQL, USERS_SQL, seedNativePostOrders, startFixture} from './harne
 
 // WBS 7.5.2 G-6. Upstream Post.hide/Post.delete call `_deal_with_last_post`: when the
 // post is both its topic's and its forum's last post, the forum falls back to the newest
-// remaining visible post (or NULL when none is left) and the topic's last_updated moves
-// back to the new last post. Posts that are not the forum's last post leave the forum
+// remaining visible post (or NULL when none is left). Topic.last_updated follows the pinned ORM's
+// independent rule: the hidden Post's date on hide, the first Post's date on delete of a two-Post Topic. Posts that are not the forum's last post leave the forum
 // untouched. Pin both the restored projection and the absence of a half-null visible row.
 test('FlaskBB forum and topic last-post projections recover after post hide/delete', {timeout: 90000}, async () => {
   const id = (kind, n) => `00000000-0000-4000-8000-${kind}${String(n).padStart(11, '0')}`;
@@ -70,7 +70,9 @@ test('FlaskBB forum and topic last-post projections recover after post hide/dele
     await run('Post.hide', b2, 'lp-hide-b2');
     const upstreamAfterHide = `${a2}|member-alice|Topic A|2025-01-03`;
     assert.equal(forumRow(), upstreamAfterHide);
-    assert.equal(topicUpdated(topicB), '2025-01-02');
+    // Pinned ORM (test_post_oracle_gap pointer cases): hide assigns Topic.last_post_id from posts[-2] but
+    // copies last_updated from the stale loaded last_post (the hidden Post), so the date does not roll back.
+    assert.equal(topicUpdated(topicB), '2025-01-04');
 
     // Ordinary readers must see the replacement post and its matching denormalized author.
     const alice = fx.client('alice-sub');

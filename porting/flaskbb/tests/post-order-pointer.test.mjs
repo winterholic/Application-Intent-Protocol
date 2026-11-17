@@ -82,8 +82,8 @@ for (const action of ['hide', 'delete']) test(`Post.${action} updates Topic and 
       else {
         const allowed = (spec.last_post_one_of ?? [spec.last_post]).map(postId);
         check(`${item.name} Topic pointer set`, () => assert.ok(allowed.includes(topic[0]), `Topic.last_post ${topic[0]} not in ${allowed}`));
-        const chosen = postsById.get(Number(topic[0]?.slice(-12)));
-        check(`${item.name} Topic last_updated follows the selected Post`, () => assert.equal(topic[1], chosen && iso(chosen.date_created)));
+        // Upstream assigns last_post_id from posts[-2] but last_updated from the stale loaded relationship.
+        check(`${item.name} Topic last_updated follows the upstream independent date rule`, () => assert.equal(topic[1], iso(postsById.get(spec.last_updated_post[action]).date_created)));
       }
       check(`${item.name} target flag`, () => assert.equal(sql(`SELECT ${action === 'hide' ? 'hidden AND hidden_by_id=3 AND hidden_at IS NOT NULL' : 'deleted'} FROM ${q}.post WHERE id='${postId(item.target)}'`), 't'));
       check(`${item.name} sibling Posts`, () => assert.equal(postRows(item, postId(item.target)), siblings));

@@ -114,7 +114,11 @@
       "expect": {
         "forum_last_post": 92,
         "target_topic": {
-          "last_post": 121
+          "last_post": 121,
+          "last_updated_post": {
+            "hide": 122,
+            "delete": 121
+          }
         }
       }
     },
@@ -169,7 +173,11 @@
       "expect": {
         "forum_last_post": 134,
         "target_topic": {
-          "last_post": 131
+          "last_post": 131,
+          "last_updated_post": {
+            "hide": 132,
+            "delete": 131
+          }
         }
       }
     },
@@ -220,14 +228,18 @@
             141,
             142,
             143
-          ]
+          ],
+          "last_updated_post": {
+            "hide": 144,
+            "delete": 144
+          }
         }
       }
     }
   ],
   "pointer_rules": {
     "source": "upstream flaskbb/forum/models.py 291-331 Post._deal_with_last_post",
-    "topic_last_updated": "unchanged cases keep the seeded value; changed cases equal the selected last Post date_created",
+    "topic_last_updated": "ORM-observed (RED run 44017218587): Topic.last_post_id is assigned from posts[-2] but last_updated reads the stale loaded Topic.last_post relationship, so it equals the target Post date when a second-last Post exists (always for hide, remaining Posts>=2 for delete) and the first Post date otherwise; it is not the selected last_post date",
     "unordered": "Topic.posts[-2] has no ORDER BY; multi-candidate cases assert allowed membership and last_updated consistency only"
   }
 }

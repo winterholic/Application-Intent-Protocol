@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-17 Post.hide/delete 선행 포인터 조건·Topic 날짜 규칙
+
+RED [44017218587](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44017218587) (`5b19bbad`, job 133817917976)에서 공유 JSON `pointer_cases` 4건이 AIP 제품 결함과 oracle 단언 오류로 갈렸다. 제품 결함은 Node `post-order-pointer`의 hide/delete 2건 실패였다: non-last 글을 숨겨도 Topic.last_updated가 재계산됨, Topic-last-but-not-Forum-last에서 Forum 포인터를 무조건 재선택함, Topic.last_post를 갱신하지 않음. oracle 오류는 ORM 12 tests 중 4건(`test_post_oracle_gap.py:350`)이다. 같은 ORM 실행으로 원본은 `Topic.last_post_id`를 `posts[-2]`에서 대입하지만 `last_updated`는 갱신 전에 읽은 `Topic.last_post` 관계(대상 Post)의 날짜를 쓰는 것을 확인했다. 따라서 두 값은 독립이며, `last_updated`는 두 번째 마지막 글이 있으면(hide는 항상, delete는 남은 글 2개 이상) 대상 Post 날짜, 없으면 첫 글 날짜다. 이전 단언(선택한 last_post의 날짜)과 `last-post-recompute`의 hide 후 날짜 되돌림 단언은 잘못이었다.
+
+app.aip 교정: Forum 갱신은 선행 `Topic.last_post = this`이고 `Forum.last_post = this`일 때만, Topic 갱신은 선행 `Topic.last_post = this`일 때만 실행한다. Topic.last_post는 보이는 다른 글 중 source_order 최대로 옮긴다. 이는 무정렬 원본 `posts[-2]`의 유일 승자 재현이 아니라 원본 허용 집합(대상 외 같은 Topic의 글)의 한 원소이며 동등성은 주장하지 않는다. hide 이후 포인터가 이동하므로 Post.unhide가 더 최신이면 Topic.last_post를 복원하는 update를 추가했다(unhide의 나머지 동작과 엄격 비교 의미는 여전히 open). `postOrderKnownForForum` 거부는 그대로다.
+
 ## 2026-11-17 G6 PostOrder·순서 기준별 회귀
 
 `cycle/p1-flaskbb-g6-20261117`의 PostgreSQL 17 집중 Run에서 원본 ORM 10 tests와 source-order import/fallback 경로를 확인했다. `tests/post-order-regression.json`의 동일 입력(원 Post ID 41–44, 42의 시각이 43보다 늦음)에 대해 원본 FlaskBB ORM과 AIP가 Post.hide 및 Post.delete 후 Forum 대체 글 ID 43을 골랐다. 포팅은 두 전이에서 `Post.date_created`로 고르던 AIP 구현 결함을 `PostOrder.id` 순서로 고쳤고, Forum의 해당 visible 후보 중 mapping이 비어 있으면 전이를 거부한다. `topicHide`는 기존 source-ID 순서를 유지한다. `Topic.delete`와 `Forum.update_last_post`는 별도의 원본 timestamp 기준을 유지하며 tie에서 특정 승자를 강제하지 않는다.

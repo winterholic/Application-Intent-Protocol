@@ -347,7 +347,9 @@ class PostOracleGap(unittest.TestCase):
                 else:
                     allowed = spec.get("last_post_one_of", [spec.get("last_post")])
                     self.assertIn(target_topic.last_post_id, allowed)
-                    self.assertEqual(target_topic.last_updated, dates[target_topic.last_post_id])
+                    # last_post_id is assigned from posts[-2], but last_updated reads the stale loaded
+                    # Topic.last_post relationship; the two values are computed independently.
+                    self.assertEqual(target_topic.last_updated, dates[spec["last_updated_post"][action]])
                 for key, state in others.items():
                     self.assertEqual((topics[key].last_post_id, topics[key].last_updated), state)
                 print("POINTER_CASE action={} case={} forum_last={} topic_last={} topic_updated={}".format(
