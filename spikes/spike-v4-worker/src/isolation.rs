@@ -8,12 +8,16 @@ pub enum Isolation {
     /// Select MacSandbox on macOS and LinuxBubblewrap on Linux.
     Auto,
     /// Run without an OS sandbox. Only use for explicitly trusted server-side configurations.
+    /// A detached descendant that outlives its parent can escape tree cleanup; cgroups provide the
+    /// stronger Linux ownership boundary for such descendants.
     None,
-    /// macOS network denial; host filesystem remains visible to the worker.
+    /// macOS network denial; host filesystem and process creation remain visible to the worker.
+    /// Cleanup has the same orphaned-descendant limit as `None` when no cgroup is configured.
     MacNetDeny,
     /// macOS Seatbelt profile: no network, no file writes, no reads under `/Users`, `/Volumes` and
     /// temporary directories except the extension and runtime, and no `fork`/`spawn`.
     MacSandbox,
+    /// Linux Bubblewrap with a private PID namespace and `--die-with-parent` cleanup.
     LinuxBubblewrap,
 }
 
@@ -171,7 +175,7 @@ impl WorkerLaunchConfig {
             cgroup.attach(&mut command)?;
         }
         let mut child = command.spawn()?;
-        // Read now: once `wait` has reaped the child, `id()` is `None` even if its descendants still hold the pipes.
+        // Save the leader ID while its Child handle owns it; timeout cleanup uses this identity before reaping.
         let leader_pid = child.id().unwrap_or_default();
         #[cfg(target_os = "linux")]
         let probe_sequence = {
@@ -197,9 +201,12 @@ impl WorkerLaunchConfig {
         let stdout_bytes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let stderr_bytes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let probe = async {
-            let (status, stdout, stderr) =
-                tokio::join!(child.wait(), capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));
-            let status = status?;
+            // Drain both pipes before waiting for the leader. Descendants can keep a pipe open
+            // after the leader exits; delaying wait keeps its PID reserved as our group identity
+            // until deadline cleanup has signalled the owned tree.
+            let (stdout, stderr) =
+                tokio::join!(capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));
+            let status = child.wait().await?;
             let stdout = stdout?;
             let stderr = stderr?;
             #[cfg(target_os = "linux")]
@@ -228,25 +235,21 @@ impl WorkerLaunchConfig {
             Err(_) => {
                 #[cfg(target_os = "linux")]
                 let pid = leader_pid;
+                // `child.wait()` is reached only after both pipes close, so the leader is still
+                // owned and unreaped when this deadline fires. Never signal a saved PID/PGID later.
+                crate::reap::kill_tree(leader_pid);
+                let _kill_result = child.start_kill();
                 let child_status = match child.try_wait() {
                     Ok(Some(status)) => format!("exited({status})"),
                     Ok(None) => "running".to_owned(),
                     Err(error) => format!("unknown({error})"),
                 };
-                // A running leader is not yet reaped, so its pid cannot have been reused and the whole tree may be walked.
-                // After the leader exited only its process group is signalled; a group id stays reserved while a member lives.
-                if child_status == "running" {
-                    crate::reap::kill_tree(leader_pid);
-                } else {
-                    crate::reap::kill_group(leader_pid);
-                }
-                let _kill_result = child.start_kill();
                 #[cfg(target_os = "linux")]
                 let process_sample = if diagnostic { linux_probe_process_sample(pid) } else { String::new() };
                 #[cfg(target_os = "linux")]
                 if diagnostic {
                     eprintln!(
-                        "AIP_PROBE_DIAG event=timeout sequence={probe_sequence} probe_kind={probe_kind} elapsed_ms={} pid={pid} child_status={child_status} proc_sample={process_sample:?} stdout_bytes_read={} stderr_bytes_read={} action=start_kill_requested kill_result={_kill_result:?}",
+                        "AIP_PROBE_DIAG event=timeout sequence={probe_sequence} probe_kind={probe_kind} elapsed_ms={} pid={pid} child_status_at_cleanup=not_reaped_before_cleanup child_status_after_cleanup={child_status} proc_sample={process_sample:?} stdout_bytes_read={} stderr_bytes_read={} action=start_kill_requested kill_result={_kill_result:?}",
                         probe_started.expect("diagnostic start time").elapsed().as_millis(),
                         stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
                         stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
@@ -264,14 +267,14 @@ impl WorkerLaunchConfig {
                 #[cfg(target_os = "linux")]
                 let timeout_message = if diagnostic {
                     format!(
-                        "worker runtime probe exceeded {} seconds; pid={pid}; child_status={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        "worker runtime probe exceeded {} seconds; pid={pid}; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
                         RUNTIME_PROBE_DEADLINE.as_secs(),
                         stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
                         stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
                     )
                 } else {
                     format!(
-                        "worker runtime probe exceeded {} seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        "worker runtime probe exceeded {} seconds; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
                         RUNTIME_PROBE_DEADLINE.as_secs(),
                         stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
                         stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
@@ -279,7 +282,7 @@ impl WorkerLaunchConfig {
                 };
                 #[cfg(not(target_os = "linux"))]
                 let timeout_message = format!(
-                    "worker runtime probe exceeded {} seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                    "worker runtime probe exceeded {} seconds; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
                     RUNTIME_PROBE_DEADLINE.as_secs(),
                     stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
                     stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
@@ -1062,7 +1065,7 @@ mod tests {
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert!(error.to_string().contains("exceeded 5 seconds"), "{error}");
-        assert!(error.to_string().contains("child_status=running"));
+        assert!(error.to_string().contains("child_status_at_cleanup=not_reaped_before_cleanup"));
         assert!(error.to_string().contains("stdout_bytes_read=0"));
         assert!(error.to_string().contains("stderr_bytes_read=0"));
         // A hung runtime still fails at the single 5 second budget, with no retry or extension.
@@ -1120,6 +1123,31 @@ mod tests {
     #[tokio::test]
     async fn runtime_probe_timeout_leaves_no_descendant_after_the_runtime_itself_exited() {
         assert_timed_out_probe_leaves_no_descendant("orphaned-runtime.sh").await;
+    }
+
+    /// Keep a detached descendant's pipe open after the runtime leader exits. Cleanup must run
+    /// before the leader is reaped so its saved PID cannot become an unrelated process-group ID.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn runtime_probe_timeout_keeps_leader_identity_owned_until_cleanup() {
+        let dir = TempDir::new("probe-setsid-owner");
+        let pid_file = dir.path().join("detached-descendant.pid");
+        let mut config = probe_runtime("setsid-runtime.sh");
+        config.environment.insert("AIP_PROBE_DESCENDANT_PID_FILE".into(), pid_file.to_string_lossy().into_owned());
+        let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
+        let message = error.to_string();
+        let pid: i32 = std::fs::read_to_string(&pid_file).expect("fixture recorded its detached child").trim().parse().unwrap();
+
+        // Isolation::None does not promise recovery of a setsid child after its parent exits.
+        // Reap this fixture explicitly so the Linux runner is not left with a sleeper.
+        let detached_survived = process_is_running(pid);
+        if detached_survived {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(message.contains("child_status_at_cleanup=not_reaped_before_cleanup"), "{message}");
+        assert!(detached_survived, "the setsid fixture should outlive its exited parent under Isolation::None");
     }
 
     #[test]

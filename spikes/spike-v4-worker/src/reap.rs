@@ -1,14 +1,16 @@
 //! Tears down a worker and everything it started.
 //!
 //! `Child::kill` only signals the direct child. An extension can `fork`, `setsid` and outlive it,
-//! so the worker is started as its own process-group leader and the whole tree is killed:
-//! first the descendants found through the parent-pid links (this also reaches children that
-//! left the group with `setsid`), then the group. Linux hosts that configure a cgroup get a
-//! stronger guarantee from `cgroup.kill`; this covers macOS and cgroup-less Linux.
+//! so the worker is started as its own process-group leader and the whole tree is signalled while
+//! that leader PID is still owned and unreaped:
+//! first descendants still reachable through parent-pid links (including children that called
+//! `setsid`), then the group. Linux with a configured cgroup additionally uses `cgroup.kill` to
+//! reach orphaned descendants; without it, detached orphans are outside this tree walk.
 //!
 //! Limit: a descendant that was already orphaned (double-fork daemon re-parented to init) before
-//! teardown starts has no parent link left to follow. The macOS sandbox denies `process-fork`,
-//! and Bubblewrap runs in its own PID namespace, so those modes cannot create one.
+//! teardown starts has no parent link left to follow. `Isolation::None` therefore does not promise
+//! recovery of detached descendants after their parent exits. Linux cgroup kill covers them;
+//! MacSandbox denies `process-fork`, and Bubblewrap runs in its own PID namespace.
 
 #[cfg(unix)]
 mod imp {
@@ -49,8 +51,8 @@ mod imp {
         found
     }
 
-    /// Kills `root`, its process group, and every descendant reachable through parent links.
-    /// `root` must be a process-group leader created with `process_group(0)`.
+    /// Signals `root`, its process group, and every descendant reachable through parent links.
+    /// `root` must be an unreaped process-group leader created with `process_group(0)`.
     pub(crate) fn kill_tree(root: u32) {
         let Ok(root) = i32::try_from(root) else { return };
         if root <= 1 {
@@ -77,22 +79,10 @@ mod imp {
             }
         }
     }
-
-    /// Kills what is left of a process group whose leader was already reaped, so the leader's pid can no longer be signalled.
-    pub(crate) fn kill_group(pgid: u32) {
-        let Ok(pgid) = i32::try_from(pgid) else { return };
-        if pgid <= 1 {
-            return;
-        }
-        unsafe { libc::killpg(pgid, libc::SIGKILL) };
-    }
 }
 
 #[cfg(unix)]
-pub(crate) use imp::{kill_group, kill_tree};
+pub(crate) use imp::kill_tree;
 
 #[cfg(not(unix))]
 pub(crate) fn kill_tree(_root: u32) {}
-
-#[cfg(not(unix))]
-pub(crate) fn kill_group(_pgid: u32) {}
