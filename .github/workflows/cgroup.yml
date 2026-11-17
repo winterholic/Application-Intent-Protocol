@@ -105,7 +105,7 @@ jobs:
           if [[ '${{ matrix.condition }}' == 'isolated-node-first' ]]; then
             echo 'first_runtime_action=production WorkerLaunchConfig::probe(Node) via command_spec Auto/LinuxBubblewrap, node --version' | tee -a "$evidence"
             set +e
-            cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::startup_experiment::run_isolated_node_version_once --locked --target-dir target -- --exact --nocapture 2>&1 | tee -a "$evidence"
+            cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::startup_experiment::run_isolated_node_version_once --locked --target-dir target -- --ignored --exact --nocapture 2>&1 | tee -a "$evidence"
             prerun_status=${PIPESTATUS[0]}
             set -e
             echo "isolated_node_prerun_exit_status=$prerun_status" | tee -a "$evidence"

@@ -1246,6 +1246,7 @@ mod startup_experiment {
     }
 
     #[tokio::test]
+    #[ignore = "opt-in startup experiment; select explicitly in cgroup.yml"]
     async fn run_isolated_node_version_once() {
         assert_eq!(std::env::var("AIP_TEST_NODE_PRERUN").as_deref(), Ok("1"), "this test is only for the explicit Node-first CI condition");
         assert_eq!(std::env::var("AIP_TEST_BWRAP").as_deref(), Ok("1"));
