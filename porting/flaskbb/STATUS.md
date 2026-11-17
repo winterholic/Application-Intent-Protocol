@@ -515,3 +515,6 @@ TDD 증거: `explicit_null_optional_nbf_is_rejected`는 수정 전 기존 검증
 F01 read regression은 [porting/flaskbb/tests/aip-read.test.mjs](tests/aip-read.test.mjs)에 있다. `aip-read.log`는 Linux PostgreSQL 14.18 isolated DB `aip_flaskbb`/host `55439`, dynamic owned schemas, local ephemeral RS256 test issuer/JWKS, actual AIP SDK read, role-dependent rows, duplicate relationship rejection 기록이다. TDD 초기 실행에서 회원이 guest group의 포럼까지 읽는 정책 버그가 드러났고 predicate를 바로잡아 재실행 PASS. 원본 baseline DB는 별도 `flaskbb_baseline`/port `55438`에 계속 격리.
 
 초기화 상세, 명령 원문·raw output, 오류 캡처를 이 경로에 계속 누적하고 다음 상태 갱신 때 SHA-256을 함께 남긴다. 이 README/STATUS 변경은 기존 FaceReview UI blocker, MySQL adapter blocker, IdP 3/17 + 14 미실행 상태를 닫지 않는다.
+## 2026-11-17 Post.unhide 날짜·Forum 투영 후보
+
+기존 공유 fixture의 공식 PostgreSQL 17 HTTP RED (`4e830c83c42e7f0df25a67e2a87004d77bf0f23d`, Run `44065786844`, job `133978992389`)를 기준으로 `porting/flaskbb/app.aip`만 교정했다. Post.unhide는 Topic.last_updated를 건드리지 않고, visible sibling 후보가 정확히 하나이며 복원 날짜가 그 날짜보다 엄격히 최신인 경우에만 Topic.last_post를 바꾼다. Forum은 이 조건과 visible Topic, Forum 포인터 부재 또는 엄격한 날짜 우위가 함께 성립할 때만 복원 Post의 다섯 투영값으로 갱신한다. 이 단계의 3 HTTP 사례는 각 Topic에 visible sibling이 하나인 범위다. 원본 쿼리에는 ORDER BY가 없으므로 다중 후보의 첫 행 승자, 동률, 후보 부재는 미검증이며 임의 ID tie-break를 추가하지 않는다. 새 후보의 PG17 결과가 확인되면 Run ID·SHA·변경 범위를 여기에 덧붙인다.
