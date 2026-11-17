@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import {test} from 'node:test';
 import {GROUPS_SQL, USERS_SQL, seedNativePostOrders, startFixture} from './harness.mjs';
 
@@ -89,5 +91,34 @@ test('FlaskBB forum and topic last-post projections recover after post hide/dele
 
     await run('Topic.delete', topicB, 'lp-delete-topic-b');
     assert.equal(forumRow(), upstreamAfterTopicHide);
+  } finally { await fx.stop(); }
+});
+
+test('Post.hide chooses its Forum fallback by imported source Post.id, not date_created', {timeout: 90000}, async () => {
+  const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('./post-order-regression.json', import.meta.url)), 'utf8'));
+  const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const topic = id(100), posts = fixture.posts.map((_, i) => id(201 + i));
+  const fx = await startFixture({
+    prefix: 'aip-flaskbb-post-order-fallback-',
+    actors: {admin: 3},
+    seed(sql, q, schema) {
+      sql(GROUPS_SQL(schema)); sql(USERS_SQL(schema));
+      sql(`INSERT INTO ${q}.category(id,title,description,position) VALUES(1,'General','fixture',1);
+        INSERT INTO ${q}.forum(id,category_id,title,description,position,locked,show_moderators) VALUES(1,1,'Forum','fixture',1,false,false);
+        INSERT INTO ${q}.forum_group_access(id,forum_id,group_id) VALUES(1,1,3);
+        INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden)
+          VALUES('${topic}',1,'Topic',3,'admin-bob','2025-01-01T12:00:00Z','2025-01-04T12:00:00Z',false,false,0,true,false,false);`);
+      fixture.posts.forEach((post, i) => sql(`INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted)
+        VALUES('${posts[i]}','${topic}',1,3,'admin-bob','post-${post.source_id}','${post.date_created}',false,true,0,false);`));
+      sql(`INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topic}','${posts[0]}');
+        UPDATE ${q}.topic SET last_post_id='${posts[3]}' WHERE id='${topic}';
+        UPDATE ${q}.forum SET last_post_id='${posts[3]}',last_post_user_id=3,last_post_title='Topic',last_post_username='admin-bob',last_post_created='${fixture.posts[3].date_created}' WHERE id=1;`);
+      seedNativePostOrders(sql, q, posts);
+    },
+  });
+  try {
+    const result = await fx.client('admin').bundle({atomic:[{apply:'Post.hide',target:{ids:[posts[3]]}}]}, {key:'post-order-source-fallback'});
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(fx.sql(`SELECT last_post_id FROM ${fx.q}.forum WHERE id=1`), posts[fixture.posts.findIndex(p => p.source_id === fixture.expected_forum_fallback_source_id)]);
   } finally { await fx.stop(); }
 });

@@ -1,0 +1,10 @@
+{
+  "scenario": "post-hide-forum-fallback-uses-source-id",
+  "posts": [
+    {"source_id": 41, "date_created": "2025-01-01T12:00:00Z", "role": "first"},
+    {"source_id": 42, "date_created": "2025-01-03T12:00:00Z", "role": "date-newer-fallback"},
+    {"source_id": 43, "date_created": "2025-01-02T12:00:00Z", "role": "source-newer-fallback"},
+    {"source_id": 44, "date_created": "2025-01-04T12:00:00Z", "role": "target"}
+  ],
+  "expected_forum_fallback_source_id": 43
+}

@@ -2,7 +2,7 @@ name: FlaskBB PostOrder
 
 on:
   push:
-    branches: [main, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106, verify/flaskbb-orm-oracle-20261107]
+    branches: [main, cycle/p1-flaskbb-g6-20261117, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106, verify/flaskbb-orm-oracle-20261107]
     paths:
       - '.github/workflows/flaskbb-post-order.yml'
       - 'porting/flaskbb/app.aip'
@@ -10,6 +10,7 @@ on:
       - 'porting/flaskbb/tests/harness.mjs'
       - 'porting/flaskbb/tests/post-order-*.test.mjs'
       - 'porting/flaskbb/tests/last-post-recompute.test.mjs'
+      - 'porting/flaskbb/tests/post-order-regression.json'
       - 'porting/flaskbb/tests/aip-read.test.mjs'
       - 'porting/flaskbb/tests/test_ui_host.py'
       - 'porting/flaskbb/ui/app.py'
