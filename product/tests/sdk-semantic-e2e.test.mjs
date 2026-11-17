@@ -427,7 +427,9 @@ import { connect } from "@aip/sdk";
 import { contract } from "./binding.js";
 const oldClient = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, contract);
 await assert.rejects(oldClient.read({ read: "Record", select: ["id"] }), error => error.code === "WIRE.CONTRACT_MISMATCH");
-await assert.rejects(oldClient.apply({ apply: "Record.edit", target: { ids: ["1"] }, values: { title: "stale-ts-write" } }, { key: ${JSON.stringify(`sdk-ts-stale-apply-${f.schema}`)} }), error => error.code === "WIRE.CONTRACT_MISMATCH");
+const staleApply = await oldClient.apply({ apply: "Record.edit", target: { ids: ["1"] }, values: { title: "stale-ts-write" } }, { key: ${JSON.stringify(`sdk-ts-stale-apply-${f.schema}`)} });
+assert.equal(staleApply.ok, false, "stale-binding apply returns a rejected result");
+assert.equal(staleApply.code, "WIRE.CONTRACT_MISMATCH", "stale-binding apply reports the exact contract error");
 `);
         const beforeStaleApply = psql(`SELECT title || '|' || coalesce(migrated,'<null>') || '|' || applies::text FROM ${f.schema}.record WHERE id=1`);
         const idemBeforeStaleApply = psql(`SELECT count(*) FROM ${f.schema}.aip_idem`);
@@ -466,12 +468,9 @@ except AipError as error:
     assert error.code == "WIRE.CONTRACT_MISMATCH"
 else:
     raise AssertionError("the old generated binding was accepted after migration")
-try:
-    apply_record_edit(connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, CONTRACT_FINGERPRINT), {"ids":["1"]}, {"title":"stale-python-write"}, key=${JSON.stringify(`sdk-python-stale-apply-${f.schema}`)})
-except AipError as error:
-    assert error.code == "WIRE.CONTRACT_MISMATCH", error.code
-else:
-    raise AssertionError("the old generated binding applied a write after migration")
+stale_apply = apply_record_edit(connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, CONTRACT_FINGERPRINT), {"ids":["1"]}, {"title":"stale-python-write"}, key=${JSON.stringify(`sdk-python-stale-apply-${f.schema}`)})
+assert stale_apply["ok"] is False, stale_apply
+assert stale_apply["code"] == "WIRE.CONTRACT_MISMATCH", stale_apply
 `);
         const beforeStaleApply = psql(`SELECT title || '|' || coalesce(migrated,'<null>') || '|' || applies::text FROM ${f.schema}.record WHERE id=1`);
         const idemBeforeStaleApply = psql(`SELECT count(*) FROM ${f.schema}.aip_idem`);
