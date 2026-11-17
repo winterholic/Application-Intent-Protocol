@@ -33,11 +33,11 @@ predicate topicHideNullReplacement(targetTopic: Topic) = exists Topic where foru
 // from the pre-state Topic.last_post/Forum.last_post pointers. See PRODUCT-GAPS.
 predicate postIsTopicLast(targetPost: Post) = targetPost.topic.last_post = targetPost
 predicate postIsForumLast(targetPost: Post) = targetPost.topic.last_post = targetPost and targetPost.forum.last_post = targetPost
-// Upstream Post._restore_post_to_topic has no ORDER BY. Only apply its
-// strict date comparison when there is exactly one visible sibling candidate;
-// multiple candidates stay outside the deterministic parity claim.
-predicate postUnhideHasSingleVisibleCandidate(targetPost: Post) = targetPost.topic.last_post != null and exists Post where topic = targetPost.topic and id = targetPost.topic.last_post and id != targetPost.id and hidden != true and not (exists Post where topic = targetPost.topic and id != targetPost.id and id != targetPost.topic.last_post and hidden != true)
-predicate postRestoresTopicLast(targetPost: Post) = postUnhideHasSingleVisibleCandidate(targetPost) and targetPost.topic.last_post.date_created < targetPost.date_created
+// Upstream Post._restore_post_to_topic selects one visible sibling with no
+// ORDER BY. Restore only when every eligible sibling is strictly older, so
+// the result is independent of which row the unordered query returns.
+predicate postUnhideHasOlderVisibleSibling(targetPost: Post) = exists Post where topic = targetPost.topic and id != targetPost.id and hidden != true and date_created < targetPost.date_created and not (exists Post where topic = targetPost.topic and id != targetPost.id and hidden != true and date_created >= targetPost.date_created)
+predicate postRestoresTopicLast(targetPost: Post) = postUnhideHasOlderVisibleSibling(targetPost)
 predicate postRestoresForumLast(targetPost: Post) = postRestoresTopicLast(targetPost) and not targetPost.topic.hidden and (targetPost.forum.last_post = null or targetPost.date_created > targetPost.forum.last_post.date_created)
 predicate topicLastCandidate(targetPost: Post, candidate: Post?) = candidate != null and candidate.topic = targetPost.topic and candidate.id != targetPost.id and candidate.published and not candidate.deleted and candidate.hidden = false
 predicate topicReplyBesides(targetPost: Post, firstPost: Post?) = exists Post where topic = targetPost.topic and id != targetPost.id and id != firstPost.id and published and not deleted
