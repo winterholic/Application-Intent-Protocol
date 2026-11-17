@@ -197,6 +197,14 @@ async fn browser_auth_frame_is_bounded_and_invalid_auth_never_reaches_subscripti
     assert_eq!(first["type"], "error");
     assert_eq!(first["code"], "WIRE.UNAUTHENTICATED");
 
+    let close = tokio::time::timeout(Duration::from_secs(2), missing_auth.next()).await.unwrap();
+    assert!(matches!(close, Some(Ok(Message::Close(_))) | None), "missing-auth rejection must close before the next browser connection: {close:?}");
+    drop(missing_auth);
+
+    let replacement = tokio_tungstenite::connect_async(browser_request(server.address, true)).await;
+    assert!(replacement.is_ok(), "the pre-auth realtime slot must be returned after the missing-auth close: {:?}", replacement.err());
+    drop(replacement);
+
     let (mut socket, _) = tokio_tungstenite::connect_async(browser_request(server.address, true)).await.unwrap();
     socket.send(Message::Text(json!({"type":"auth","token":"revoked-or-unknown"}).to_string().into())).await.unwrap();
     let first = tokio::time::timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
