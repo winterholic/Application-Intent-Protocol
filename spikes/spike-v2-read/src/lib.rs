@@ -239,6 +239,19 @@ pub async fn execute(client: &mut Client, plan: &Plan) -> Result<Vec<serde_json:
     tx.batch_execute(&format!("SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '{}ms'; SET LOCAL TimeZone = 'UTC'{jit}", plan.deadline_ms))
         .await
         .map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "세션 설정 실패".into() })?;
+    let out = rows_of(&tx, plan).await?;
+    tx.commit().await.ok();
+    Ok(out)
+}
+
+/// Runs a read plan inside a transaction its owner opened, so the rows include that transaction's uncommitted writes.
+/// The owner keeps the isolation level, timezone and commit; the plan's own deadline is the caller's to enforce, because
+/// `SET LOCAL statement_timeout` would also bound the owner's later statements.
+pub async fn execute_in(tx: &tokio_postgres::Transaction<'_>, plan: &Plan) -> Result<Vec<serde_json::Value>, Reject> {
+    rows_of(tx, plan).await
+}
+
+async fn rows_of(tx: &tokio_postgres::Transaction<'_>, plan: &Plan) -> Result<Vec<serde_json::Value>, Reject> {
     let params: Vec<&(dyn ToSql + Sync)> = plan.params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
     // 모든 매개변수는 text로 보내고 SQL 안에서 캐스트한다. 타입을 명시해야 식에서 쓰이지 않은 매개변수도 42P18 없이 실행된다.
     let types = vec![tokio_postgres::types::Type::TEXT; params.len()];
@@ -257,7 +270,6 @@ pub async fn execute(client: &mut Client, plan: &Plan) -> Result<Vec<serde_json:
             });
         }
     };
-    tx.commit().await.ok();
     let mut bytes = 0usize;
     let mut out = vec![];
     for r in &rows {

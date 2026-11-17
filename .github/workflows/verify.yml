@@ -22,7 +22,7 @@ permissions:
 
 concurrency:
   group: verify-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   core:
@@ -111,6 +111,58 @@ jobs:
             sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
             echo "$sandbox_bin" >> "$GITHUB_PATH"
           fi
+      - name: Verify probe leader ownership and early-wait mutation control
+        if: ${{ !inputs.member_ui_diagnostic && !inputs.admin_metrics_diagnostic }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_file=spikes/spike-v4-worker/src/isolation.rs
+          backup="$RUNNER_TEMP/isolation.rs.correct"
+          diagnostics_off_log="$RUNNER_TEMP/probe-diagnostics-off.log"
+          ownership_green_log="$RUNNER_TEMP/probe-ownership-green.log"
+          mutation_log="$RUNNER_TEMP/early-wait-mutation.log"
+          cp "$source_file" "$backup"
+          restore_source() { cp "$backup" "$source_file"; }
+          trap restore_source EXIT
+
+          diagnostics_off_test=isolation::tests::runtime_probe_timeout_does_not_report_unobserved_os_state_without_diagnostics
+          cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib "$diagnostics_off_test" --locked --target-dir target -- --exact --nocapture 2>&1 | tee "$diagnostics_off_log"
+          grep -F 'AIP_PROBE_FIXTURE_CLEANUP' "$diagnostics_off_log" | grep -F 'sigkill_requested=true terminated=true'
+
+          test_name=isolation::tests::runtime_probe_timeout_keeps_leader_identity_owned_until_cleanup
+          cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib "$test_name" --locked --target-dir target -- --exact --nocapture 2>&1 | tee "$ownership_green_log"
+          grep -F 'AIP_PROBE_FIXTURE_CLEANUP' "$ownership_green_log" | grep -F 'sigkill_requested=true terminated=true'
+
+          python3 - "$source_file" <<'PY'
+          from pathlib import Path
+          import sys
+
+          source = Path(sys.argv[1])
+          text = source.read_text()
+          anchor = """            let (stdout, stderr) =
+                          tokio::join!(capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));
+                      let status = child.wait().await?;"""
+          mutation = """            let status = child.wait().await?;
+                      let (stdout, stderr) =
+                          tokio::join!(capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));"""
+          if text.count(anchor) != 1:
+              raise SystemExit("expected one pipe-drain anchor for early-wait mutation")
+          source.write_text(text.replace(anchor, mutation, 1))
+          PY
+
+          set +e
+          cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib "$test_name" --locked --target-dir target -- --exact --nocapture 2>&1 | tee "$mutation_log"
+          mutation_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$mutation_status" -eq 0 ]]; then
+            echo "early-wait mutation unexpectedly passed"
+            exit 1
+          fi
+          grep -F "leader ownership observation missing" "$mutation_log"
+          grep -F 'AIP_PROBE_FIXTURE_CLEANUP' "$mutation_log" | grep -F 'sigkill_requested=true terminated=true'
+          restore_source
+          trap - EXIT
+          git diff --exit-code -- "$source_file"
       - name: Verify Linux worker isolation boundaries
         if: ${{ !inputs.member_ui_diagnostic && !inputs.admin_metrics_diagnostic }}
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
