@@ -60,8 +60,8 @@ resource Record {
   aggregate ownVoteCount: Int { source Vote; sourceAccess callerVotes(actor); groupKey record; where owner = actor; callerFilter none; rowOutput none; release count }
   aggregate filteredOwnVoteCount: Int { source Vote; sourceAccess callerVotes(actor); groupKey record; where owner = actor; callerFilter read; rowOutput none; release count }
   aggregate publicVoteCount: Int { source Vote; sourceAccess publicVotes(actor); groupKey record; callerFilter none; rowOutput none; release count }
-  aggregate minOwnVote: Int? { source Vote; sourceAccess callerVotes(actor); groupKey record; where owner = actor; callerFilter none; rowOutput none; release min(amount) }
-  aggregate maxOwnVote: Int? { source Vote; sourceAccess callerVotes(actor); groupKey record; where owner = actor; callerFilter none; rowOutput none; release max(amount) }
+  aggregate minOwnVote: Int? { source Vote; sourceAccess callerVotes(actor); groupKey record; callerFilter none; rowOutput none; release min(amount) }
+  aggregate maxOwnVote: Int? { source Vote; sourceAccess callerVotes(actor); groupKey record; callerFilter none; rowOutput none; release max(amount) }
   expose aggregate ownVoteCount
   expose aggregate filteredOwnVoteCount
   expose aggregate publicVoteCount
@@ -632,8 +632,8 @@ async fn service_policy_aggregate_noninterference_http_postgres() {
         assert_eq!(before["rows"][1]["secret"], Value::Null, "field policy redacts peer data");
         assert_eq!(before["rows"][0]["ownVoteCount"], 2, "caller-scoped count includes only caller rows");
         assert_eq!(before["rows"][0]["publicVoteCount"], 3, "explicitly public count includes every source row");
-        assert_eq!(before["rows"][0]["minOwnVote"], 10, "explicit aggregate where limits min to caller rows");
-        assert_eq!(before["rows"][0]["maxOwnVote"], 20, "explicit aggregate where limits max to caller rows");
+        assert_eq!(before["rows"][0]["minOwnVote"], 10, "min has no where but measure() re-applies Vote rowRead, so the hidden -900 is excluded (count does not)");
+        assert_eq!(before["rows"][0]["maxOwnVote"], 20, "max has no where but measure() re-applies Vote rowRead, so hidden rows are excluded (count does not)");
         assert_eq!(before["rows"][1]["ownVoteCount"], 0);
         assert_eq!(before["rows"][1]["publicVoteCount"], 1);
         assert_eq!(before["rows"][1]["minOwnVote"], Value::Null);
@@ -643,7 +643,7 @@ async fn service_policy_aggregate_noninterference_http_postgres() {
         let caller_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.ownVoteCount","input":{}}})).await;
         assert_eq!(caller_aggregate["rows"][0], 2, "standalone caller-scoped aggregate preserves its where contract");
         let public_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await;
-        assert_eq!(public_aggregate["rows"][0], 5, "explicit public aggregate includes all source rows");
+        assert_eq!(public_aggregate["rows"][0], 5, "count without where does not inherit Vote rowRead and counts every source row");
         let min_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.minOwnVote","input":{}}})).await;
         let max_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.maxOwnVote","input":{}}})).await;
         assert_eq!(min_aggregate["ok"], true, "{min_aggregate}");
@@ -669,6 +669,11 @@ async fn service_policy_aggregate_noninterference_http_postgres() {
         assert_eq!(inserted_public_aggregate["rows"][0], 6);
         let inserted_caller_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.ownVoteCount","input":{}}})).await;
         assert_eq!(inserted_caller_aggregate["rows"][0], 2);
+        // count(no where) 는 rowRead 를 상속하지 않아 은닉 삽입에 반응하지만, min/max 는 measure() 가 rowRead 를 FILTER 로 걸어 반응하지 않는다.
+        let inserted_min = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.minOwnVote","input":{}}})).await;
+        let inserted_max = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.maxOwnVote","input":{}}})).await;
+        assert_eq!(inserted_min["rows"][0], 10, "standalone min ignores the hidden -5000 row through source rowRead");
+        assert_eq!(inserted_max["rows"][0], 20, "standalone max ignores hidden rows through source rowRead");
         let insert_metrics = policy_vote_metrics(&fixture.schema).await;
         assert_eq!(insert_metrics, (4, -5000, 20, (-5000.0 + 10.0 + 20.0 - 900.0) / 4.0));
         policy_db_execute(&fixture.schema, "UPDATE vote SET amount=-6000 WHERE id=6").await;
