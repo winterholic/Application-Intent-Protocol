@@ -20,13 +20,13 @@ resource Member {
 }
 actor Member
 resource Record {
-  fields { id: Id; org: Text; owner: Member; title: Text; note: Text?; amount: Decimal(18,4)?; secret: Text; checked: Bool }
+  fields { id: Id; org: Text; owner: Member; title: Text; note: Text?; amount: Decimal(18,4)?; secret: Text; checked: Bool; applies: Int }
   rows read when org = actor.org
   field secret read when owner = actor
-  transition edit { allow owner = actor; from true; patch title, note, amount; to checked = checked }
+  transition edit { allow owner = actor; from true; patch title, note, amount; to checked = checked, applies = this.applies + 1 }
   expose apply edit { target id; bulk maxRows 1 }
   expose read {
-    select id, org, owner, title, note, amount, secret, checked
+    select id, org, owner, title, note, amount, secret, checked, applies
     traverse owner { select id, org }
     sort id
     budget { rows 20; depth 2; deadline 2s; cost 1000 }
@@ -70,70 +70,80 @@ async function fixture(language) {
   const dir = join(temp, `${language}-${randomUUID()}`);
   mkdirSync(dir);
   const schema = `aip_sdk_sem_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
-  const appPath = join(dir, "semantic.aip");
-  const configPath = join(dir, "service.json");
-  writeFileSync(appPath, app);
-  const token = authFiles(dir);
-  writeFileSync(configPath, JSON.stringify({
-    schema, database_url_env: "AIP_TEST_DATABASE", listen: "127.0.0.1:0", wire: "decimal",
-    auth: { issuer: "https://issuer.example", audience: "aip-api", jwks: { kind: "file", path: join(dir, "jwks.json") } },
-  }));
-  run(binary, ["service", "check", appPath]);
-  run(binary, ["service", "gen", appPath, "--wire", "decimal", "--out", join(dir, "binding.ts"), "--sdk-import", "@aip/sdk"]);
-  const generated = readFileSync(join(dir, "binding.ts"), "utf8");
-  const fingerprint = generated.match(/export const contractFingerprint = "([a-f0-9]{64})";/u)?.[1];
-  assert.ok(fingerprint, "generated TypeScript binding contains the contract fingerprint");
-  run(binary, ["service", "init", appPath, "--config", configPath]);
-  psql(`INSERT INTO ${schema}.member(id,org) VALUES (42,'red'),(99,'red'); INSERT INTO ${schema}.record(id,org,owner_id,title,note,amount,secret,checked) VALUES (1,'red',42,'seed','preserve-me','1.2345','owner-only',false),(2,'red',42,'nullable',NULL,NULL,'also-private',false),(3,'red',99,'peer','peer-note','2.0001','hidden-secret',false),(4,'blue',99,'outside','outside-note','3.0001','outside-secret',false);`);
-  run(binary, ["service", "principal", "--config", configPath, "bind", "--subject", "sdk-semantic-user", "--actor", "42"]);
-  const child = spawn(binary, ["service", "serve", appPath, "--config", configPath], {
-    cwd: root, env: { ...process.env, AIP_TEST_DATABASE: database }, stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  let listening;
+  const owned = { dir, schema, child: null };
+  let transferred = false;
   try {
-    listening = await new Promise((resolveListening, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`service start timeout: ${stderr}`)), 15_000);
-    child.stdout.on("data", () => {
-      const line = stdout.split(/\r?\n/u)[0];
-      if (!line) return;
-      clearTimeout(timeout);
-      try {
-        const message = JSON.parse(line);
-        if (message.ok && message.event === "listening") resolveListening(message);
-        else reject(new Error(`service startup rejected: ${line}\n${stderr}`));
-      } catch (error) { reject(error); }
-    });
-    child.once("exit", (code) => { clearTimeout(timeout); reject(new Error(`service exited ${code}: ${stdout}\n${stderr}`)); });
-    });
-  } catch (error) {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGTERM");
-      await new Promise((resolveExit) => child.once("exit", resolveExit));
+    const appPath = join(dir, "semantic.aip");
+    const configPath = join(dir, "service.json");
+    writeFileSync(appPath, app);
+    const token = authFiles(dir);
+    writeFileSync(configPath, JSON.stringify({
+      schema, database_url_env: "AIP_TEST_DATABASE", listen: "127.0.0.1:0", wire: "decimal",
+      auth: { issuer: "https://issuer.example", audience: "aip-api", jwks: { kind: "file", path: join(dir, "jwks.json") } },
+    }));
+    run(binary, ["service", "check", appPath]);
+    run(binary, ["service", "gen", appPath, "--wire", "decimal", "--out", join(dir, "binding.ts"), "--sdk-import", "@aip/sdk"]);
+    const generated = readFileSync(join(dir, "binding.ts"), "utf8");
+    const fingerprint = generated.match(/export const contractFingerprint = "([a-f0-9]{64})";/u)?.[1];
+    assert.ok(fingerprint, "generated TypeScript binding contains the contract fingerprint");
+    if (language === "python") {
+      run(binary, ["service", "gen", appPath, "--lang", "python", "--wire", "decimal", "--out", join(dir, "binding.py")]);
     }
-    psql(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
-    throw error;
+    run(binary, ["service", "init", appPath, "--config", configPath]);
+    psql(`INSERT INTO ${schema}.member(id,org) VALUES (42,'red'),(99,'red'); INSERT INTO ${schema}.record(id,org,owner_id,title,note,amount,secret,checked,applies) VALUES (1,'red',42,'seed','preserve-me','1.2345','owner-only',false,0),(2,'red',42,'nullable',NULL,NULL,'also-private',false,0),(3,'red',99,'peer','peer-note','2.0001','hidden-secret',false,0),(4,'blue',99,'outside','outside-note','3.0001','outside-secret',false,0);`);
+    run(binary, ["service", "principal", "--config", configPath, "bind", "--subject", "sdk-semantic-user", "--actor", "42"]);
+    const child = spawn(binary, ["service", "serve", appPath, "--config", configPath], {
+      cwd: root, env: { ...process.env, AIP_TEST_DATABASE: database }, stdio: ["ignore", "pipe", "pipe"],
+    });
+    owned.child = child;
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const listening = await new Promise((resolveListening, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`service start timeout: ${stderr}`)), 15_000);
+      child.stdout.on("data", () => {
+        const line = stdout.split(/\r?\n/u)[0];
+        if (!line) return;
+        clearTimeout(timeout);
+        try {
+          const message = JSON.parse(line);
+          if (message.ok && message.event === "listening") resolveListening(message);
+          else reject(new Error(`service startup rejected: ${line}\n${stderr}`));
+        } catch (error) { reject(error); }
+      });
+      child.once("exit", (code) => { clearTimeout(timeout); reject(new Error(`service exited ${code}: ${stdout}\n${stderr}`)); });
+    });
+    assert.equal(listening.fingerprint, fingerprint, "service and generated TypeScript binding use the same declared contract");
+    if (language === "python") {
+      const pythonGenerated = readFileSync(join(dir, "binding.py"), "utf8");
+      const pythonFingerprint = pythonGenerated.match(/^CONTRACT_FINGERPRINT = '([a-f0-9]{64})'$/mu)?.[1]
+        ?? pythonGenerated.match(/^CONTRACT_FINGERPRINT = "([a-f0-9]{64})"$/mu)?.[1];
+      assert.ok(pythonFingerprint, "generated Python binding contains the contract fingerprint");
+      assert.equal(pythonFingerprint, listening.fingerprint, "Python generated binding and service use the same declared contract");
+    }
+    transferred = true;
+    return { ...owned, appPath, token, address: listening.address, fingerprint };
+  } finally {
+    if (!transferred) await closeFixture(owned);
   }
-  assert.equal(listening.fingerprint, fingerprint, "service and generated binding use the same declared contract");
-  return { dir, schema, appPath, token, address: listening.address, fingerprint, child };
 }
 
 async function closeFixture(value) {
-  if (value.child.exitCode === null && value.child.signalCode === null) {
-    value.child.kill("SIGTERM");
-    await new Promise((resolveExit) => value.child.once("exit", resolveExit));
+  if (value.child && value.child.exitCode === null && value.child.signalCode === null) {
+    await new Promise((resolveExit) => {
+      value.child.once("exit", resolveExit);
+      value.child.kill("SIGTERM");
+    });
   }
   psql(`DROP SCHEMA IF EXISTS ${value.schema} CASCADE`);
 }
 
 function assertStored(fixtureValue, title) {
-  const result = psql(`SELECT title || '|' || coalesce(note,'<null>') || '|' || coalesce(amount::text,'<null>') || '|' || checked::text || '|' || org || '|' || owner_id::text || '|' || secret FROM ${fixtureValue.schema}.record WHERE id=1`);
-  assert.equal(result, `${title}|<null>|987654321012.3456|false|red|42|owner-only`, "PostgreSQL retains exact Decimal, explicit null, and fields omitted from both patches");
+  const result = psql(`SELECT title || '|' || coalesce(note,'<null>') || '|' || coalesce(amount::text,'<null>') || '|' || checked::text || '|' || org || '|' || owner_id::text || '|' || secret || '|' || applies::text FROM ${fixtureValue.schema}.record WHERE id=1`);
+  assert.equal(result, `${title}|<null>|987654321012.3456|false|red|42|owner-only|2`, "PostgreSQL retains exact values and shows the two distinct successful requests applied exactly once each");
   const forbidden = psql(`SELECT title || '|' || secret FROM ${fixtureValue.schema}.record WHERE id=3`);
   assert.equal(forbidden, "peer|hidden-secret", "rejected SDK request leaves the forbidden row unchanged");
   assert.equal(psql(`SELECT title FROM ${fixtureValue.schema}.record WHERE id=4`), "outside", "row-hidden resource remains unchanged");
@@ -185,6 +195,7 @@ import { contract } from "./binding.js";
 const client = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, contract);
 assert.deepEqual(await client.session(), { actorId: "42" });
 const initial = await client.read({ read: "Record", select: ["id", "title", "note", "amount", "secret"], sort: [{field:"id",dir:"asc"}] });
+assert.deepEqual(initial.rows.map(row => row.id), ["1", "2", "3"], "row indices refer to the expected IDs");
 assert.equal(initial.rows[0].note, "preserve-me");
 assert.equal(initial.rows[0].amount, "1.2345");
 assert.equal(initial.rows[0].secret, "owner-only");
@@ -195,18 +206,22 @@ const relation = await client.read({ read: "Record", select: ["id", { owner: { s
 assert.deepEqual(relation.rows[0].owner, { id: "42", org: "red" }, "generated SDK returns the declared related projection");
 const omitted = await client.apply({ apply: "Record.edit", target: { ids: ["1"] }, values: { title: "ts-partial" } }, { key: "sdk-ts-partial-0001" });
 assert.equal(omitted.ok, true);
-const partial = await client.read({ read: "Record", select: ["id", "title", "note", "amount"], sort: [{field:"id",dir:"asc"}] });
+const partial = await client.read({ read: "Record", select: ["id", "title", "note", "amount", "applies"], sort: [{field:"id",dir:"asc"}] });
+assert.equal(partial.rows[0].id, "1");
 assert.equal(partial.rows[0].note, "preserve-me", "an omitted nullable field is preserved");
 assert.equal(partial.rows[0].amount, "1.2345", "an omitted Decimal field is preserved");
+assert.equal(partial.rows[0].applies, 1, "the first unique apply changes the DB effect counter once");
 const write = { apply: "Record.edit", target: { ids: ["1"] }, values: { title: "ts-updated", note: null, amount: "987654321012.3456" } };
 const first = await client.apply(write, { key: "sdk-ts-replay-0001" });
 const replay = await client.apply(write, { key: "sdk-ts-replay-0001" });
 assert.equal(first.ok, true);
 assert.equal(replay.replayed, true);
-const after = await client.read({ read: "Record", select: ["id", "title", "note", "amount", "secret"], sort: [{field:"id",dir:"asc"}] });
+const after = await client.read({ read: "Record", select: ["id", "title", "note", "amount", "secret", "applies"], sort: [{field:"id",dir:"asc"}] });
+assert.equal(after.rows[0].id, "1");
 assert.equal(after.rows[0].note, null, "explicit null clears nullable field");
 assert.equal(after.rows[0].amount, "987654321012.3456", "Decimal is returned without float rounding");
 assert.equal(after.rows[0].secret, "owner-only");
+assert.equal(after.rows[0].applies, 2, "the replay did not increment the DB effect counter a second time");
 const drift = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, { ...contract, fingerprint: "0".repeat(64) });
 await assert.rejects(drift.read({ read: "Record", select: ["id"] }), error => error.code === "WIRE.CONTRACT_MISMATCH");
 for (const [id, code] of [["3", "WIRE.FORBIDDEN"], ["4", "WIRE.MISSING_TARGET"], ["404", "WIRE.MISSING_TARGET"]]) {
@@ -223,31 +238,37 @@ console.log("TypeScript SDK tests: 1 passed, 0 failed");
   } finally { await closeFixture(f); }
 });
 
-test("official Python SDK preserves nullable, decimal, policy, replay, and error semantics over PG17", { timeout: 180_000 }, async () => {
+test("generated Python SDK binding preserves nullable, decimal, policy, replay, and error semantics over PG17", { timeout: 180_000 }, async () => {
   const f = await fixture("python");
   try {
     const script = join(f.dir, "run.py");
     writeFileSync(script, `
-import json
 from aip_sdk import AipError, connect
-client = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, ${JSON.stringify(f.fingerprint)})
+from binding import CONTRACT_FINGERPRINT, apply_record_edit, read_record
+assert CONTRACT_FINGERPRINT == ${JSON.stringify(f.fingerprint)}
+client = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, CONTRACT_FINGERPRINT)
 assert client.session() == {"actorId":"42"}
-initial = client.read({"read":"Record","select":["id","title","note","amount","secret"],"sort":[{"field":"id","dir":"asc"}]})
+initial = read_record(client, {"read":"Record","select":["id","title","note","amount","secret","applies"],"sort":[{"field":"id","dir":"asc"}]})
+assert [row["id"] for row in initial] == ["1", "2", "3"]
 assert initial[0]["note"] == "preserve-me" and initial[0]["amount"] == "1.2345"
 assert initial[0]["secret"] == "owner-only" and initial[1]["note"] is None and initial[1]["amount"] is None
 assert initial[2]["secret"] is None
-relation = client.read({"read":"Record","select":["id",{"owner":{"select":["id","org"]}}],"sort":[{"field":"id","dir":"asc"}]})
+relation = read_record(client, {"read":"Record","select":["id",{"owner":{"select":["id","org"]}}],"sort":[{"field":"id","dir":"asc"}]})
 assert relation[0]["owner"] == {"id":"42","org":"red"}, relation[0]
-omitted = client.apply({"apply":"Record.edit","target":{"ids":["1"]},"values":{"title":"python-partial"}}, key="sdk-python-partial-0001")
+omitted = apply_record_edit(client, {"ids":["1"]}, {"title":"python-partial"}, key="sdk-python-partial-0001")
 assert omitted["ok"] is True
-partial = client.read({"read":"Record","select":["id","title","note","amount"],"sort":[{"field":"id","dir":"asc"}]})
+partial = read_record(client, {"read":"Record","select":["id","title","note","amount","applies"],"sort":[{"field":"id","dir":"asc"}]})
+assert partial[0]["id"] == "1"
 assert partial[0]["note"] == "preserve-me" and partial[0]["amount"] == "1.2345", partial[0]
+assert partial[0]["applies"] == 1, partial[0]
 write = {"apply":"Record.edit","target":{"ids":["1"]},"values":{"title":"python-updated","note":None,"amount":"987654321012.3456"}}
-first = client.apply(write, key="sdk-python-replay-0001")
-replay = client.apply(write, key="sdk-python-replay-0001")
+first = apply_record_edit(client, {"ids":["1"]}, {"title":"python-updated","note":None,"amount":"987654321012.3456"}, key="sdk-python-replay-0001")
+replay = apply_record_edit(client, {"ids":["1"]}, {"title":"python-updated","note":None,"amount":"987654321012.3456"}, key="sdk-python-replay-0001")
 assert first["ok"] is True and replay["replayed"] is True
-after = client.read({"read":"Record","select":["id","title","note","amount","secret"],"sort":[{"field":"id","dir":"asc"}]})
+after = read_record(client, {"read":"Record","select":["id","title","note","amount","secret","applies"],"sort":[{"field":"id","dir":"asc"}]})
+assert after[0]["id"] == "1"
 assert after[0]["note"] is None and after[0]["amount"] == "987654321012.3456" and after[0]["secret"] == "owner-only"
+assert after[0]["applies"] == 2, after[0]
 try:
     connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, "0" * 64).read({"read":"Record","select":["id"]})
 except AipError as error:
@@ -255,9 +276,9 @@ except AipError as error:
 else:
     raise AssertionError("contract drift was not rejected")
 for row_id, code in (("3","WIRE.FORBIDDEN"),("4","WIRE.MISSING_TARGET"),("404","WIRE.MISSING_TARGET")):
-    denied = client.apply({"apply":"Record.edit","target":{"ids":[row_id]},"values":{"title":"forged"}}, key="sdk-python-denial-"+row_id)
+    denied = apply_record_edit(client, {"ids":[row_id]}, {"title":"forged"}, key="sdk-python-denial-"+row_id)
     assert denied["ok"] is False and denied["code"] == code, denied
-print("Python SDK tests: 1 passed, 0 failed")
+print("Generated Python SDK tests: 1 passed, 0 failed")
 `);
     console.log(run("python3", [script], { cwd: f.dir, env: { PYTHONPATH: join(root, "product/python") }, timeout: 90_000 }));
     assertStored(f, "python-updated");
