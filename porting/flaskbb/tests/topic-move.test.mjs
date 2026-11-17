@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {test} from 'node:test';
 import {GROUPS_SQL, USERS_SQL, seedNativePostOrders, startFixture} from './harness.mjs';
@@ -19,6 +20,9 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
     serviceExtra: {workers: {
       directory: fileURLToPath(new URL('../mail/', import.meta.url)),
       language: 'python',
+      runtime_executable: process.env.RUNNER_TEMP
+        ? join(process.env.RUNNER_TEMP, 'flaskbb-upstream/bin/python')
+        : 'python3',
       enable_writes: true,
       // Enabling write extensions also validates the app's existing durable
       // jobs. This local-only broker satisfies their declared http.mail grant;

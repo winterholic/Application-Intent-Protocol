@@ -16,7 +16,7 @@ compiler/source 경로를 다시 확인했다. fixture compiler는 `expose apply
 
 Run `44027917179`는 failed다. ORM job 원문은 회귀 13건 중 12건 통과, Topic.move oracle setup 1건이 `Post(id=...)` TypeError로 error였다. date-sort 및 Topic visibility negative controls는 각 예상 실패 표식을 기록했다. Native Node suite는 30건 중 29건 통과했으나 Topic.move acceptance가 실제 `forum_moderator` 대신 `moderators` relation에 seed하려다 fixture init에서 실패했다. 따라서 이 Run에서는 HTTP 여정이 실행되지 않았다. 최소 교정은 Post를 생성 후 ID 할당하고 moderator table/column을 schema에 맞춘 것이다.
 
-재제출 Run `44028820544`에서 ORM regression은 Topic.move oracle을 포함해 통과했다. native acceptance는 fixture seed를 지나갔지만 service start가 app의 기존 `http.mail` grant를 설정에서 찾지 못해 거부됐다. 다음 Run `44029620808`에서는 로컬 `mail` integration을 선언했으나 worker 언어를 Node로 지정해 기존 `flaskbb_mail.mjs` 모듈까지 요구하는 설정 오류가 남았다. 두 Run 실패 모두 worker fixture의 구성 오류이며 제품 결함이나 포팅 선언 결함의 증거는 없다. 두 Run 모두 HTTP move 여정의 인가·rollback·read cleanup 단계에는 도달하지 않았다. 현재 test worker를 기존 FlaskBB Python mail worker 디렉터리에 배치하고 언어 설정을 Python으로 맞춘다. 로컬 DB 검사는 실행하지 않으며 G-6/전체 포팅은 미완료다.
+재제출 Run `44028820544`에서 ORM regression은 Topic.move oracle을 포함해 통과했다. native acceptance는 fixture seed를 지나갔지만 service start가 app의 기존 `http.mail` grant를 설정에서 찾지 못해 거부됐다. 다음 Run `44029620808`에서는 로컬 `mail` integration을 선언했으나 worker 언어를 Node로 지정해 기존 `flaskbb_mail.mjs` 모듈까지 요구하는 설정 오류가 남았다. Run `44030446449`에서는 Python worker directory와 언어가 맞았으나 기본 `python3` 실행 파일 탐색이 실패했다. 앞선 세 Run의 실패는 test worker fixture 설정 오류이며 제품 결함이나 포팅 선언 결함의 증거는 없다. 이 중 어느 Run도 HTTP move 여정에 도달하지 않았다. 현재 test worker가 기존 FlaskBB Python mail 디렉터리를 사용하고 CI에서 준비한 ORM venv의 Python 실행 파일을 명시한다. 로컬 DB 검사는 실행하지 않으며 G-6/전체 포팅은 미완료다.
 
 ## 2026-11-17 Post.hide/delete 선행 포인터 조건·Topic 날짜 규칙
 
