@@ -36,6 +36,44 @@ resource Locked {
   expose read { select id, value, checked; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
 }
 "#;
+const SERVICE_AGGREGATE_APP: &str = r#"
+resource Member {
+  fields { id: Id; org: Text; email: Text }
+  rows read when org = actor.org
+  field email read when id = actor
+  expose read { select id, org, email; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+}
+actor Member
+access callerVotes(a: Member) = true
+access publicVotes(a: Member) = true
+resource Record {
+  fields { id: Id; org: Text; owner: Member; title: Text; secret: Text; checked: Bool }
+  rows read when org = actor.org
+  field secret read when owner = actor
+  expose read {
+    select id, org, owner, title, secret, checked, ownVoteCount, publicVoteCount, minOwnVote, maxOwnVote
+    traverse owner { select id, email }
+    traverse votes via Vote.record { select id, owner, amount; sort id; limit 10 }
+    sort id
+    budget { rows 20; depth 2; deadline 2s; cost 1000; offset 100; cursor }
+  }
+  aggregate ownVoteCount: Int { source Vote; sourceAccess callerVotes(actor); groupKey record; where owner = actor; callerFilter none; rowOutput none; release count }
+  aggregate filteredOwnVoteCount: Int { source Vote; sourceAccess callerVotes(actor); groupKey record; where owner = actor; callerFilter read; rowOutput none; release count }
+  aggregate publicVoteCount: Int { source Vote; sourceAccess publicVotes(actor); groupKey record; callerFilter none; rowOutput none; release count }
+  aggregate minOwnVote: Int? { source Vote; sourceAccess callerVotes(actor); groupKey record; callerFilter none; rowOutput none; release min(amount) }
+  aggregate maxOwnVote: Int? { source Vote; sourceAccess callerVotes(actor); groupKey record; callerFilter none; rowOutput none; release max(amount) }
+  expose aggregate ownVoteCount
+  expose aggregate filteredOwnVoteCount
+  expose aggregate publicVoteCount
+  expose aggregate minOwnVote
+  expose aggregate maxOwnVote
+}
+resource Vote {
+  fields { id: Id; record: Record; owner: Member; amount: Int }
+  rows read when owner = actor
+  expose read { select id, record, owner, amount; filter amount.eq; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000; offset 100; cursor } }
+}
+"#;
 const SEMANTIC_DATA_APP: &str = r#"
 enum Phase { READY, DONE }
 resource Member {
@@ -73,6 +111,13 @@ async fn command(config: &Path, args: &[&str]) -> Value {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     serde_json::from_slice(&output.stdout).unwrap()
 }
+fn rejection_body_without_request_id(mut body: Value) -> Value {
+    if let Some(object) = body.as_object_mut() {
+        object.remove("requestId");
+    }
+    body
+}
+
 async fn post(address: &str, path: &str, token: &str, contract: &str, body: Value) -> Value {
     let text = body.to_string();
     let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
@@ -121,6 +166,107 @@ async fn stop(mut child: tokio::process::Child) {
     let status = std::process::Command::new("kill").args(["-TERM", &id.to_string()]).status().unwrap();
     assert!(status.success());
     assert!(tokio::time::timeout(Duration::from_secs(8), child.wait()).await.unwrap().unwrap().success());
+}
+
+struct PolicyHttpFixture {
+    _dir: tempfile::TempDir,
+    schema: String,
+    child: Option<tokio::process::Child>,
+    address: String,
+    fingerprint: String,
+    token: String,
+    peer_token: String,
+}
+
+impl PolicyHttpFixture {
+    async fn stop_server(&mut self) {
+        if let Some(child) = self.child.take() {
+            stop(child).await;
+        }
+    }
+
+    async fn cleanup(mut self) {
+        self.stop_server().await;
+        let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
+        db.batch_execute(&format!("DROP SCHEMA IF EXISTS {} CASCADE", self.schema)).await.unwrap();
+    }
+}
+
+async fn policy_db_execute(schema: &str, statement: &str) {
+    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
+    db.batch_execute(&format!("SET search_path TO {schema}; {statement}")).await.unwrap();
+}
+
+async fn policy_vote_metrics(schema: &str) -> (i64, i64, i64, f64) {
+    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
+    let row = db
+        .query_one(&format!("SELECT count(*), min(amount), max(amount), avg(amount)::float8 FROM {schema}.vote WHERE record_id=1"), &[])
+        .await
+        .unwrap();
+    (row.get(0), row.get(1), row.get(2), row.get(3))
+}
+
+async fn policy_standalone_vote_values(fixture: &PolicyHttpFixture) -> Vec<Value> {
+    let mut values = Vec::new();
+    for name in ["ownVoteCount", "minOwnVote", "maxOwnVote"] {
+        let response =
+            post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":format!("Record.{name}"),"input":{}}}))
+                .await;
+        assert_eq!(response["ok"], true, "standalone {name}: {response}");
+        values.push(response["rows"][0].clone());
+    }
+    values
+}
+
+async fn service_policy_http_fixture() -> PolicyHttpFixture {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = format!("aip_policyagg_{}", uuid::Uuid::new_v4().simple());
+    let config = dir.path().join("service.json");
+    let file = dir.path().join("policy.aip");
+    std::fs::write(&file, SERVICE_AGGREGATE_APP).unwrap();
+    let private = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
+    let public = private.to_public_key();
+    std::fs::write(
+        dir.path().join("jwks.json"),
+        json!({"keys":[{"kty":"RSA","kid":"current","alg":"RS256","use":"sig","n":URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())}]}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &config,
+        json!({"schema":schema,"database_url_env":"AIP_TEST_DATABASE","listen":"127.0.0.1:0","wire":"decimal","allowed_origins":["https://app.example.com"],"auth":{"issuer":"https://issuer.example","audience":"aip-api","jwks":{"kind":"file","path":"jwks.json"}}}).to_string(),
+    )
+    .unwrap();
+    command(&config, &["init", file.to_str().unwrap()]).await;
+    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
+    db.batch_execute(&format!(
+        "INSERT INTO {schema}.member(id,org,email) VALUES (42,'red','owner@example.com'),(99,'red','peer@example.com'),(100,'blue','other@example.com'),(101,'blue','hidden@example.com'); \
+         INSERT INTO {schema}.record(id,org,owner_id,title,secret,checked) VALUES \
+         (1,'red',42,'mine','owner-secret',false),(2,'blue',100,'hidden-middle','hidden-middle-secret',false),(3,'red',99,'peer-record','peer-secret','false'),(4,'red',101,'hidden-owner','hidden-owner-secret',false),(5,'blue',99,'foreign','hidden-secret',false); \
+         INSERT INTO {schema}.vote(id,record_id,owner_id,amount) VALUES \
+         (1,1,42,10),(2,1,42,20),(3,1,99,-900),(4,3,99,7),(5,5,99,-700)"
+    )).await.unwrap();
+    command(&config, &["principal", "bind", "--subject", "policy-user", "--actor", "42"]).await;
+    command(&config, &["principal", "bind", "--subject", "policy-peer", "--actor", "99"]).await;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let mut header = Header::new(Algorithm::RS256);
+    header.typ = Some("at+jwt".into());
+    header.kid = Some("current".into());
+    let key = EncodingKey::from_rsa_der(private.to_pkcs1_der().unwrap().as_bytes());
+    let token = encode(&header, &json!({"iss":"https://issuer.example","aud":"aip-api","sub":"policy-user","iat":now,"nbf":now,"exp":now+300}), &key)
+        .unwrap();
+    let peer_token =
+        encode(&header, &json!({"iss":"https://issuer.example","aud":"aip-api","sub":"policy-peer","iat":now,"nbf":now,"exp":now+300}), &key)
+            .unwrap();
+    let (child, listening) = start(&config, &file).await;
+    PolicyHttpFixture {
+        _dir: dir,
+        schema,
+        child: Some(child),
+        address: listening["address"].as_str().unwrap().to_owned(),
+        fingerprint: listening["fingerprint"].as_str().unwrap().to_owned(),
+        token,
+        peer_token,
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -487,6 +633,365 @@ async fn service_policy_default_deny_redaction_and_hidden_target_invariants() {
     .catch_unwind()
     .await;
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn service_policy_aggregate_noninterference_http_postgres() {
+    let mut fixture = service_policy_http_fixture().await;
+    let outcome = AssertUnwindSafe(async {
+        let query = json!({"query":{"read":"Record","select":["id","owner","secret","ownVoteCount","publicVoteCount","minOwnVote","maxOwnVote",{"votes":{"select":["id","owner","amount"]}}],"sort":[{"field":"id","dir":"asc"}]}});
+        let before = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(before["ok"], true, "{before}");
+        assert_eq!(before["rows"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["1", "3", "4"], "row policy hides another organization");
+        assert_eq!(before["rows"][0]["owner"], json!("42"), "to-one reference remains visible under target row policy");
+        assert_eq!(before["rows"][0]["secret"], "owner-secret");
+        assert_eq!(before["rows"][1]["secret"], Value::Null, "field policy redacts peer data");
+        assert_eq!(before["rows"][0]["ownVoteCount"], 2, "caller-scoped count includes only caller rows");
+        assert_eq!(before["rows"][0]["publicVoteCount"], 3, "explicitly public count includes every source row");
+        assert_eq!(before["rows"][0]["minOwnVote"], 10, "min has no where but measure() re-applies Vote rowRead, so the hidden -900 is excluded (count does not)");
+        assert_eq!(before["rows"][0]["maxOwnVote"], 20, "max has no where but measure() re-applies Vote rowRead, so hidden rows are excluded (count does not)");
+        assert_eq!(before["rows"][1]["ownVoteCount"], 0);
+        assert_eq!(before["rows"][1]["publicVoteCount"], 1);
+        assert_eq!(before["rows"][1]["minOwnVote"], Value::Null);
+        assert_eq!(before["rows"][1]["maxOwnVote"], Value::Null);
+        assert_eq!(before["rows"][0]["votes"], json!([{"id":"1","owner":"42","amount":10},{"id":"2","owner":"42","amount":20}]), "to-many traversal applies child row policy before its limit");
+        assert_eq!(before["rows"][1]["votes"], json!([]), "a child collection with only hidden rows is empty");
+        let caller_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.ownVoteCount","input":{}}})).await;
+        assert_eq!(caller_aggregate["rows"][0], 2, "standalone caller-scoped aggregate preserves its where contract");
+        let public_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await;
+        assert_eq!(public_aggregate["rows"][0], 5, "count without where does not inherit Vote rowRead and counts every source row");
+        let min_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.minOwnVote","input":{}}})).await;
+        let max_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.maxOwnVote","input":{}}})).await;
+        assert_eq!(min_aggregate["ok"], true, "{min_aggregate}");
+        assert_eq!(max_aggregate["ok"], true, "{max_aggregate}");
+        assert_eq!(min_aggregate["rows"][0], 10);
+        assert_eq!(max_aggregate["rows"][0], 20);
+        let peer_view = post(&fixture.address, "/read", &fixture.peer_token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(peer_view["rows"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["1", "3", "4"], "same-organization caller sees the row set through their own identity");
+        assert_eq!(peer_view["rows"][0]["secret"], Value::Null, "another user cannot read the owner's field");
+        assert_eq!(peer_view["rows"][0]["ownVoteCount"], 1, "peer owns vote 3 on record 1; the first caller's votes 1 and 2 are not counted");
+        assert_eq!(peer_view["rows"][0]["minOwnVote"], -900, "peer min sees only its own vote, not the first caller's 10 and 20");
+        assert_eq!(peer_view["rows"][0]["maxOwnVote"], -900);
+        assert_eq!(peer_view["rows"][1]["ownVoteCount"], 1, "peer owns vote 4 on record 3");
+        assert_eq!(peer_view["rows"][2]["ownVoteCount"], 0);
+        assert_eq!(peer_view["rows"][0]["votes"], json!([{"id":"3","owner":"99","amount":-900}]), "to-many traversal is independently filtered for the second user");
+
+        let before_metrics = policy_vote_metrics(&fixture.schema).await;
+        assert_eq!(before_metrics, (3, -900, 20, -870.0 / 3.0), "DB baseline includes hidden same-organization source rows");
+        let standalone_vote_baseline = policy_standalone_vote_values(&fixture).await;
+        assert_eq!(standalone_vote_baseline, vec![json!(2), json!(10), json!(20)]);
+        // A vote owned by a different organization also belongs to the public count, while rowRead hides it
+        // from this caller's source-value aggregates and to-many relation.
+        policy_db_execute(&fixture.schema, "INSERT INTO vote(id,record_id,owner_id,amount) VALUES (6,1,100,-5000)").await;
+        let after_cross_org_insert = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        let mut expected_cross_org_insert = before["rows"].clone();
+        expected_cross_org_insert[0]["publicVoteCount"] = json!(4);
+        assert_eq!(after_cross_org_insert["rows"], expected_cross_org_insert, "cross-organization hidden insert changes only the explicitly public count across the full row and votes response");
+        assert_eq!(after_cross_org_insert["rows"][0]["ownVoteCount"], before["rows"][0]["ownVoteCount"]);
+        assert_eq!(after_cross_org_insert["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
+        assert_eq!(after_cross_org_insert["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
+        assert_eq!(after_cross_org_insert["rows"][0]["votes"], before["rows"][0]["votes"], "hidden cross-organization vote does not change the child relation");
+        assert_eq!(policy_standalone_vote_values(&fixture).await, standalone_vote_baseline, "standalone caller count/min/max ignore hidden cross-organization vote changes");
+        policy_db_execute(&fixture.schema, "UPDATE vote SET amount=-6000 WHERE id=6").await;
+        let after_cross_org_update = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(after_cross_org_update["rows"], after_cross_org_insert["rows"], "cross-organization hidden update leaves caller-visible rows and votes unchanged");
+        assert_eq!(after_cross_org_update["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
+        assert_eq!(after_cross_org_update["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
+        assert_eq!(after_cross_org_update["rows"][0]["votes"], before["rows"][0]["votes"]);
+        assert_eq!(policy_standalone_vote_values(&fixture).await, standalone_vote_baseline, "standalone caller count/min/max ignore hidden cross-organization vote changes");
+        policy_db_execute(&fixture.schema, "DELETE FROM vote WHERE id=6").await;
+        let after_cross_org_delete = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(after_cross_org_delete["rows"], before["rows"], "cross-organization hidden delete restores the full baseline response");
+        assert_eq!(after_cross_org_delete["rows"][0]["votes"], before["rows"][0]["votes"]);
+        assert_eq!(policy_standalone_vote_values(&fixture).await, standalone_vote_baseline, "standalone caller count/min/max ignore hidden cross-organization vote changes");
+
+        policy_db_execute(&fixture.schema, "INSERT INTO vote(id,record_id,owner_id,amount) VALUES (6,1,99,-5000)").await;
+        let after_insert = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(after_insert["rows"][0]["ownVoteCount"], before["rows"][0]["ownVoteCount"]);
+        assert_eq!(after_insert["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
+        assert_eq!(after_insert["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
+        let mut expected_after_insert = before["rows"].clone();
+        expected_after_insert[0]["publicVoteCount"] = json!(4);
+        assert_eq!(after_insert["rows"], expected_after_insert, "the explicitly public count is the only full-row response difference after hidden insert");
+        assert_eq!(after_insert["rows"][0]["votes"], before["rows"][0]["votes"], "hidden insert leaves to-many votes unchanged");
+        let inserted_public_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await;
+        assert_eq!(inserted_public_aggregate["rows"][0], 6);
+        let inserted_caller_aggregate = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.ownVoteCount","input":{}}})).await;
+        assert_eq!(inserted_caller_aggregate["rows"][0], 2);
+        // count(no where) 는 rowRead 를 상속하지 않아 은닉 삽입에 반응하지만, min/max 는 measure() 가 rowRead 를 FILTER 로 걸어 반응하지 않는다.
+        let inserted_min = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.minOwnVote","input":{}}})).await;
+        let inserted_max = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.maxOwnVote","input":{}}})).await;
+        assert_eq!(inserted_min["rows"][0], 10, "standalone min ignores the hidden -5000 row through source rowRead");
+        assert_eq!(inserted_max["rows"][0], 20, "standalone max ignores hidden rows through source rowRead");
+        let insert_metrics = policy_vote_metrics(&fixture.schema).await;
+        assert_eq!(insert_metrics, (4, -5000, 20, (-5000.0 + 10.0 + 20.0 - 900.0) / 4.0));
+        policy_db_execute(&fixture.schema, "UPDATE vote SET amount=-6000 WHERE id=6").await;
+        let update_metrics = policy_vote_metrics(&fixture.schema).await;
+        assert_eq!(update_metrics, (4, -6000, 20, (-6000.0 + 10.0 + 20.0 - 900.0) / 4.0));
+        let after_update = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(after_update["rows"][0]["ownVoteCount"], before["rows"][0]["ownVoteCount"]);
+        assert_eq!(after_update["rows"][0]["publicVoteCount"], 4);
+        assert_eq!(after_update["rows"][0]["minOwnVote"], before["rows"][0]["minOwnVote"]);
+        assert_eq!(after_update["rows"][0]["maxOwnVote"], before["rows"][0]["maxOwnVote"]);
+        assert_eq!(after_update["rows"], after_insert["rows"], "hidden-only update does not alter caller output or public row count");
+        assert_eq!(post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await["rows"][0], 6);
+        policy_db_execute(&fixture.schema, "DELETE FROM vote WHERE id=6").await;
+        let delete_metrics = policy_vote_metrics(&fixture.schema).await;
+        assert_eq!(delete_metrics, before_metrics);
+        let after_delete = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(after_delete["rows"], before["rows"], "hidden-only delete restores the caller response");
+        assert_eq!(post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"aggregate":"Record.publicVoteCount","input":{}}})).await["rows"][0], 5);
+
+        let bad_cursor = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"id","dir":"asc"}],"after":"not-a-cursor"}})).await;
+        assert_eq!(bad_cursor["code"], "WIRE.BAD_CURSOR", "malformed cursor is rejected");
+        let votes = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, json!({"query":{"read":"Vote","select":["id","record","owner","amount"],"sort":[{"field":"id","dir":"asc"}]}})).await;
+        assert_eq!(votes["rows"], json!([{"id":"1","record":"1","owner":"42","amount":10},{"id":"2","record":"1","owner":"42","amount":20}]), "child collection read excludes other owners and retains to-one references");
+        policy_db_execute(&fixture.schema, "UPDATE member SET org='blue' WHERE id=42").await;
+        let changed_policy = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query).await;
+        assert_eq!(changed_policy["rows"], json!([{"id":"2","owner":"100","secret":null,"ownVoteCount":0,"publicVoteCount":0,"minOwnVote":null,"maxOwnVote":null,"votes":[]},{"id":"5","owner":null,"secret":null,"ownVoteCount":0,"publicVoteCount":1,"minOwnVote":null,"maxOwnVote":null,"votes":[]}]), "same identity is re-evaluated against current row and reference policy");
+
+        let unsupported_avg = SERVICE_AGGREGATE_APP.replace("release max(amount)", "release avg(amount)");
+        assert_ne!(unsupported_avg, SERVICE_AGGREGATE_APP);
+        let avg_file = fixture._dir.path().join("unsupported-avg.aip");
+        std::fs::write(&avg_file, unsupported_avg).unwrap();
+        fixture.stop_server().await;
+        let output = Command::new(env!("CARGO_BIN_EXE_aip")).arg("service").arg("init").arg(&avg_file).arg("--config").arg(fixture._dir.path().join("service.json")).env("AIP_TEST_DATABASE", DB).output().await.unwrap();
+        assert!(!output.status.success(), "avg is currently unsupported and must not be treated as an HTTP aggregate assertion");
+    }).catch_unwind().await;
+    fixture.cleanup().await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn read_policy_pages(fixture: &PolicyHttpFixture) -> (Vec<Value>, Vec<Value>) {
+    let mut offsets = Vec::new();
+    for offset in 0..=3 {
+        offsets.push(
+            post(
+                &fixture.address,
+                "/read",
+                &fixture.token,
+                &fixture.fingerprint,
+                json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"id","dir":"asc"}],"limit":1,"offset":offset}}),
+            )
+            .await,
+        );
+    }
+    let mut cursors = Vec::new();
+    for after in ["1", "3", "4"] {
+        cursors.push(
+            post(
+                &fixture.address,
+                "/read",
+                &fixture.token,
+                &fixture.fingerprint,
+                json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"id","dir":"asc"}],"limit":1,"after":{"id":after}}}),
+            )
+            .await,
+        );
+    }
+    (offsets, cursors)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn service_policy_http_pagination_ignores_hidden_middle_rows() {
+    let fixture = service_policy_http_fixture().await;
+    let outcome = AssertUnwindSafe(async {
+        let (baseline_offsets, baseline_cursors) = read_policy_pages(&fixture).await;
+        assert_eq!(
+            baseline_offsets.iter().map(|page| page["rows"].clone()).collect::<Vec<_>>(),
+            vec![json!([{"id":"1"}]), json!([{"id":"3"}]), json!([{"id":"4"}]), json!([])]
+        );
+        assert_eq!(
+            baseline_cursors.iter().map(|page| page["rows"].clone()).collect::<Vec<_>>(),
+            vec![json!([{"id":"3"}]), json!([{"id":"4"}]), json!([])]
+        );
+        assert!(
+            baseline_offsets.iter().chain(&baseline_cursors).all(|page| page["ok"] == true),
+            "every offset and cursor response must be a successful read"
+        );
+
+        policy_db_execute(&fixture.schema, "UPDATE record SET title='changed-hidden-middle', secret='changed-hidden-secret' WHERE id=2").await;
+        let (changed_offsets, changed_cursors) = read_policy_pages(&fixture).await;
+        assert_eq!(
+            (changed_offsets, changed_cursors),
+            (baseline_offsets.clone(), baseline_cursors.clone()),
+            "changing an unauthorized middle row preserves pages and terminal responses"
+        );
+
+        policy_db_execute(&fixture.schema, "DELETE FROM record WHERE id=2").await;
+        let (deleted_offsets, deleted_cursors) = read_policy_pages(&fixture).await;
+        assert_eq!(
+            (deleted_offsets, deleted_cursors),
+            (baseline_offsets.clone(), baseline_cursors.clone()),
+            "deleting an unauthorized middle row preserves pages and terminal responses"
+        );
+
+        policy_db_execute(
+            &fixture.schema,
+            "INSERT INTO record(id,org,owner_id,title,secret,checked) VALUES (2,'blue',100,'inserted-hidden-middle','inserted-hidden-secret',false)",
+        )
+        .await;
+        let (inserted_offsets, inserted_cursors) = read_policy_pages(&fixture).await;
+        assert_eq!(
+            (inserted_offsets, inserted_cursors),
+            (baseline_offsets, baseline_cursors),
+            "inserting an unauthorized middle row preserves pages and terminal responses"
+        );
+    })
+    .catch_unwind()
+    .await;
+    fixture.cleanup().await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn service_policy_http_nested_to_one_hides_target_rows_and_fields() {
+    let fixture = service_policy_http_fixture().await;
+    let outcome = AssertUnwindSafe(async {
+        let query = json!({"query":{"read":"Record","select":["id",{"owner":{"select":["id","email"]}}],"sort":[{"field":"id","dir":"asc"}]}});
+        let before = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
+        assert_eq!(before["ok"], true, "{before}");
+        assert_eq!(
+            before["rows"],
+            json!([
+                {"id":"1","owner":{"id":"42","email":"owner@example.com"}},
+                {"id":"3","owner":{"id":"99","email":null}},
+                {"id":"4","owner":null}
+            ]),
+            "nested reference access must apply target row policy and target field policy"
+        );
+
+        policy_db_execute(&fixture.schema, "UPDATE member SET email='changed-peer@example.com' WHERE id=99").await;
+        let after = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query).await;
+        assert_eq!(after["rows"], before["rows"], "changing a hidden nested field does not alter the caller response");
+    })
+    .catch_unwind()
+    .await;
+    fixture.cleanup().await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn service_policy_caller_filter_read_and_none_boundaries() {
+    let fixture = service_policy_http_fixture().await;
+    let outcome = AssertUnwindSafe(async {
+        let allowed = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"aggregate":"Record.filteredOwnVoteCount","input":{},"filter":[{"field":"amount","op":"eq","value":20}]}}),
+        )
+        .await;
+        assert_eq!(allowed["ok"], true, "callerFilter read accepts an allowed filter: {allowed}");
+        assert_eq!(allowed["rows"], json!([1]), "callerFilter read filters inside the explicitly caller-scoped aggregate");
+
+        let rejected = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"aggregate":"Record.ownVoteCount","input":{},"filter":[]}}),
+        )
+        .await;
+        assert_eq!(rejected["code"], "WIRE.FILTER_NOT_ALLOWED", "callerFilter none rejects even an empty caller filter");
+        assert!(!rejected.to_string().contains("-900"), "callerFilter rejection must not include source row values: {rejected}");
+        policy_db_execute(&fixture.schema, "UPDATE vote SET amount=-901 WHERE id=3").await;
+        let changed_hidden_source = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"aggregate":"Record.ownVoteCount","input":{},"filter":[]}}),
+        )
+        .await;
+        assert_eq!(
+            rejection_body_without_request_id(changed_hidden_source.clone()),
+            rejection_body_without_request_id(rejected.clone()),
+            "callerFilter rejection body, excluding the per-request correlation id, is identical after hidden source row value changes"
+        );
+        assert!(!changed_hidden_source.to_string().contains("-901"));
+    })
+    .catch_unwind()
+    .await;
+    fixture.cleanup().await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn service_policy_http_hidden_fields_cannot_filter_or_sort() {
+    let fixture = service_policy_http_fixture().await;
+    let outcome = AssertUnwindSafe(async {
+        let hidden_filter = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"read":"Record","select":["id"],"filter":[{"field":"secret","op":"eq","value":"peer-secret"}]}}),
+        )
+        .await;
+        assert_eq!(hidden_filter["code"], "WIRE.FILTER_NOT_ALLOWED", "a field-hidden filter is not part of this read contract");
+        assert!(
+            !hidden_filter.to_string().contains("peer-secret"),
+            "filter rejection must not return hidden field values or row data: {hidden_filter}"
+        );
+        let hidden_sort = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"secret","dir":"asc"}]}}),
+        )
+        .await;
+        assert_eq!(hidden_sort["code"], "WIRE.SORT_NOT_ALLOWED", "a field-hidden sort is not part of this read contract");
+        assert!(!hidden_sort.to_string().contains("peer-secret"), "sort rejection must not return hidden field values or row data: {hidden_sort}");
+        policy_db_execute(&fixture.schema, "UPDATE record SET secret='replacement-hidden-secret' WHERE id=2").await;
+        let changed_value_filter = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"read":"Record","select":["id"],"filter":[{"field":"secret","op":"eq","value":"replacement-hidden-secret"}]}}),
+        )
+        .await;
+        assert_eq!(
+            rejection_body_without_request_id(changed_value_filter.clone()),
+            rejection_body_without_request_id(hidden_filter.clone()),
+            "hidden filter denial, excluding the per-request correlation id, is identical across different underlying secret values"
+        );
+        assert!(!changed_value_filter.to_string().contains("replacement-hidden-secret"));
+        let changed_hidden_sort = post(
+            &fixture.address,
+            "/read",
+            &fixture.token,
+            &fixture.fingerprint,
+            json!({"query":{"read":"Record","select":["id"],"sort":[{"field":"secret","dir":"asc"}]}}),
+        )
+        .await;
+        assert_eq!(
+            rejection_body_without_request_id(changed_hidden_sort.clone()),
+            rejection_body_without_request_id(hidden_sort.clone()),
+            "hidden sort denial, excluding the per-request correlation id, is identical across different underlying secret values"
+        );
+        assert!(
+            !changed_hidden_sort.to_string().contains("replacement-hidden-secret"),
+            "sort rejection must not return changed hidden values: {changed_hidden_sort}"
+        );
+    })
+    .catch_unwind()
+    .await;
+    fixture.cleanup().await;
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }

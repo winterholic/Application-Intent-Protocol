@@ -156,3 +156,25 @@ The official TypeScript SDK exposes the same `client.session()` check and return
 ## UUID Id
 
 `id: Uuid` resource와 그 Ref/X.Id는 safe/decimal 모두 정규 UUID 문자열이다. TypeScript는 리소스별 Id 조건부 타입, Python `gen --lang python`은 NewType(str)와 선택형 Row 타입을 생성한다. read/filter/after/create/apply/수정 입력·pending 복구에 같은 값을 전달한다. 숫자 Id의 V13 규칙은 그대로다. 잘못된 종류의 성공응답은 pending으로 보존한다. [UUID·실 DB 채택 검증](../plan-docs/uuid-adoption/DESIGN.md)을 참고한다.
+
+## Aggregate authorization contract
+
+An aggregate is a separately exposed capability. `sourceAccess` determines which source rows the aggregate may read; the source resource's ordinary `rows read` policy is not uniformly inherited by every measure. The current service contract is intentionally asymmetric:
+
+- `count` counts the source rows selected by `sourceAccess` and the aggregate's declared `where`. It does **not** apply source `rows read`. Treat a count as an explicit disclosure: callers may infer changes in that declared population. Use a restrictive `sourceAccess` and/or `where` when the complete population must not be public.
+- `sum`, `min`, and `max` apply source `rows read` as a SQL `FILTER`, in addition to `sourceAccess` and `where`. Their values therefore ignore rows hidden by the source resource's row policy. Standalone aggregate calls use this same measure path.
+- `groupKey` scopes a per-row aggregate. `callerFilter none` rejects a request filter; `callerFilter read` allows only the declared filter capability. A caller filter is not a substitute for the server's `sourceAccess` or `where`.
+
+These rules define the noninterference boundary. Hidden source-row changes leave caller-scoped counts, filtered value aggregates, ordinary reads, and traversed relations unchanged when their declared predicates exclude those rows. A count intentionally authorized over a broader population is an explicit public exception: changes to that population can change the count. Field-hidden values remain unavailable for filtering and sorting, and rejection responses do not disclose the value or matching rows. The denial code/message/retry payload stays the same as hidden values change; `requestId` is intentionally unique correlation metadata for each request.
+
+For example, the service policy regression declares `ownVoteCount` with `sourceAccess callerVotes(actor)` and `where owner = actor`, but no source `rows read` filter is added to count. `publicVoteCount` has no `where`, so it counts every source vote permitted by `sourceAccess`. `minOwnVote` and `maxOwnVote` omit `where`; their source Vote `rows read when owner = actor` is applied by the measure. The tests compare both same-organization and cross-organization hidden vote changes, including the full `votes` relation response.
+
+### Standalone counts in FaceReview
+
+The repository's standalone count call sites include `Record.publicVoteCount` in `crates/aip-cli/tests/service_flow.rs`; its declaration deliberately has no `where` and `callerFilter none`, and the test asserts that it counts all rows authorized by `sourceAccess`. This is the explicit broad-count example and public exception in the policy regression.
+
+The FaceReview product extension calls `User.totalCount` and `VideoRequest.pendingCount` without a request filter in `extensions/slice14h_dashboard.py`. Both declarations have an aggregate `where`; `User.totalCount` uses `callerFilter read` and `VideoRequest.pendingCount` uses `callerFilter none`. `extensions/slice13b_lists.py` does not call a standalone total: its comment records that it pages IDs because that extension cannot supply a caller filter to `Video.totalCount`. The `slice13e` reference oracle calls `User.totalCount`, `VideoRequest.totalCount`, `Video.totalCount`, and `Comment.totalCount`, whose declarations each have explicit admin/source `where` and `callerFilter read`; oracle calls include both filtered totals and a few unfiltered requests.
+
+FaceReview has no identified standalone count call whose declaration omits both `where` and `callerFilter`. Its grouped per-row `User.watchCount`/`commentCount` and `Video.likeCount` intentionally omit `where` and `callerFilter none`; they are selected in reads rather than called standalone and deliberately expose the counts allowed by their broad `sourceAccess`.
+
+Changing `count` to inherit source `rows read` by default would alter the established API contract for the broad `Record.publicVoteCount` example and grouped FaceReview `watchCount`, `commentCount`, and `likeCount`, and could silently reduce existing totals or conflict with an aggregate `where` that already defines the intended population. This change is not made here. Prefer explicit `sourceAccess`, `where`, and `callerFilter` declarations; a future fail-closed default would require migration diagnostics and review of all aggregate declarations and callers before rollout.
