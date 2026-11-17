@@ -141,8 +141,7 @@ fn measure(facts: &Value, cx: &mut Ctx<'_>, aggregate: &Value, alias: &str) -> R
             Ok(format!("{op}(CASE WHEN {visible} THEN {} END)", cx.qualified(alias, &col(f)?)))
         }
         (Some("sum"), Some(f)) => Ok(format!("coalesce(sum({alias}.{}) FILTER (WHERE {visible}), 0)::bigint", col(f)?)),
-        // TEMP MUTATION CHECK: omit the source rowRead FILTER to prove the service regression detects a leak.
-        (Some(op @ ("min" | "max")), Some(f)) => Ok(format!("{op}({alias}.{})", col(f)?)),
+        (Some(op @ ("min" | "max")), Some(f)) => Ok(format!("{op}({alias}.{}) FILTER (WHERE {visible})", col(f)?)),
         (r, f) => Err(internal(format!("집계 release {r:?}({f:?}) 미지원"))),
     }
 }
