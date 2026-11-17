@@ -1,5 +1,13 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-17 PR #11 predicate latest 교정 — 기존 exists 비교 형태
+
+Run `44046989694` / job `133915030158`(HEAD `22a1726d`)에서 ORM 13건과 source stale 5필드 보존 JSON은 성공했으나 HTTP fixture-init이 `topicMoveForumKeepsProjection`의 predicate 내부 `latest` 때문에 `DEF.UNSUPPORTED_EFFECT`로 중단됐다. 기존 바이너리 `target/debug/aip service check porting/flaskbb/app.aip`가 로컬에서 같은 오류(line 51)를 재현했다.
+
+predicate를 `topicDeleteKeepsForum`과 같은 형태로 바꿨다: 현재 `last_post`가 `topicMoveForumCandidate`이고, 같은 Forum의 유효 후보 중 그보다 `date_created`가 늦은 것이 없을 때만 보존한다. 후보 없음, 포인터가 다른 Forum으로 이동, 더 늦은 후보 존재는 모두 보존 조건이 거짓이라 기존 최신 후보 갱신/전체 NULL 경로를 탄다. 새 selector·DSL·core 변경과 ID tie-break는 없다. 원본 `update_last_post`의 정렬은 `date_created desc limit 1`뿐이라 동률 승자가 정해져 있지 않다. 따라서 최대 날짜를 가진 기존 포인터 보존은 원본이 허용하는 결과 중 하나이고, 원본 동률 결과와 같다고 주장하지 않는다.
+
+음성 대조: `test_topic_move_fixture.py`(표준 라이브러리)가 공유 fixture에서 포인터 43이 유일한 최대 후보임을 확인하고, 무조건 갱신이면 다섯 필드가 stale 기대값과 달라져 회귀가 실패함을 확인한다. 이는 제품 HTTP 경로 음성 대조가 아니며, 로컬 DB 실행 금지 때문에 제품 수준 음성 대조는 미실행이다.
+
 ## 2026-11-17 PR #11 독립 검증 — Topic.move 투영 포인터 동일 조건
 
 원본 `Forum.update_last_post`를 `upstream/flaskbb/forum/models.py`에서 재확인했다. 후보 Post가 없으면 포인터와 네 필드를 모두 비우고, 후보가 있으면 `last_post != self.last_post`일 때만 last_post·title·user·username·created를 함께 대입한다. 따라서 기존 포인터가 후보와 같으면 투영 필드만 어긋나 있어도 원본은 그 상태를 보존한다. AIP의 Topic.move 투영이 매번 다섯 값을 다시 쓰던 것은 불일치였다.

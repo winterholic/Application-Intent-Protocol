@@ -28,6 +28,7 @@ on:
       - 'porting/flaskbb/tests/test_post_oracle_gap.py'
       - 'porting/flaskbb/tests/record_command.py'
       - 'porting/flaskbb/tests/test_record_command.py'
+      - 'porting/flaskbb/tests/test_topic_move_fixture.py'
       - 'porting/flaskbb/tests/topic-move-regression.json'
       - 'porting/flaskbb/tests/topic-move.test.mjs'
       - 'porting/flaskbb/tests/fixtures/topic-move-private-grant-repro.aip'
@@ -70,7 +71,7 @@ jobs:
         id: record-command-tests
         env:
           PYTHONDONTWRITEBYTECODE: '1'
-        run: PYTHONPATH=porting/flaskbb/tests python3 -B -m unittest -v test_record_command
+        run: PYTHONPATH=porting/flaskbb/tests python3 -B -m unittest -v test_record_command test_topic_move_fixture
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '26'
