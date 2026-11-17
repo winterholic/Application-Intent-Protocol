@@ -53,6 +53,10 @@ name = "ariari_e2e"
 required-features = ["poc-runtime"]
 
 [[test]]
+name = "core_semantic_fixture"
+required-features = ["poc-runtime"]
+
+[[test]]
 name = "cms_e2e"
 required-features = ["poc-runtime"]
 
