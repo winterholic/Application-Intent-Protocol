@@ -239,13 +239,15 @@ impl WorkerLaunchConfig {
                 // owned and unreaped when this deadline fires. Never signal a saved PID/PGID later.
                 crate::reap::kill_tree(leader_pid);
                 let _kill_result = child.start_kill();
+                // Sample /proc before try_wait: try_wait reaps an exited leader and would erase
+                // the OS evidence that this Child still owns its zombie at cleanup entry.
+                #[cfg(target_os = "linux")]
+                let process_sample = linux_probe_process_sample(pid);
                 let child_status = match child.try_wait() {
                     Ok(Some(status)) => format!("exited({status})"),
                     Ok(None) => "running".to_owned(),
                     Err(error) => format!("unknown({error})"),
                 };
-                #[cfg(target_os = "linux")]
-                let process_sample = if diagnostic { linux_probe_process_sample(pid) } else { String::new() };
                 #[cfg(target_os = "linux")]
                 if diagnostic {
                     eprintln!(
@@ -265,21 +267,12 @@ impl WorkerLaunchConfig {
                     );
                 }
                 #[cfg(target_os = "linux")]
-                let timeout_message = if diagnostic {
-                    format!(
-                        "worker runtime probe exceeded {} seconds; pid={pid}; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
-                        RUNTIME_PROBE_DEADLINE.as_secs(),
-                        stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
-                        stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
-                    )
-                } else {
-                    format!(
-                        "worker runtime probe exceeded {} seconds; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
-                        RUNTIME_PROBE_DEADLINE.as_secs(),
-                        stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
-                        stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
-                    )
-                };
+                let timeout_message = format!(
+                    "worker runtime probe exceeded {} seconds; pid={pid}; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
+                    RUNTIME_PROBE_DEADLINE.as_secs(),
+                    stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                    stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                );
                 #[cfg(not(target_os = "linux"))]
                 let timeout_message = format!(
                     "worker runtime probe exceeded {} seconds; child_status_at_cleanup=not_reaped_before_cleanup; child_status_after_cleanup={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
@@ -313,6 +306,11 @@ fn linux_probe_process_sample(root_pid: u32) -> String {
         String::from_utf8_lossy(&bytes).replace(['\0', '\n'], " ")
     }
 
+    fn status_field<'a>(status: &'a str, field: &str) -> &'a str {
+        let words = status.split_whitespace().collect::<Vec<_>>();
+        words.windows(2).find(|pair| pair[0] == field).map_or("unknown", |pair| pair[1])
+    }
+
     fn visit(pid: u32, depth: usize, seen: &mut Vec<u32>, samples: &mut Vec<String>) {
         const MAX_DEPTH: usize = 3;
         const MAX_PROCESSES: usize = 16;
@@ -322,12 +320,14 @@ fn linux_probe_process_sample(root_pid: u32) -> String {
         seen.push(pid);
         let proc_dir = std::path::PathBuf::from("/proc").join(pid.to_string());
         let status = prefix(&proc_dir.join("status"), 256);
+        let state = status_field(&status, "State:");
+        let ppid = status_field(&status, "PPid:");
         let wchan = prefix(&proc_dir.join("wchan"), 64);
         let cmdline = prefix(&proc_dir.join("cmdline"), 256);
         let children_path = proc_dir.join("task").join(pid.to_string()).join("children");
         let children_text = prefix(&children_path, 128);
         let children = children_text.split_whitespace().filter_map(|item| item.parse::<u32>().ok()).take(8).collect::<Vec<_>>();
-        samples.push(format!("pid={pid} status={status:?} wchan={wchan:?} cmdline={cmdline:?} children={children:?}"));
+        samples.push(format!("pid={pid} state={state} ppid={ppid} status={status:?} wchan={wchan:?} cmdline={cmdline:?} children={children:?}"));
         for child in children {
             visit(child, depth + 1, seen, samples);
             if seen.len() >= MAX_PROCESSES {
@@ -1137,6 +1137,9 @@ mod tests {
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         let message = error.to_string();
         let pid: i32 = std::fs::read_to_string(&pid_file).expect("fixture recorded its detached child").trim().parse().unwrap();
+        let leader_pid = message.split("pid=").nth(1).and_then(|rest| rest.split(';').next()).expect("timeout includes leader PID");
+        let owned_zombie = format!("root_pid={leader_pid} max_depth=");
+        let leader_status = format!("pid={leader_pid} state=Z ppid={}", std::process::id());
 
         // Isolation::None does not promise recovery of a setsid child after its parent exits.
         // Reap this fixture explicitly so the Linux runner is not left with a sleeper.
@@ -1147,6 +1150,7 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert!(message.contains("child_status_at_cleanup=not_reaped_before_cleanup"), "{message}");
+        assert!(message.contains(&owned_zombie) && message.contains(&leader_status), "leader ownership observation missing: {message}");
         assert!(detached_survived, "the setsid fixture should outlive its exited parent under Isolation::None");
     }
 
