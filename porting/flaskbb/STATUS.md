@@ -1,5 +1,15 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-17 G6 PostOrder·순서 기준별 회귀
+
+`cycle/p1-flaskbb-g6-20261117`의 PostgreSQL 17 집중 Run에서 원본 ORM 10 tests와 source-order import/fallback 경로를 확인했다. `tests/post-order-regression.json`의 동일 입력(원 Post ID 41–44, 42의 시각이 43보다 늦음)에 대해 원본 FlaskBB ORM과 AIP가 Post.hide 및 Post.delete 후 Forum 대체 글 ID 43을 골랐다. 포팅은 두 전이에서 `Post.date_created`로 고르던 AIP 구현 결함을 `PostOrder.id` 순서로 고쳤고, Forum의 해당 visible 후보 중 mapping이 비어 있으면 전이를 거부한다. `topicHide`는 기존 source-ID 순서를 유지한다. `Topic.delete`와 `Forum.update_last_post`는 별도의 원본 timestamp 기준을 유지하며 tie에서 특정 승자를 강제하지 않는다.
+
+같은 Run의 import Python 5 tests, PostOrder manifest 21 tests, compiler 4, generated reference 21, PostgreSQL selected-target 1, native/import/migration/projection Node 27/27, UI host 27 tests가 통과했다. Manifest 검증은 duplicate/missing/conflict/reverse-link/high-water/exact replay를 포함한다. 이전 schema fixture가 G6 필드 제거 뒤 새 source_order effect를 남기던 테스트 자산 결함을 고쳐 migration 회귀도 통과했다. workflow는 feature 브랜치 push에서만 실행되도록 등록했으며 `pull_request` 이벤트는 없다.
+
+동등성 확인: 위 공유 입력의 Post.hide/Post.delete Forum fallback은 원본 ORM과 AIP에서 결과가 같다. Topic.hide의 source-ID top/non-top/only/NULL 경계, Topic.delete의 날짜 후보/hidden viewer 경계, 원 ID mapping·high-water·rollback·replay 경계는 별도 AIP PG suite에서 통과했다.
+
+미확인: 원본 `Topic.posts[-2]` 관계에는 명시 `ORDER BY`가 없어 Post→Topic second-last 결과를 일반화할 수 없다. Post.unhide도 첫 visible 관계 후보를 순서 없이 고른다. 여러 후보가 이 모호성을 바꾸는 케이스의 원본 동등성, Topic.move의 양 Forum 갱신, 원본 DB manifest provenance/freshness, full live-catalog drift, 원본 물리 삭제/retention과 tombstone 등가성은 검증하지 않았다. 순서 업무별 차이가 달라 범용 selector DSL은 추가하지 않았고, 이 open 범위 때문에 G6와 전체 포팅은 계속 미완료다.
+
 ## 2026-11-06 답글의 원자 publish 연결·확대 회귀 검증
 
 집중 [42155532950](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/42155532950), 실제 checkout `4873f03d9130b4702746cc4db60d281fe86474bd`에서 import Python 5건·컴파일러 4건·생성 문서 21건·선택 대상 PostgreSQL 1건·앱 HTTP/PG 25건·UI host 27건이 통과했다. 앱 25건에는 아래 Topic.delete 9경계와 실제 SDK/UI 글·답글 저장, readonly 쓰기 거부 및 합성 last-post 재계산 회귀가 포함된다. 전용 Python 환경을 명시해 SDK 여정도 DB와 서버에 실제 진입했다.
