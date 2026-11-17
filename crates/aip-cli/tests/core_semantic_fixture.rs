@@ -40,13 +40,14 @@ query EmptyAggregates(account: Account) {
   from Account a
   where a = account
   select {
-    count: count(Entry x where x.account = account)
-    sum: sum(Entry x where x.account = account: x.amount)
-    min: min(Entry x where x.account = account: x.amount)
-    max: max(Entry x where x.account = account: x.amount)
+    count: count(Measure x where x.account = account)
+    sum: sum(Measure x where x.account = account: x.amount)
+    min: min(Measure x where x.account = account: x.amount)
+    max: max(Measure x where x.account = account: x.amount)
   }
 }
 entity Vote { entry: Entry }
+entity Measure { account: Account amount: Int }
 "#;
 
 const ACCOUNT_ID: &str = "00000000-0000-4000-8000-000000000042";

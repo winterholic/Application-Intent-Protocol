@@ -42,6 +42,7 @@ fn shared_fixture_static_ir_shape_contract() {
         expected["emptyCount"].as_u64().unwrap() as usize
     );
     assert_eq!(fixture["unsupported"]["avgAggregate"]["service"], "unsupported");
+    assert_eq!(fixture["unsupported"]["decimalAggregates"]["service"], "unsupported");
     assert_eq!(fixture["cases"].as_array().unwrap().len(), 3);
 
     let checked = check_source(SOURCE);
