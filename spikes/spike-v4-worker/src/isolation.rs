@@ -133,12 +133,27 @@ impl Default for WorkerLaunchConfig {
 impl WorkerLaunchConfig {
     /// Verify the selected runtime, mounts, environment, and isolation before accepting work.
     pub async fn probe(&self, lang: crate::Lang, ext_dir: &std::path::Path) -> std::io::Result<()> {
+        #[cfg(target_os = "linux")]
+        let diagnostic = std::env::var("AIP_TEST_PROBE_DIAGNOSTICS").as_deref() == Ok("1");
+        #[cfg(target_os = "linux")]
+        let probe_started = diagnostic.then(std::time::Instant::now);
         crate::cgroup::validate_config(self.cgroup_root.as_deref(), self.resource_limits)?;
         self.isolation.validate_available()?;
         let program = runtime_path(lang, self)?;
+        #[cfg(target_os = "linux")]
+        let probe_kind = match program.file_name().and_then(OsStr::to_str) {
+            Some("node") if lang == crate::Lang::Node && matches!(self.isolation, Isolation::Auto | Isolation::LinuxBubblewrap) => {
+                "isolated-node-version"
+            }
+            Some("hung-runtime.sh") => "hung-runtime-negative-control",
+            Some("node") if lang == crate::Lang::Node => "direct-node-version",
+            _ => "other-runtime-probe",
+        };
         let ext_dir = extension_path(self.isolation, ext_dir)?;
         let args = [OsString::from("--version")];
         let spec = command_spec(self.isolation, program.as_os_str(), &args, &ext_dir, &self.read_only_paths)?;
+        #[cfg(target_os = "linux")]
+        let probe_command = diagnostic.then(|| (spec.program.clone(), spec.args.clone()));
         let mut command = tokio::process::Command::new(spec.program);
         command.args(spec.args);
         configure_environment(&mut command, self)?;
@@ -149,13 +164,44 @@ impl WorkerLaunchConfig {
             cgroup.attach(&mut command)?;
         }
         let mut child = command.spawn()?;
+        #[cfg(target_os = "linux")]
+        let probe_sequence = {
+            static NEXT_PROBE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            if diagnostic {
+                NEXT_PROBE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            } else {
+                0
+            }
+        };
+        #[cfg(target_os = "linux")]
+        if diagnostic {
+            let (probe_program, probe_args) = probe_command.as_ref().expect("diagnostic command snapshot");
+            eprintln!(
+                "AIP_PROBE_DIAG event=start sequence={probe_sequence} condition={} probe_kind={probe_kind} pid={} lang={lang:?} isolation={:?} runtime={program:?} launch_program={probe_program:?} launch_args={probe_args:?}",
+                std::env::var("AIP_EXPERIMENT_CONDITION").unwrap_or_else(|_| "unset".to_owned()),
+                child.id().unwrap_or_default(),
+                self.isolation,
+            );
+        }
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("worker runtime probe stdout pipe was not created"))?;
         let stderr = child.stderr.take().ok_or_else(|| std::io::Error::other("worker runtime probe stderr pipe was not created"))?;
+        let stdout_bytes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let stderr_bytes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let probe = async {
-            let (status, stdout, stderr) = tokio::join!(child.wait(), capture_bounded(stdout, 4096), capture_bounded(stderr, 4096));
+            let (status, stdout, stderr) =
+                tokio::join!(child.wait(), capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));
             let status = status?;
             let stdout = stdout?;
             let stderr = stderr?;
+            #[cfg(target_os = "linux")]
+            if diagnostic {
+                eprintln!(
+                    "AIP_PROBE_DIAG event=exit sequence={probe_sequence} probe_kind={probe_kind} elapsed_ms={} status={status} stdout={:?} stderr={:?}",
+                    probe_started.expect("diagnostic start time").elapsed().as_millis(),
+                    String::from_utf8_lossy(&stdout),
+                    String::from_utf8_lossy(&stderr)
+                );
+            }
             if !status.success() {
                 return Err(std::io::Error::other(format!(
                     "worker runtime probe exited with {status}; stdout={:?}; stderr={:?}",
@@ -171,8 +217,55 @@ impl WorkerLaunchConfig {
         let result = match tokio::time::timeout(std::time::Duration::from_secs(2), probe).await {
             Ok(result) => result,
             Err(_) => {
-                let _ = child.start_kill();
-                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "worker runtime probe exceeded 2 seconds"))
+                #[cfg(target_os = "linux")]
+                let pid = child.id().unwrap_or_default();
+                let child_status = match child.try_wait() {
+                    Ok(Some(status)) => format!("exited({status})"),
+                    Ok(None) => "running".to_owned(),
+                    Err(error) => format!("unknown({error})"),
+                };
+                let _kill_result = child.start_kill();
+                #[cfg(target_os = "linux")]
+                let process_sample = if diagnostic { linux_probe_process_sample(pid) } else { String::new() };
+                #[cfg(target_os = "linux")]
+                if diagnostic {
+                    eprintln!(
+                        "AIP_PROBE_DIAG event=timeout sequence={probe_sequence} probe_kind={probe_kind} elapsed_ms={} pid={pid} child_status={child_status} proc_sample={process_sample:?} stdout_bytes_read={} stderr_bytes_read={} action=start_kill_requested kill_result={_kill_result:?}",
+                        probe_started.expect("diagnostic start time").elapsed().as_millis(),
+                        stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                        stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                    );
+                }
+                #[cfg(target_os = "linux")]
+                let residual_pid_present = diagnostic && std::path::PathBuf::from("/proc").join(pid.to_string()).exists();
+                #[cfg(target_os = "linux")]
+                if diagnostic {
+                    eprintln!(
+                        "AIP_PROBE_DIAG event=post-kill sequence={probe_sequence} pid={pid} residual_pid_present={residual_pid_present} child_status={:?}",
+                        child.try_wait()
+                    );
+                }
+                #[cfg(target_os = "linux")]
+                let timeout_message = if diagnostic {
+                    format!(
+                        "worker runtime probe exceeded 2 seconds; pid={pid}; child_status={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                        stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                    )
+                } else {
+                    format!(
+                        "worker runtime probe exceeded 2 seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                        stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                    )
+                };
+                #[cfg(not(target_os = "linux"))]
+                let timeout_message = format!(
+                    "worker runtime probe exceeded 2 seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                    stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                    stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                );
+                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, timeout_message))
             }
         };
         if let Some(cgroup) = cgroup {
@@ -182,6 +275,49 @@ impl WorkerLaunchConfig {
         }
         result
     }
+}
+
+/// Read only a few capped `/proc` fields for timeout diagnostics; this never waits for the child.
+#[cfg(target_os = "linux")]
+fn linux_probe_process_sample(root_pid: u32) -> String {
+    use std::io::Read;
+
+    fn prefix(path: &std::path::Path, limit: u64) -> String {
+        let Ok(file) = std::fs::File::open(path) else { return "<unavailable>".to_owned() };
+        let mut bytes = Vec::new();
+        if file.take(limit).read_to_end(&mut bytes).is_err() {
+            return "<read-error>".to_owned();
+        }
+        String::from_utf8_lossy(&bytes).replace(['\0', '\n'], " ")
+    }
+
+    fn visit(pid: u32, depth: usize, seen: &mut Vec<u32>, samples: &mut Vec<String>) {
+        const MAX_DEPTH: usize = 3;
+        const MAX_PROCESSES: usize = 16;
+        if depth > MAX_DEPTH || seen.len() >= MAX_PROCESSES || seen.contains(&pid) {
+            return;
+        }
+        seen.push(pid);
+        let proc_dir = std::path::PathBuf::from("/proc").join(pid.to_string());
+        let status = prefix(&proc_dir.join("status"), 256);
+        let wchan = prefix(&proc_dir.join("wchan"), 64);
+        let cmdline = prefix(&proc_dir.join("cmdline"), 256);
+        let children_path = proc_dir.join("task").join(pid.to_string()).join("children");
+        let children_text = prefix(&children_path, 128);
+        let children = children_text.split_whitespace().filter_map(|item| item.parse::<u32>().ok()).take(8).collect::<Vec<_>>();
+        samples.push(format!("pid={pid} status={status:?} wchan={wchan:?} cmdline={cmdline:?} children={children:?}"));
+        for child in children {
+            visit(child, depth + 1, seen, samples);
+            if seen.len() >= MAX_PROCESSES {
+                break;
+            }
+        }
+    }
+
+    let mut seen = Vec::new();
+    let mut samples = Vec::new();
+    visit(root_pid, 0, &mut seen, &mut samples);
+    format!("root_pid={root_pid} max_depth=3 max_processes=16 per_field_bytes_capped=true descendants={samples:?}")
 }
 
 pub(crate) fn runtime_path(lang: crate::Lang, config: &WorkerLaunchConfig) -> std::io::Result<std::path::PathBuf> {
@@ -235,7 +371,11 @@ pub(crate) fn configure_environment(command: &mut tokio::process::Command, confi
     Ok(())
 }
 
-async fn capture_bounded<R: tokio::io::AsyncRead + Unpin>(mut reader: R, limit: usize) -> std::io::Result<Vec<u8>> {
+async fn capture_bounded<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    limit: usize,
+    bytes_read: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) -> std::io::Result<Vec<u8>> {
     use tokio::io::AsyncReadExt;
     let mut output = Vec::with_capacity(limit.min(1024));
     let mut buffer = [0u8; 1024];
@@ -244,6 +384,7 @@ async fn capture_bounded<R: tokio::io::AsyncRead + Unpin>(mut reader: R, limit: 
         if read == 0 {
             return Ok(output);
         }
+        bytes_read.fetch_add(read, std::sync::atomic::Ordering::Relaxed);
         let remaining = limit.saturating_sub(output.len());
         output.extend_from_slice(&buffer[..read.min(remaining)]);
     }
@@ -556,6 +697,195 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    struct LinuxStartupSample {
+        passed: bool,
+        details: String,
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn collect_startup_pipe(mut task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>) -> (usize, bool) {
+        match tokio::time::timeout(std::time::Duration::from_millis(250), &mut task).await {
+            Ok(Ok(Ok(bytes))) => (bytes.len(), true),
+            _ => {
+                task.abort();
+                (0, false)
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn sample_linux_startup(label: String, program: OsString, args: Vec<OsString>) -> LinuxStartupSample {
+        use tokio::io::AsyncReadExt;
+
+        let mut command = tokio::process::Command::new(&program);
+        command.args(&args).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default());
+        command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                return LinuxStartupSample { passed: false, details: format!("{label}: spawn {program:?} failed: {error}") };
+            }
+        };
+        let pid = child.id().expect("startup child has a PID");
+        let mut child_stdout = child.stdout.take().unwrap();
+        let mut child_stderr = child.stderr.take().unwrap();
+        let stdout = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            let read = child_stdout.read_to_end(&mut bytes).await;
+            read.map(|_| bytes)
+        });
+        let stderr = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            let read = child_stderr.read_to_end(&mut bytes).await;
+            read.map(|_| bytes)
+        });
+        let started = tokio::time::Instant::now();
+        let mut snapshots = Vec::new();
+        let mut snapshot_after_ms = [0, 50, 250, 750, 1250, 1750].into_iter().peekable();
+        let mut timed_out = false;
+        let mut wait_error = None;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => {
+                    if snapshot_after_ms.peek().is_some_and(|checkpoint| started.elapsed().as_millis() >= *checkpoint) {
+                        snapshots.push(linux_process_tree(pid));
+                        snapshot_after_ms.next();
+                    }
+                    if started.elapsed() >= std::time::Duration::from_secs(2) {
+                        timed_out = true;
+                        let _ = child.start_kill();
+                        break match tokio::time::timeout(std::time::Duration::from_millis(250), child.wait()).await {
+                            Ok(Ok(status)) => Some(status),
+                            Ok(Err(error)) => {
+                                wait_error = Some(error.to_string());
+                                let _ = child.start_kill();
+                                None
+                            }
+                            Err(_) => {
+                                wait_error = Some("child wait exceeded 250ms after kill".to_owned());
+                                let _ = child.start_kill();
+                                None
+                            }
+                        };
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                Err(error) => {
+                    wait_error = Some(format!("try_wait failed: {error}"));
+                    let _ = child.start_kill();
+                    break match tokio::time::timeout(std::time::Duration::from_millis(250), child.wait()).await {
+                        Ok(Ok(status)) => Some(status),
+                        Ok(Err(error)) => {
+                            wait_error = Some(format!("try_wait failed; wait after kill failed: {error}"));
+                            let _ = child.start_kill();
+                            None
+                        }
+                        Err(_) => {
+                            wait_error = Some("try_wait failed; child wait exceeded 250ms after kill".to_owned());
+                            let _ = child.start_kill();
+                            None
+                        }
+                    };
+                }
+            }
+        };
+        let (stdout, stdout_eof) = collect_startup_pipe(stdout).await;
+        let (stderr, stderr_eof) = collect_startup_pipe(stderr).await;
+        let observed_pids = snapshots
+            .iter()
+            .flat_map(|snapshot| snapshot.split("pid=").skip(1).filter_map(|entry| entry.split_whitespace().next()?.parse::<u32>().ok()))
+            .chain(std::iter::once(pid))
+            .collect::<std::collections::HashSet<_>>();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let residual_pids =
+            observed_pids.into_iter().filter(|observed| std::path::PathBuf::from("/proc").join(observed.to_string()).exists()).collect::<Vec<_>>();
+        let status_success = status.as_ref().is_some_and(|status| status.success());
+        let passed = !timed_out && status_success && stdout > 0 && stdout_eof && stderr_eof && residual_pids.is_empty() && wait_error.is_none();
+        LinuxStartupSample {
+            passed,
+            details: format!(
+                "{label}: pid={pid} program={program:?} elapsed_ms={} status={status:?} timed_out={timed_out} wait_error={wait_error:?} stdout_bytes={stdout} stdout_eof={stdout_eof} stderr_bytes={stderr} stderr_eof={stderr_eof} residual_pids={residual_pids:?} proc_samples={snapshots:?}",
+                started.elapsed().as_millis()
+            ),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_process_tree(root: u32) -> String {
+        fn visit(pid: u32, depth: usize, result: &mut Vec<String>) {
+            if depth > 4 || result.len() >= 24 {
+                return;
+            }
+            let base = std::path::PathBuf::from("/proc").join(pid.to_string());
+            let read = |name: &str| std::fs::read_to_string(base.join(name)).unwrap_or_default().replace('\n', " ");
+            let cmdline = std::fs::read(base.join("cmdline"))
+                .unwrap_or_default()
+                .split(|byte| *byte == 0)
+                .filter(|part| !part.is_empty())
+                .map(|part| String::from_utf8_lossy(part).into_owned())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let status = read("status").lines().find(|line| line.starts_with("State:")).unwrap_or_default().to_owned();
+            let children =
+                read(format!("task/{pid}/children").as_str()).split_whitespace().filter_map(|item| item.parse::<u32>().ok()).collect::<Vec<_>>();
+            result.push(format!(
+                "pid={pid} comm={} {status} wchan={} syscall={} cmd={cmdline:?} children={children:?}",
+                read("comm").trim(),
+                read("wchan").trim(),
+                read("syscall").trim()
+            ));
+            for child in children {
+                visit(child, depth + 1, result);
+            }
+        }
+        let mut result = Vec::new();
+        visit(root, 0, &mut result);
+        result.join(" | ")
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn linux_bwrap_startup_diagnostics_compare_direct_sequential_and_concurrent() {
+        if std::env::var("AIP_TEST_BWRAP_DIAGNOSTICS").as_deref() != Ok("1") {
+            return;
+        }
+        let ext = TempDir::new("startup-diagnostics");
+        let config = WorkerLaunchConfig::default();
+        let runtime = super::runtime_path(Lang::Node, &config).unwrap();
+        let bwrap = super::command_spec(Isolation::LinuxBubblewrap, runtime.as_os_str(), &[OsString::from("--version")], ext.path(), &[]).unwrap();
+        eprintln!(
+            "startup diagnostics: runtime={} bwrap={:?} args={:?} loadavg={} mem_available={} cpu_pressure={} process_count={}",
+            runtime.display(),
+            bwrap.program,
+            bwrap.args,
+            std::fs::read_to_string("/proc/loadavg").unwrap_or_default().trim(),
+            std::fs::read_to_string("/proc/meminfo").unwrap_or_default().lines().find(|line| line.starts_with("MemAvailable:")).unwrap_or_default(),
+            std::fs::read_to_string("/proc/pressure/cpu").unwrap_or_default().trim(),
+            std::fs::read_dir("/proc")
+                .map(|entries| entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_name().to_string_lossy().bytes().all(|byte| byte.is_ascii_digit()))
+                    .count())
+                .unwrap_or_default()
+        );
+        let mut results = Vec::new();
+        for index in 0..5 {
+            results.push(sample_linux_startup(format!("direct-{index}"), runtime.as_os_str().to_owned(), vec!["--version".into()]).await);
+        }
+        for index in 0..5 {
+            results.push(sample_linux_startup(format!("bwrap-sequential-{index}"), bwrap.program.clone(), bwrap.args.clone()).await);
+        }
+        let concurrent = (0..4).map(|index| sample_linux_startup(format!("bwrap-concurrent-{index}"), bwrap.program.clone(), bwrap.args.clone()));
+        results.extend(futures_util::future::join_all(concurrent).await);
+        let failures = results.iter().filter(|result| !result.passed).map(|result| result.details.as_str()).collect::<Vec<_>>();
+        for result in &results {
+            eprintln!("{}", result.details);
+        }
+        assert!(failures.is_empty(), "all startup samples collected before failure: {failures:#?}");
+    }
+
     #[cfg(unix)]
     fn probe_runtime(fixture: &str) -> WorkerLaunchConfig {
         // Linux CI reported ETXTBSY for the freshly written hang fixture. Use checked-in scripts,
@@ -685,14 +1015,36 @@ mod tests {
         config.probe(Lang::Node, dir.path()).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn capture_bounded_caps_stored_bytes_and_drains_to_eof() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, reader) = tokio::io::duplex(8192);
+        let writer = tokio::spawn(async move {
+            writer.write_all(&vec![b'x'; 8192]).await.unwrap();
+        });
+        let bytes_read = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let captured = super::capture_bounded(reader, 4096, bytes_read.clone()).await.unwrap();
+        writer.await.unwrap();
+
+        assert_eq!(captured.len(), 4096);
+        assert_eq!(bytes_read.load(Ordering::Relaxed), 8192);
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn runtime_probe_deadline_kills_a_hung_runtime() {
         let dir = TempDir::new("probe-hang");
         let config = probe_runtime("hung-runtime.sh");
+        if std::env::var("AIP_TEST_PROBE_DIAGNOSTICS").as_deref() == Ok("1") {
+            eprintln!("AIP_PROBE_CLASS event=negative-control fixture=hung-runtime.sh expected=timeout scope=not-a-real-node-runtime");
+        }
         let started = tokio::time::Instant::now();
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("child_status=running"));
+        assert!(error.to_string().contains("stdout_bytes_read=0"));
+        assert!(error.to_string().contains("stderr_bytes_read=0"));
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 
@@ -867,5 +1219,50 @@ mod tests {
         let ext = TempDir::new("auto-ext");
         let error = command_spec(Isolation::LinuxBubblewrap, "node".as_ref(), &[], ext.path(), &[]).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod startup_experiment {
+    use super::WorkerLaunchConfig;
+    use crate::Lang;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct ExperimentTempDir(std::path::PathBuf);
+
+    impl ExperimentTempDir {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!("aip-startup-node-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            std::fs::create_dir_all(&path).expect("create per-test extension mount");
+            Self(path)
+        }
+    }
+
+    impl Drop for ExperimentTempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "opt-in startup experiment; select explicitly in cgroup.yml"]
+    async fn run_isolated_node_version_once() {
+        assert_eq!(std::env::var("AIP_TEST_NODE_PRERUN").as_deref(), Ok("1"), "this test is only for the explicit Node-first CI condition");
+        assert_eq!(std::env::var("AIP_TEST_BWRAP").as_deref(), Ok("1"));
+        let ext_dir = ExperimentTempDir::new();
+        let config = WorkerLaunchConfig::default();
+        let started = std::time::Instant::now();
+        eprintln!(
+            "AIP_NODE_PRERUN event=begin condition={} runtime=node --version isolation=Auto launcher=production-WorkerLaunchConfig::probe-command_spec",
+            std::env::var("AIP_EXPERIMENT_CONDITION").unwrap_or_else(|_| "unset".to_owned())
+        );
+        let result = config.probe(Lang::Node, &ext_dir.0).await;
+        eprintln!(
+            "AIP_NODE_PRERUN event=result elapsed_ms={} outcome={}",
+            started.elapsed().as_millis(),
+            if result.is_ok() { "success" } else { "failure" }
+        );
+        result.expect("the production isolated Node --version probe succeeds");
     }
 }
