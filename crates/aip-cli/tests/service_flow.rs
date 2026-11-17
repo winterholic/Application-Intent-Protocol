@@ -49,7 +49,7 @@ access visibleVotes(a: Member) = true
 resource Event {
   fields { id: Id; member: Member; title: Text; note: Text?; amount: Decimal(10,2)?; phase: Phase; score: Decimal(10,2); checked: Bool }
   rows read when member = actor
-  field checked read when note = "kept"
+  field phase read when note = "kept"
   transition edit { allow member = actor; from true; patch title, note, amount; to checked = checked }
   expose apply edit { target id; bulk maxRows 1 }
   expose read {
@@ -345,7 +345,7 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         let (child, listening) = start(&config, &file).await;
         let address = listening["address"].as_str().unwrap();
         let fingerprint = listening["fingerprint"].as_str().unwrap();
-        let query = json!({"query":{"read":"Event","select":["id","title","note","amount","score","checked","voteCount",{"member":{"select":["id","name"]}}],"sort":[{"field":"score","dir":"asc"}]}});
+        let query = json!({"query":{"read":"Event","select":["id","title","note","amount","phase","score","voteCount",{"member":{"select":["id","name"]}}],"sort":[{"field":"score","dir":"asc"}]}});
         let first = post(address,"/read",&token,fingerprint,query.clone()).await;
         assert_eq!(first["ok"],true,"{first}");
         assert_eq!(first["rows"].as_array().map(Vec::len),Some(3),"all three authorized rows are returned");
@@ -357,8 +357,8 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         assert_eq!(first["rows"][0]["amount"],"99999999.99","declared Decimal(10,2) upper boundary remains exact");
         assert_eq!(first["rows"][0]["voteCount"],1);
         assert_eq!(first["rows"][1]["voteCount"],expected["emptyCount"],"empty relation count follows shared fixture");
-        assert_eq!(first["rows"][0]["checked"],Value::Null,"note = 'kept' is UNKNOWN for SQL NULL and field policy fails closed");
-        assert_eq!(first["rows"][1]["checked"],false,"non-null note equality is TRUE");
+        assert_eq!(first["rows"][0]["phase"],expected["policyNull"],"note = 'kept' is UNKNOWN for SQL NULL and field policy fails closed");
+        assert_eq!(first["rows"][1]["phase"],expected["policyVisible"],"non-null note equality is TRUE");
         assert_eq!(first["rows"][0]["member"],json!({"id":"42","name":"Ada"}));
         assert!(expected["missingFields"].as_array().unwrap().iter().all(|field| first["rows"][0].get(field.as_str().unwrap()).is_none()),"fixture fields omitted from selection stay absent");
         let patch = json!({"key":"semantic-partial","request":{"apply":"Event.edit","target":{"ids":["12"]},"values":{"title":"changed"}}});
