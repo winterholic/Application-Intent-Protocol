@@ -519,7 +519,7 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
             "/read",
             &token,
             fingerprint,
-            json!({"query":{"read":"Event","select":["id"],"filter":[{"field":"note","op":"eq","value":"kept"}],"sort":[{"field":"id","dir":"asc"}]}}),
+            json!({"query":{"read":"Event","select":["id"],"filter":[{"field":"note","op":"eq","value":"kept"}]}}),
         )
         .await;
         assert_eq!(filtered["ok"],true,"{filtered}");
