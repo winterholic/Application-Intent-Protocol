@@ -210,7 +210,9 @@ assert.equal(after.rows[0].secret, "owner-only");
 const drift = connect(${JSON.stringify(`http://${f.address}`)}, ${JSON.stringify(f.token)}, { ...contract, fingerprint: "0".repeat(64) });
 await assert.rejects(drift.read({ read: "Record", select: ["id"] }), error => error.code === "WIRE.CONTRACT_MISMATCH");
 for (const [id, code] of [["3", "WIRE.FORBIDDEN"], ["4", "WIRE.MISSING_TARGET"], ["404", "WIRE.MISSING_TARGET"]]) {
-  await assert.rejects(client.apply({ apply: "Record.edit", target: { ids: [id] }, values: { title: "forged" } }, { key: "sdk-ts-denial-"+id }), error => error.code === code);
+  const denied = await client.apply({ apply: "Record.edit", target: { ids: [id] }, values: { title: "forged" } }, { key: "sdk-ts-denial-"+id });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.code, code);
 }
 console.log("TypeScript SDK tests: 1 passed, 0 failed");
 `);
@@ -253,12 +255,8 @@ except AipError as error:
 else:
     raise AssertionError("contract drift was not rejected")
 for row_id, code in (("3","WIRE.FORBIDDEN"),("4","WIRE.MISSING_TARGET"),("404","WIRE.MISSING_TARGET")):
-    try:
-        client.apply({"apply":"Record.edit","target":{"ids":[row_id]},"values":{"title":"forged"}}, key="sdk-python-denial-"+row_id)
-    except AipError as error:
-        assert error.code == code, (error.code, code)
-    else:
-        raise AssertionError("expected " + code)
+    denied = client.apply({"apply":"Record.edit","target":{"ids":[row_id]},"values":{"title":"forged"}}, key="sdk-python-denial-"+row_id)
+    assert denied["ok"] is False and denied["code"] == code, denied
 print("Python SDK tests: 1 passed, 0 failed")
 `);
     console.log(run("python3", [script], { cwd: f.dir, env: { PYTHONPATH: join(root, "product/python") }, timeout: 90_000 }));

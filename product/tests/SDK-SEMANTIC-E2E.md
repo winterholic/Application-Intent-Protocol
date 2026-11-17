@@ -20,7 +20,7 @@
 | Decimal precision | Only Decimal Id wire is exercised by the smoke; field Decimal precision is missing | Both SDKs round-trip a high precision Decimal as a string and PostgreSQL retains the exact numeric text. |
 | Relational response | Service-level relation traversal exists in `service_flow.rs`; no caller SDK assertion | Both SDKs request `Record.owner { id, org }` through the declared traversal and compare the returned object to the fixture's related Member row. |
 | Policy field hiding | Service-level redaction exists; no caller SDK assertion | Both clients see `null` for a policy-hidden field on a visible row, and retain the owner value where authorized. |
-| Permission denial versus absent resource | Service-level `FORBIDDEN`/`MISSING_TARGET` exists; no caller SDK exception mapping assertion | Both SDKs map a visible but unauthorized write to `WIRE.FORBIDDEN` and a nonexistent target to `WIRE.MISSING_TARGET`; PostgreSQL confirms denied data is unchanged. |
+| Permission denial versus absent resource | Service-level `FORBIDDEN`/`MISSING_TARGET` exists; no caller SDK result assertion | Both SDKs return `ok: false` with `WIRE.FORBIDDEN` for a visible but unauthorized write and `WIRE.MISSING_TARGET` for a row-hidden or nonexistent target; PostgreSQL confirms denied data is unchanged. These apply outcomes are returned values, not thrown SDK exceptions. |
 | Partial update value preservation | Service-level partial update exists; no caller SDK + DB assertion | Both SDKs omit nullable and Decimal fields in one patch, assert they remain unchanged, then explicitly send null and a new exact Decimal. |
 | Idempotent request/result replay | Existing smoke checks replay; only summary result is asserted | Both SDKs assert `replayed` from the live HTTP response; DB confirms the final state reflects one value and the replayed request did not alter it. |
 | Job state and result lookup | Existing optional worker smoke asserts `SUCCEEDED` and result payload for both SDK pathways | No new job test; existing package smoke already checks enqueue, replay, terminal state, and result for the generated TypeScript SDK and Python SDK. |
@@ -28,3 +28,9 @@
 | Deployment/contract change compatibility | Python package smoke rejects a pinned fingerprint drift; package test checks regeneration equality | Both SDK clients reject a stale fingerprint with `WIRE.CONTRACT_MISMATCH` in the new live service fixture. Migration compatibility across an actual old/new schema revision remains outside this test. |
 
 Run locally only with a disposable PostgreSQL 17 target using the guarded `AIP_TEST_DATABASE_URL`; do not initialize a local cluster. CI runs this suite on Linux PostgreSQL 17 in `.github/workflows/sdk-semantic-e2e.yml`.
+
+## CI execution evidence
+
+- PR #5 run `44003092137` on `d168ad3` used Ubuntu 24.04 and PostgreSQL 17.12. The build, formatting/Clippy, and isolated database guard passed. The SDK journey command ran **2 tests, 0 passed, 2 failed, 0 skipped**; it did not skip or run zero tests.
+- Both generated SDK journeys reached the live denial cases. The TypeScript script reported `AssertionError [ERR_ASSERTION]: Missing expected rejection` at `run.mjs:33`; Python reported `AssertionError: expected WIRE.FORBIDDEN`. Cause: test expectation error. The official SDKs return application-level apply denials as `{ok:false, code:...}`; they do not throw for those outcomes. The contracts and denial assertions remain in place and now inspect the returned result. No SDK, generator, or service behavior was changed for this failure.
+- Final-head PR run and same-PR existing checks are recorded below after CI completes. Actual migration compatibility across old and new schema revisions remains outside this test.
