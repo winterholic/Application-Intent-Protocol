@@ -29,7 +29,9 @@ query EmptyCount(account: Account) {
 "#;
 
 #[test]
-fn shared_fixture_agrees_with_core_ir_nullability_and_predicate_contract() {
+fn shared_fixture_static_ir_shape_contract() {
+    // This checks fixture consistency and Core IR shape only. Runtime values are
+    // exercised against PostgreSQL in aip-cli/tests/core_semantic_fixture.rs.
     let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
     let expected = &fixture["expected"];
     let cases = fixture["cases"].as_array().unwrap();
@@ -39,9 +41,7 @@ fn shared_fixture_agrees_with_core_ir_nullability_and_predicate_contract() {
         cases.iter().find(|row| row["id"] == "12").unwrap()["votes"].as_array().unwrap().len(),
         expected["emptyCount"].as_u64().unwrap() as usize
     );
-    assert_eq!(expected["emptyCount"], 0);
-    assert_eq!(expected["nullEqualityMatches"], false);
-    assert_eq!(expected["nonNullEqualityMatches"], true);
+    assert_eq!(fixture["unsupported"]["avgAggregate"]["service"], "unsupported");
     assert_eq!(fixture["cases"].as_array().unwrap().len(), 3);
 
     let checked = check_source(SOURCE);

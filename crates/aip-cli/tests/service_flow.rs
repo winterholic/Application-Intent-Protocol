@@ -84,6 +84,7 @@ resource Member {
 }
 actor Member
 access visibleVotes(a: Member) = true
+access visibleMetrics(a: Member) = true
 resource Event {
   fields { id: Id; member: Member; title: Text; note: Text?; amount: Decimal(10,2)?; phase: Phase; score: Decimal(10,2); checked: Bool }
   rows read when member = actor
@@ -91,14 +92,18 @@ resource Event {
   transition edit { allow member = actor; from true; patch title, note, amount; to checked = checked }
   expose apply edit { target id; bulk maxRows 1 }
   expose read {
-    select id, member, title, note, amount, phase, score, checked, voteCount
+    select id, member, title, note, amount, phase, score, checked, voteCount, emptySum, emptyMin, emptyMax
     traverse member { select id, name }
     sort score
     budget { rows 20; depth 2; deadline 2s; cost 1000 }
   }
   aggregate voteCount: Int { source Vote; sourceAccess visibleVotes(actor); groupKey event; callerFilter none; rowOutput none; release count }
+  aggregate emptySum: Int { source Metric; sourceAccess visibleMetrics(actor); groupKey event; callerFilter none; rowOutput none; release sum(amount) }
+  aggregate emptyMin: Int? { source Metric; sourceAccess visibleMetrics(actor); groupKey event; callerFilter none; rowOutput none; release min(amount) }
+  aggregate emptyMax: Int? { source Metric; sourceAccess visibleMetrics(actor); groupKey event; callerFilter none; rowOutput none; release max(amount) }
 }
 resource Vote { fields { id: Id; event: Event } rows read when true }
+resource Metric { fields { id: Id; event: Event; amount: Int } rows read when true }
 "#;
 
 async fn command(config: &Path, args: &[&str]) -> Value {
@@ -491,7 +496,7 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         let (child, listening) = start(&config, &file).await;
         let address = listening["address"].as_str().unwrap();
         let fingerprint = listening["fingerprint"].as_str().unwrap();
-        let query = json!({"query":{"read":"Event","select":["id","title","note","amount","phase","score","voteCount",{"member":{"select":["id","name"]}}],"sort":[{"field":"score","dir":"asc"}]}});
+        let query = json!({"query":{"read":"Event","select":["id","title","note","amount","phase","score","voteCount","emptySum","emptyMin","emptyMax",{"member":{"select":["id","name"]}}],"sort":[{"field":"score","dir":"asc"}]}});
         let first = post(address,"/read",&token,fingerprint,query.clone()).await;
         assert_eq!(first["ok"],true,"{first}");
         assert_eq!(first["rows"].as_array().map(Vec::len),Some(3),"all three authorized rows are returned");
@@ -500,7 +505,10 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         assert_eq!(first["rows"][0]["note"],Value::Null,"stored nullable value is JSON null");
         assert_eq!(first["rows"][0]["note"],expected["null"],"fixture null case is preserved");
         assert_eq!(first["rows"][1]["note"],expected["value"],"fixture present value is preserved");
-        assert_eq!(first["rows"][0]["amount"],"99999999.99","declared Decimal(10,2) upper boundary remains exact");
+        assert_eq!(first["rows"][0]["amount"],expected["decimalExact"],"declared Decimal(10,2) upper boundary remains exact");
+        assert_eq!(first["rows"][0]["emptySum"],expected["emptySum"],"empty sum follows shared fixture");
+        assert_eq!(first["rows"][0]["emptyMin"],expected["emptyMin"],"empty min follows shared fixture");
+        assert_eq!(first["rows"][0]["emptyMax"],expected["emptyMax"],"empty max follows shared fixture");
         assert_eq!(first["rows"][0]["voteCount"],1);
         assert_eq!(first["rows"][1]["voteCount"],expected["emptyCount"],"empty relation count follows shared fixture");
         assert_eq!(first["rows"][0]["phase"],expected["policyNull"],"note = 'kept' is UNKNOWN for SQL NULL and field policy fails closed");
