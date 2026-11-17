@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import {test} from 'node:test';
 import {GROUPS_SQL, USERS_SQL, seedNativePostOrders, startFixture} from './harness.mjs';
 
 // WBS 7.5.2 G-6. Upstream Post.hide/Post.delete call `_deal_with_last_post`: when the
 // post is both its topic's and its forum's last post, the forum falls back to the newest
-// remaining visible post (or NULL when none is left) and the topic's last_updated moves
-// back to the new last post. Posts that are not the forum's last post leave the forum
+// remaining visible post (or NULL when none is left). Topic.last_updated follows the pinned ORM's
+// independent rule: the hidden Post's date on hide, the first Post's date on delete of a two-Post Topic. Posts that are not the forum's last post leave the forum
 // untouched. Pin both the restored projection and the absence of a half-null visible row.
 test('FlaskBB forum and topic last-post projections recover after post hide/delete', {timeout: 90000}, async () => {
   const id = (kind, n) => `00000000-0000-4000-8000-${kind}${String(n).padStart(11, '0')}`;
@@ -68,7 +70,9 @@ test('FlaskBB forum and topic last-post projections recover after post hide/dele
     await run('Post.hide', b2, 'lp-hide-b2');
     const upstreamAfterHide = `${a2}|member-alice|Topic A|2025-01-03`;
     assert.equal(forumRow(), upstreamAfterHide);
-    assert.equal(topicUpdated(topicB), '2025-01-02');
+    // Pinned ORM (test_post_oracle_gap pointer cases): hide assigns Topic.last_post_id from posts[-2] but
+    // copies last_updated from the stale loaded last_post (the hidden Post), so the date does not roll back.
+    assert.equal(topicUpdated(topicB), '2025-01-04');
 
     // Ordinary readers must see the replacement post and its matching denormalized author.
     const alice = fx.client('alice-sub');
@@ -89,5 +93,37 @@ test('FlaskBB forum and topic last-post projections recover after post hide/dele
 
     await run('Topic.delete', topicB, 'lp-delete-topic-b');
     assert.equal(forumRow(), upstreamAfterTopicHide);
+  } finally { await fx.stop(); }
+});
+
+for (const action of ['hide', 'delete']) test(`Post.${action} chooses its Forum fallback by imported source Post.id, not date_created`, {timeout: 90000}, async () => {
+  const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('./post-order-regression.json', import.meta.url)), 'utf8'));
+  const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const topic = id(100), posts = fixture.posts.map((_, i) => id(201 + i));
+  const fx = await startFixture({
+    prefix: 'aip-flaskbb-post-order-fallback-',
+    actors: {admin: 3},
+    seed(sql, q, schema) {
+      sql(GROUPS_SQL(schema)); sql(USERS_SQL(schema));
+      sql(`INSERT INTO ${q}.category(id,title,description,position) VALUES(1,'General','fixture',1);
+        INSERT INTO ${q}.forum(id,category_id,title,description,position,locked,show_moderators) VALUES(1,1,'Forum','fixture',1,false,false);
+        INSERT INTO ${q}.forum_group_access(id,forum_id,group_id) VALUES(1,1,3);
+        INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden)
+          VALUES('${topic}',1,'Topic',3,'admin-bob','2025-01-01T12:00:00Z','2025-01-04T12:00:00Z',false,false,0,true,false,false);`);
+      fixture.posts.forEach((post, i) => sql(`INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted)
+        VALUES('${posts[i]}','${topic}',1,3,'admin-bob','post-${post.source_id}','${post.date_created}',false,true,0,false);`));
+      sql(`INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topic}','${posts[0]}');
+        UPDATE ${q}.topic SET last_post_id='${posts[3]}' WHERE id='${topic}';
+        UPDATE ${q}.forum SET last_post_id='${posts[3]}',last_post_user_id=3,last_post_title='Topic',last_post_username='admin-bob',last_post_created='${fixture.posts[3].date_created}' WHERE id=1;`);
+      sql(`INSERT INTO ${q}.post_order(id,post_id) OVERRIDING SYSTEM VALUE VALUES
+        ${fixture.posts.map((post, i) => `(${post.source_id},'${posts[i]}')`).join(',')};
+        UPDATE ${q}.post p SET source_order_id=o.id FROM ${q}.post_order o WHERE o.post_id=p.id;
+        SELECT setval('${schema}.post_order_id_seq',80,true);`);
+    },
+  });
+  try {
+    const result = await fx.client('admin').bundle({atomic:[{apply:`Post.${action}`,target:{ids:[posts[3]]}}]}, {key:`post-order-source-fallback-${action}`});
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(fx.sql(`SELECT last_post_id FROM ${fx.q}.forum WHERE id=1`), posts[fixture.posts.findIndex(p => p.source_id === fixture.expected_forum_fallback_source_id)]);
   } finally { await fx.stop(); }
 });

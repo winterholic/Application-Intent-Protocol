@@ -4,6 +4,7 @@ The tests deliberately import the preserved upstream application and models.
 They are not an AST/SQLite model of SQLAlchemy behavior.
 """
 import os
+import json
 import re
 import sys
 import unittest
@@ -13,6 +14,7 @@ from uuid import uuid4
 from unittest.mock import patch
 
 UPSTREAM = Path(__file__).resolve().parents[1] / "upstream"
+ORDER_FIXTURE = json.loads((Path(__file__).with_name("post-order-regression.json")).read_text())
 sys.path.insert(0, str(UPSTREAM))
 
 from flaskbb import create_app  # noqa: E402
@@ -234,6 +236,144 @@ class PostOracleGap(unittest.TestCase):
             self.assertEqual(wrong_by_date.id, by_source_id.id)
         print("NEGATIVE_CONTROL date_sort_rejected expected_id=100 actual_id={}".format(
             wrong_by_date.id))
+
+    def test_post_hide_forum_fallback_uses_the_shared_source_id_fixture(self):
+        fixture = ORDER_FIXTURE
+        posts = [(item["source_id"], i, False, False)
+                 for i, item in enumerate(fixture["posts"])]
+        forum, _, rows = self.seed(posts)
+        for row, item in zip(rows, fixture["posts"]):
+            row.date_created = datetime.fromisoformat(item["date_created"].replace("Z", "+00:00"))
+        db.session.commit()
+        target = rows[-1]
+        target.hide(target.user)
+        self.assertEqual(forum.last_post_id, fixture["expected_forum_fallback_source_id"])
+        print("POST_HIDE_SOURCE_ORDER scenario={} fallback={}".format(
+            fixture["scenario"], forum.last_post_id))
+
+    def test_post_delete_forum_fallback_uses_the_shared_source_id_fixture(self):
+        fixture = ORDER_FIXTURE
+        posts = [(item["source_id"], i, False, False)
+                 for i, item in enumerate(fixture["posts"])]
+        forum, _, rows = self.seed(posts)
+        for row, item in zip(rows, fixture["posts"]):
+            row.date_created = datetime.fromisoformat(item["date_created"].replace("Z", "+00:00"))
+        db.session.commit()
+        rows[-1].delete()
+        self.assertEqual(forum.last_post_id, fixture["expected_forum_fallback_source_id"])
+        print("POST_DELETE_SOURCE_ORDER scenario={} fallback={}".format(
+            fixture["scenario"], forum.last_post_id))
+
+    def parse_time(self, value):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    def seed_pointer_case(self, case):
+        """Seed one shared pointer case with the same Post IDs and dates as the AIP test."""
+        group = Group(name="ordinary", description="oracle fixture")
+        db.session.add(group)
+        db.session.flush()
+        users = {}
+        for key, name in ((2, "member-alice"), (3, "admin-bob")):
+            users[key] = User(username=name, email=name + "@example.invalid",
+                              _password="not-used", primary_group=group)
+            db.session.add(users[key])
+        category = Category(title="oracle-category")
+        db.session.add(category)
+        db.session.flush()
+        forum = Forum(category_id=category.id, title="oracle-forum")
+        db.session.add(forum)
+        db.session.flush()
+        topics, rows = {}, {}
+        for item in case["topics"]:
+            topic = Topic(title=item["title"], user=users[item["user"]])
+            topic.forum = forum
+            topic.hidden = bool(item.get("hidden"))
+            db.session.add(topic)
+            db.session.flush()
+            topics[item["key"]] = topic
+        for item in case["posts"]:
+            topic = topics[item["topic"]]
+            row = Post(content="body", user=users[item["user"]], topic=topic)
+            row.id = item["id"]
+            row.date_created = self.parse_time(item["date_created"])
+            row.topic = topic
+            row.hidden = bool(item.get("hidden"))
+            rows[item["id"]] = row
+            db.session.add(row)
+            db.session.flush()
+            if item.get("first"):
+                topic.first_post = row
+        for item in case["topics"]:
+            topic = topics[item["key"]]
+            topic.last_post = rows[item["last_post"]]
+            topic.last_updated = self.parse_time(item["last_updated"])
+        last = rows[case["forum_last_post"]]
+        forum.last_post = last
+        forum.last_post_user = last.user
+        forum.last_post_title = last.topic.title
+        forum.last_post_username = last.username
+        forum.last_post_created = last.date_created
+        db.session.commit()
+        return forum, topics, rows
+
+    def run_pointer_cases(self, action):
+        for case in ORDER_FIXTURE["pointer_cases"]:
+            with self.subTest(action=action, case=case["name"]):
+                db.session.remove()
+                db.drop_all()
+                db.create_all()
+                forum, topics, rows = self.seed_pointer_case(case)
+                dates = {item["id"]: self.parse_time(item["date_created"]) for item in case["posts"]}
+                target = rows[case["target"]]
+                target_topic = topics[next(p["topic"] for p in case["posts"] if p["id"] == case["target"])]
+                others = {key: (topic.last_post_id, topic.last_updated) for key, topic in topics.items()
+                          if topic is not target_topic}
+                if action == "hide":
+                    target.hide(target.user)
+                else:
+                    target.delete()
+                db.session.commit()
+                expect = case["expect"]
+                self.assertEqual(forum.last_post_id, expect["forum_last_post"])
+                if expect["forum_last_post"] is None:
+                    # No Forum candidate: the source nulls the pointer and all four projection fields.
+                    self.assertIsNone(forum.last_post)
+                    self.assertIsNone(forum.last_post_user)
+                    self.assertIsNone(forum.last_post_title)
+                    self.assertIsNone(forum.last_post_username)
+                    self.assertIsNone(forum.last_post_created)
+                else:
+                    expected_forum = rows[expect["forum_last_post"]]
+                    self.assertEqual(forum.last_post_user.username, expected_forum.user.username)
+                    self.assertEqual(forum.last_post_title, expected_forum.topic.title)
+                    self.assertEqual(forum.last_post_username, expected_forum.username)
+                    self.assertEqual(forum.last_post_created, dates[expect["forum_last_post"]])
+                spec = expect["target_topic"]
+                if spec == "unchanged":
+                    seeded = next(item for item in case["topics"]
+                                  if topics[item["key"]] is target_topic)
+                    self.assertEqual(target_topic.last_post_id, seeded["last_post"])
+                    self.assertEqual(target_topic.last_updated, self.parse_time(seeded["last_updated"]))
+                else:
+                    allowed = spec.get("last_post_one_of", [spec.get("last_post")])
+                    if isinstance(allowed, dict):
+                        # hide keeps the hidden target in Topic.posts; delete removes it by autoflush first.
+                        allowed = allowed[action]
+                    self.assertIn(target_topic.last_post_id, allowed)
+                    # last_post_id is assigned from posts[-2], but last_updated reads the stale loaded
+                    # Topic.last_post relationship; the two values are computed independently.
+                    self.assertEqual(target_topic.last_updated, dates[spec["last_updated_post"][action]])
+                for key, state in others.items():
+                    self.assertEqual((topics[key].last_post_id, topics[key].last_updated), state)
+                print("POINTER_CASE action={} case={} forum_last={} topic_last={} topic_updated={}".format(
+                    action, case["name"], forum.last_post_id, target_topic.last_post_id,
+                    target_topic.last_updated.isoformat()))
+
+    def test_post_hide_pointer_conditions_use_the_shared_cases(self):
+        self.run_pointer_cases("hide")
+
+    def test_post_delete_pointer_conditions_use_the_shared_cases(self):
+        self.run_pointer_cases("delete")
 
     def test_wrong_visibility_filter_negative_control_is_detected(self):
         forum, _, _ = self.seed([(110, 0, False, False),
