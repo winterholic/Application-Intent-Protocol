@@ -94,7 +94,7 @@ test('FlaskBB forum and topic last-post projections recover after post hide/dele
   } finally { await fx.stop(); }
 });
 
-test('Post.hide chooses its Forum fallback by imported source Post.id, not date_created', {timeout: 90000}, async () => {
+for (const action of ['hide', 'delete']) test(`Post.${action} chooses its Forum fallback by imported source Post.id, not date_created`, {timeout: 90000}, async () => {
   const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('./post-order-regression.json', import.meta.url)), 'utf8'));
   const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
   const topic = id(100), posts = fixture.posts.map((_, i) => id(201 + i));
@@ -117,7 +117,7 @@ test('Post.hide chooses its Forum fallback by imported source Post.id, not date_
     },
   });
   try {
-    const result = await fx.client('admin').bundle({atomic:[{apply:'Post.hide',target:{ids:[posts[3]]}}]}, {key:'post-order-source-fallback'});
+    const result = await fx.client('admin').bundle({atomic:[{apply:`Post.${action}`,target:{ids:[posts[3]]}}]}, {key:`post-order-source-fallback-${action}`});
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(fx.sql(`SELECT last_post_id FROM ${fx.q}.forum WHERE id=1`), posts[fixture.posts.findIndex(p => p.source_id === fixture.expected_forum_fallback_source_id)]);
   } finally { await fx.stop(); }

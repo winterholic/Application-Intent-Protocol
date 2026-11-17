@@ -26,6 +26,7 @@ predicate userPurgeable(targetUser: User?) = targetUser != null and not (exists 
 // Topic.hide compares the visible Topic set before mutation. A missing pointer
 // sorts before mapped pointers in upstream PostgreSQL DESC; mapping gaps refuse.
 predicate topicHideOrderKnown(targetTopic: Topic) = not (exists Topic where forum = targetTopic.forum and published and not deleted and hidden != true and last_post != null and last_post.source_order = null)
+predicate postOrderKnownForForum(targetPost: Post) = not (exists Post where forum = targetPost.forum and published and not deleted and not topic.deleted and hidden != true and source_order = null)
 predicate topicHideReplacesForum(targetTopic: Topic) = targetTopic.last_post = null or not (exists Topic where forum = targetTopic.forum and id != targetTopic.id and published and not deleted and hidden != true and (last_post = null or last_post.source_order > targetTopic.last_post.source_order))
 predicate topicHideNullReplacement(targetTopic: Topic) = exists Topic where forum = targetTopic.forum and id != targetTopic.id and published and not deleted and hidden != true and last_post = null
 // Upstream Topic.delete conditionally calls Forum.update_last_post. Its root
@@ -389,15 +390,15 @@ resource Post {
   }
   expose apply edit { target id; bulk maxRows 1 }
   transition hide {
-    allow canHide(actor, forum) and not isFirstPost(this)
+    allow canHide(actor, forum) and not isFirstPost(this) and postOrderKnownForForum(this)
     from hidden = false and deleted = false
     to hidden = true, hidden_at = now, hidden_by = actor
     update Forum where id = this.forum {
-      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.id
-      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.user
-      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
-      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.username
-      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.id
+      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.user
+      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.topic.title
+      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.username
+      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.date_created
     }
     update Topic where id = this.topic {
       last_updated = latest Post candidate where candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.date_created select candidate.date_created otherwise this.topic.date_created
@@ -421,15 +422,15 @@ resource Post {
   }
   expose apply unhide { target id; bulk maxRows 1 }
   transition delete {
-    allow actor.activated and canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted)
+    allow actor.activated and canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted) and postOrderKnownForForum(this)
     from deleted = false
     to deleted = true
     update Forum where id = this.forum {
-      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.id
-      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.user
-      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
-      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.username
-      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.id
+      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.user
+      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.topic.title
+      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.username
+      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.source_order.id select candidate.date_created
     }
     update Topic where id = this.topic {
       last_updated = latest Post candidate where candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.date_created select candidate.date_created otherwise this.topic.date_created
