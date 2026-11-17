@@ -1,0 +1,75 @@
+name: SDK semantic end-to-end
+
+on:
+  pull_request:
+    paths:
+      - 'product/SDK.md'
+      - 'product/sdk/**'
+      - 'product/python/**'
+      - 'product/tools/build-sdk.mjs'
+      - 'product/tests/sdk-semantic-e2e.test.mjs'
+      - 'product/tests/SDK-SEMANTIC-E2E.md'
+      - 'spikes/spike-0-ts/package*.json'
+      - 'spikes/spike-v5-sdk/**'
+      - 'spikes/spike-v6-transport/**'
+      - 'crates/aip-cli/**'
+      - 'crates/aip-service/**'
+      - 'crates/aip-execution/**'
+      - '.github/workflows/sdk-semantic-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-semantic-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk-postgres-17:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_sdk user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_sdk
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Install Rust components and SDK build inputs
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+          npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Build service CLI
+        run: cargo build --locked -p aip-cli
+      - name: Check formatting and changed crate Clippy
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets --no-deps -p aip-cli -p aip-service -p aip-execution -- -D warnings
+      - name: Validate isolated PostgreSQL target
+        run: node --input-type=module -e 'import { requireTestDatabase } from "./product/test-support/postgres-guard.mjs"; const target = requireTestDatabase(); console.log(`${target.host}:${target.port}/${target.dbname}`)'
+      - name: Run generated TypeScript and Python SDK semantic journeys
+        run: node --test --test-concurrency=1 product/tests/sdk-semantic-e2e.test.mjs
