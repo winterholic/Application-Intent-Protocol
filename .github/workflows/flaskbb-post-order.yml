@@ -76,12 +76,30 @@ jobs:
         continue-on-error: true
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap libjpeg-dev postgresql-client
+          sudo apt-get install -y apparmor bubblewrap libjpeg-dev postgresql-client
           rustup update stable
           rustup default stable
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
           python3 -m venv "$RUNNER_TEMP/flaskbb-ui"
           "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
+      - name: Configure scoped Bubblewrap user namespace profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
+            mkdir -p "$sandbox_bin"
+            cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
+            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
+            echo "$sandbox_bin" >> "$GITHUB_PATH"
+          fi
       - name: Run pinned FlaskBB ORM against an isolated PostgreSQL schema
         id: setup-upstream-python
         continue-on-error: true

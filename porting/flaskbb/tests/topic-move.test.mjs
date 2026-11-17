@@ -22,6 +22,8 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       // Ubuntu runner system Python lives under /usr, which the sandbox already
       // ro-binds. Do not use the oracle venv or the setup-python toolcache.
       runtime_executable: '/usr/bin/python3',
+      // Same value mail-jobs.test.mjs sets on Linux; keep the OS isolation on.
+      isolation: process.platform === 'darwin' ? 'mac_net_deny' : 'auto',
       enable_writes: true,
       // Enabling write extensions also validates the app's existing durable
       // jobs. This local-only broker satisfies their declared http.mail grant;
