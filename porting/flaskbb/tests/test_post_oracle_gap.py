@@ -251,6 +251,19 @@ class PostOracleGap(unittest.TestCase):
         print("POST_HIDE_SOURCE_ORDER scenario={} fallback={}".format(
             fixture["scenario"], forum.last_post_id))
 
+    def test_post_delete_forum_fallback_uses_the_shared_source_id_fixture(self):
+        fixture = ORDER_FIXTURE
+        posts = [(item["source_id"], i, False, False)
+                 for i, item in enumerate(fixture["posts"])]
+        forum, _, rows = self.seed(posts)
+        for row, item in zip(rows, fixture["posts"]):
+            row.date_created = datetime.fromisoformat(item["date_created"].replace("Z", "+00:00"))
+        db.session.commit()
+        rows[-1].delete()
+        self.assertEqual(forum.last_post_id, fixture["expected_forum_fallback_source_id"])
+        print("POST_DELETE_SOURCE_ORDER scenario={} fallback={}".format(
+            fixture["scenario"], forum.last_post_id))
+
     def test_wrong_visibility_filter_negative_control_is_detected(self):
         forum, _, _ = self.seed([(110, 0, False, False),
                                  (120, 1, False, True),

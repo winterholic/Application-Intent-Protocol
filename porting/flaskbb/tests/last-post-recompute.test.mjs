@@ -113,7 +113,10 @@ for (const action of ['hide', 'delete']) test(`Post.${action} chooses its Forum 
       sql(`INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topic}','${posts[0]}');
         UPDATE ${q}.topic SET last_post_id='${posts[3]}' WHERE id='${topic}';
         UPDATE ${q}.forum SET last_post_id='${posts[3]}',last_post_user_id=3,last_post_title='Topic',last_post_username='admin-bob',last_post_created='${fixture.posts[3].date_created}' WHERE id=1;`);
-      seedNativePostOrders(sql, q, posts);
+      sql(`INSERT INTO ${q}.post_order(id,post_id) OVERRIDING SYSTEM VALUE VALUES
+        ${fixture.posts.map((post, i) => `(${post.source_id},'${posts[i]}')`).join(',')};
+        UPDATE ${q}.post p SET source_order_id=o.id FROM ${q}.post_order o WHERE o.post_id=p.id;
+        SELECT setval('${schema}.post_order_id_seq',80,true);`);
     },
   });
   try {
