@@ -15,7 +15,12 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
   let fx;
   try { fx = await startFixture({
     prefix: 'aip-flaskbb-topic-move-',
-    actors: {'alice-sub': 2, 'admin-sub': 3},
+    actors: {'alice-sub': 2, 'admin-sub': 3, 'carol-sub': 6},
+    serviceExtra: {workers: {
+      directory: fileURLToPath(new URL('../extensions/', import.meta.url)),
+      language: 'node',
+      enable_writes: true,
+    }},
     seed(sql, q, schema) {
       sql(GROUPS_SQL(schema));
       sql(USERS_SQL(schema));
@@ -24,7 +29,7 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
           (1,1,'Source','fixture',1,false,false),(2,1,'Destination','fixture',2,false,false),(3,1,'Failing destination','fixture',3,false,false);
         INSERT INTO ${q}.forum_group_access(id,forum_id,group_id) VALUES
           (1,1,1),(2,1,2),(3,1,3),(4,2,1),(5,2,2),(6,2,3),(7,3,1),(8,3,2),(9,3,3);
-        INSERT INTO ${q}.moderators(user_id,forum_id) VALUES (2,1);
+        INSERT INTO ${q}.moderators(user_id,forum_id) VALUES (2,1),(6,2);
         INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden) VALUES
           ('${topics.moving}',1,'Moving topic',2,'member-alice','2025-01-01T12:00:00Z','2025-01-05T12:00:00Z',false,false,0,true,false,false),
           ('${topics.source_remaining}',1,'Source remains',2,'member-alice','2025-01-03T12:00:00Z','2025-01-03T12:00:00Z',false,false,0,true,false,false),
@@ -51,17 +56,16 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
   const {sql, q} = fx;
   const snapshot = () => sql(`SELECT concat_ws('|', (SELECT forum_id FROM ${q}.topic WHERE id='${topics.moving}'),
     (SELECT string_agg(id::text || ':' || coalesce(last_post_id::text,'null') || ':' || coalesce(last_post_user_id::text,'null') || ':' || coalesce(last_post_title,'null') || ':' || coalesce(last_post_username,'null') || ':' || coalesce(last_post_created::text,'null'), ',' ORDER BY id) FROM ${q}.forum),
-    (SELECT string_agg(id::text || ':' || topic_count::text || ':' || post_count::text, ',' ORDER BY id) FROM ${q}.forum),
-    (SELECT string_agg(id::text || ':' || forum_id::text, ',' ORDER BY id) FROM ${q}.topic),
-    (SELECT string_agg(topic_id::text, ',' ORDER BY topic_id) FROM ${q}.topic_read),
-    (SELECT string_agg(id::text, ',' ORDER BY id) FROM ${q}.topic),
-    (SELECT string_agg(id::text, ',' ORDER BY id) FROM ${q}.post))`);
+    (SELECT string_agg(f.id::text || ':' || (SELECT count(*) FROM ${q}.topic t WHERE t.forum_id=f.id AND t.published AND NOT t.deleted)::text || ':' || (SELECT count(*) FROM ${q}.post p JOIN ${q}.topic t ON t.id=p.topic_id WHERE p.forum_id=f.id AND p.published AND NOT p.deleted AND NOT t.deleted)::text, ',' ORDER BY f.id) FROM ${q}.forum f),
+    (SELECT string_agg(id::text || ':' || forum_id::text || ':' || title || ':' || coalesce(last_post_id::text,'null') || ':' || published::text || ':' || deleted::text, ',' ORDER BY id) FROM ${q}.topic),
+    (SELECT string_agg(id::text || ':' || user_id::text || ':' || topic_id::text || ':' || forum_id::text || ':' || last_read::text, ',' ORDER BY id) FROM ${q}.topic_read),
+    (SELECT string_agg(id::text || ':' || topic_id::text || ':' || forum_id::text || ':' || content || ':' || date_created::text || ':' || hidden::text || ':' || published::text || ':' || deleted::text, ',' ORDER BY id) FROM ${q}.post))`);
   const resetBaseline = () => {
     sql(`UPDATE ${q}.topic SET forum_id=CASE id WHEN '${topics.moving}' THEN 1 WHEN '${topics.source_remaining}' THEN 1 ELSE 2 END;
-      UPDATE ${q}.forum SET last_post_id=NULL,last_post_user_id=NULL,last_post_title=NULL,last_post_username=NULL,last_post_created=NULL,
-        topic_count=0,post_count=0;
-      UPDATE ${q}.forum SET last_post_id='${posts[42]}',last_post_user_id=2,last_post_title='Moving topic',last_post_username='member-alice',last_post_created='2025-01-05T12:00:00Z',topic_count=2,post_count=3 WHERE id=1;
-      UPDATE ${q}.forum SET last_post_id='${posts[44]}',last_post_user_id=3,last_post_title='Destination existing',last_post_username='admin-bob',last_post_created='2025-01-04T12:00:00Z',topic_count=1,post_count=1 WHERE id=2;
+      UPDATE ${q}.post p SET forum_id=t.forum_id FROM ${q}.topic t WHERE p.topic_id=t.id;
+      UPDATE ${q}.forum SET last_post_id=NULL,last_post_user_id=NULL,last_post_title=NULL,last_post_username=NULL,last_post_created=NULL;
+      UPDATE ${q}.forum SET last_post_id='${posts[42]}',last_post_user_id=2,last_post_title='Moving topic',last_post_username='member-alice',last_post_created='2025-01-05T12:00:00Z' WHERE id=1;
+      UPDATE ${q}.forum SET last_post_id='${posts[44]}',last_post_user_id=3,last_post_title='Destination existing',last_post_username='admin-bob',last_post_created='2025-01-04T12:00:00Z' WHERE id=2;
       DELETE FROM ${q}.topic_read;
       INSERT INTO ${q}.topic_read(id,user_id,topic_id,forum_id,last_read) VALUES
         (1,2,'${topics.moving}',1,'2025-01-06T12:00:00Z'),
@@ -82,7 +86,7 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       console.error(`TOPIC_MOVE_SETUP_FAIL stage=seed-validation rows=${setup || 'unavailable'} snapshot=${snapshot()} error=${error.message}`);
       throw error;
     }
-    const move = async (subject, topic, destination, key) => {
+    const post = async (subject, key, request) => {
       const response = await fetch(`http://${fx.address}/apply`, {
         method: 'POST',
         headers: {
@@ -90,7 +94,7 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
           'x-aip-contract': fx.contract.fingerprint,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({key, request: {extension: 'Topic.moveToForum', input: {topic, destination}}}),
+        body: JSON.stringify({key, request}),
       });
       const bodyText = await response.text();
       let body;
@@ -98,6 +102,7 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       catch { body = {unparsed: bodyText}; }
       return {status: response.status, body, bodyText};
     };
+    const move = (subject, topic, destination, key) => post(subject, key, {extension: 'Topic.moveToForum', input: {topic, destination}});
     const failures = [];
     let lastResponse = null;
     const journey = async (name, action) => {
@@ -128,6 +133,20 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       assert.equal(lastResponse.body.ok, false, JSON.stringify(lastResponse));
       assert.equal(snapshot(), before);
     });
+    await journey('source-moderator-denial', async before => {
+      lastResponse = await move('carol-sub', topics.moving, '2', 'topic-move-source-denied');
+      assert.equal(lastResponse.body.ok, false, JSON.stringify(lastResponse));
+      assert.equal(snapshot(), before);
+    });
+    await journey('internal-transition-direct-http-denial', async before => {
+      lastResponse = await post('admin-sub', 'topic-move-internal-direct', {
+        atomic: [{apply: 'Topic.relocate', target: {ids: [topics.moving]}, values: {forum: '2'}}],
+      });
+      assert.equal(lastResponse.status, 200, JSON.stringify(lastResponse));
+      assert.equal(lastResponse.body.ok, false, JSON.stringify(lastResponse));
+      assert.equal(lastResponse.body.code, 'WIRE.NOT_EXPOSED', JSON.stringify(lastResponse));
+      assert.equal(snapshot(), before);
+    });
     await journey('projection-failure-atomicity', async before => {
       sql(`CREATE FUNCTION ${q}.fail_move_projection() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN IF NEW.id=3 AND NEW.last_post_id IS DISTINCT FROM OLD.last_post_id THEN RAISE EXCEPTION 'injected move projection failure'; END IF; RETURN NEW; END $$;
@@ -146,6 +165,7 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       assert.deepEqual(lastResponse.body.output, {moved: true});
       const moved = fixture.after_move;
       assert.equal(sql(`SELECT forum_id FROM ${q}.topic WHERE id='${topics.moving}'`), String(moved.topic_forum));
+      assert.equal(sql(`SELECT string_agg(forum_id::text, ',' ORDER BY id) FROM ${q}.post WHERE topic_id='${topics.moving}'`), '2,2', 'AIP Post.forum must follow Topic.forum');
       assert.equal(sql(`SELECT last_post_id FROM ${q}.forum WHERE id=1`), posts[moved.source_last_post]);
       assert.equal(sql(`SELECT last_post_id FROM ${q}.forum WHERE id=2`), posts[moved.destination_last_post]);
       assert.equal(sql(`SELECT string_agg(id::text, ',' ORDER BY id) FROM ${q}.post WHERE topic_id='${topics.moving}'`), `${posts[41]},${posts[42]}`);
@@ -153,6 +173,7 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       assert.equal(sql(`SELECT count(*) FROM ${q}.topic_read`), String(moved.remaining_read_rows));
       assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id IN ('${topics.source_remaining}','${topics.destination_existing}')`), '2');
       assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id IN ('${posts[41]}','${posts[42]}','${posts[43]}','${posts[44]}')`), '4');
+      assert.equal(sql(`SELECT string_agg(f.id::text || ':' || (SELECT count(*) FROM ${q}.topic t WHERE t.forum_id=f.id AND t.published AND NOT t.deleted)::text || ':' || (SELECT count(*) FROM ${q}.post p JOIN ${q}.topic t ON t.id=p.topic_id WHERE p.forum_id=f.id AND p.published AND NOT p.deleted AND NOT t.deleted)::text, ',' ORDER BY f.id) FROM ${q}.forum f`), '1:1:1,2:2:3,3:0:0', 'Forum counter semantics must follow the relocated AIP references');
       console.log(`TOPIC_MOVE_ORACLE_TARGET source_last=${moved.source_last_post} destination_last=${moved.destination_last_post} post_relation=topic_id reads_removed=1`);
     });
     await journey('empty-source-forum-projection', async () => {

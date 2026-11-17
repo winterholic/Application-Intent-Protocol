@@ -406,7 +406,8 @@ class PostOracleGap(unittest.TestCase):
         db.session.flush()
         topics = {}
         for item in fixture["topics"]:
-            topic = Topic(id=item["source_id"], title=item["title"], user=users[item["user"]])
+            topic = Topic(title=item["title"], user=users[item["user"]])
+            topic.id = item["source_id"]
             topic.forum = forums[item["forum"]]
             topic.post_count = item["post_count"]
             db.session.add(topic)
