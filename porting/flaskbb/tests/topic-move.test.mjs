@@ -29,7 +29,7 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
           (1,1,'Source','fixture',1,false,false),(2,1,'Destination','fixture',2,false,false),(3,1,'Failing destination','fixture',3,false,false);
         INSERT INTO ${q}.forum_group_access(id,forum_id,group_id) VALUES
           (1,1,1),(2,1,2),(3,1,3),(4,2,1),(5,2,2),(6,2,3),(7,3,1),(8,3,2),(9,3,3);
-        INSERT INTO ${q}.moderators(user_id,forum_id) VALUES (2,1),(6,2);
+        INSERT INTO ${q}.forum_moderator(id,forum_id,user_id) VALUES (1,1,2),(2,2,6);
         INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden) VALUES
           ('${topics.moving}',1,'Moving topic',2,'member-alice','2025-01-01T12:00:00Z','2025-01-05T12:00:00Z',false,false,0,true,false,false),
           ('${topics.source_remaining}',1,'Source remains',2,'member-alice','2025-01-03T12:00:00Z','2025-01-03T12:00:00Z',false,false,0,true,false,false),
@@ -77,8 +77,8 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
     try {
       setup = sql(`SELECT concat_ws('|', (SELECT count(*) FROM ${q}.forum), (SELECT count(*) FROM ${q}.topic),
         (SELECT count(*) FROM ${q}.post), (SELECT count(*) FROM ${q}.topic_read),
-        (SELECT count(*) FROM ${q}.moderators WHERE user_id=2 AND forum_id=1),
-        (SELECT count(*) FROM ${q}.moderators WHERE user_id=2 AND forum_id=2)`);
+        (SELECT count(*) FROM ${q}.forum_moderator WHERE user_id=2 AND forum_id=1),
+        (SELECT count(*) FROM ${q}.forum_moderator WHERE user_id=2 AND forum_id=2)`);
       assert.equal(setup, '3|3|4|3|1|0', `setup seed/role mismatch: ${setup}`);
       assert.equal(sql(`SELECT string_agg(topic_id::text, ',' ORDER BY topic_id) FROM ${q}.topic_read`), `${topics.moving},${topics.source_remaining},${topics.destination_existing}`);
       console.log(`TOPIC_MOVE_SETUP_OK schema=${fx.schema} rows=${setup} source_moderator=1 destination_moderator=0 actors=bound`);

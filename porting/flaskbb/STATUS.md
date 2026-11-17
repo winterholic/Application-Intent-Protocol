@@ -1,6 +1,6 @@
 # FlaskBB 전체 포팅 상태
 
-## 2026-11-17 Topic.move 단일 요청 구현 — PG17 CI 미확인
+## 2026-11-17 Topic.move 단일 요청 구현 — a02756d0 CI setup 오류 교정
 
 G-6 기준점 `958afd502f8cb85012ab6dfc776445c8b00764d0`의 GitHub Actions Run `44020437777`은 2026-11-17에 `completed/success`로 확인됐다. 부모가 job `133828369176` 원문에서 ORM 12건, Node 29건(pass 29/fail 0), UI 27건과 stage 전부 success를 직접 확인했고 이를 근거로 draft PR #10을 열었다. 이 성공은 해당 기준점에 한정되며 Topic.move 검증을 포함하지 않는다. PR #10의 branch `cycle/p1-flaskbb-g6-20261117`은 그대로 보존한다.
 
@@ -10,9 +10,11 @@ G-6 기준점 `958afd502f8cb85012ab6dfc776445c8b00764d0`의 GitHub Actions Run `
 
 compiler/source 경로를 다시 확인했다. fixture compiler는 `expose apply ... internal`을 facts에 보존하고, write extension의 `access` grant 검증은 internal transition도 허용한다. 공식 `write_extension` transport는 extension callback을 owner transaction 안에서 실행하고 worker `ctx.data.apply`는 선언된 grant만 허용한다. 반면 직접 HTTP `/apply`의 internal transition은 `WIRE.NOT_EXPOSED`로 거부된다. 따라서 core 계약 추가 없이 기존 capability 조합으로 구현했다. 기존 local `target/debug/aip`는 source 지문 미검증이며, fixture 결과는 탐색 근거에 한정한다. `cargo build -p aip-cli --locked`는 local `aip-test-support` build script의 `PGHOST must be unset` guard에서 중단됐고 DB를 우회하지 않았다. authoritative source match와 동작 판정은 새 SHA의 GitHub Actions PG17 CLI 및 acceptance 결과다.
 
-새 전용 branch `verify/topic-move-flaskbb-20261117`의 기준 HEAD는 `d5e669bfb7646136483fb9141292ab7f1f62d2d5`이며, PR #10 branch는 변경하지 않는다. 해당 SHA의 이전 CI `44025058024` / job `133843275865`는 의존성 설치까지 성공하고 ORM regression에서만 실패했다: `Topic(id=...)`가 설치된 SQLAlchemy 모델 생성자에서 `TypeError: __init__() got an unexpected keyword argument 'id'`를 냈다. 이를 ORM oracle에서 생성 후 ID 할당으로 고쳤다. native HTTP 실패의 원문 상세는 원본 log cache 읽기가 차단되어 미확인이다.
+새 전용 branch `verify/topic-move-flaskbb-20261117`의 기준 HEAD는 `d5e669bfb7646136483fb9141292ab7f1f62d2d5`이며, PR #10 branch는 변경하지 않는다. 이전 CI `44025058024` / job `133843275865`는 dependencies를 설치한 뒤 `Topic(id=...)`에서 `TypeError: __init__() got an unexpected keyword argument 'id'`를 냈다. a02756d0에서 Topic을 생성 후 ID 할당하도록 고쳤지만, Run `44027917179` / job `133852627510` 원문에서 같은 ORM 패턴이 Post seed에도 남아 `Post(id=...)`가 같은 TypeError를 냈다. 이를 이번 교정에서 생성 후 ID 할당으로 고친다.
 
-현재 구현은 extension worker가 source/destination Forum의 moderator 전이를 각각 호출하고, same-Forum이면 변경 없이 반환하며, 그 외에는 internal `Topic.relocate`로 Topic/Post.forum FK 이동과 TopicRead 삭제를 실행하고 두 Forum의 날짜 기반 Post projection을 재계산한다. 전체는 extension owner transaction 한 건이다. Forum 집계는 저장 counter 컬럼이 아닌 AIP relation aggregate라 Post.forum 정합성으로 계산되며, acceptance는 해당 의미를 직접 검증한다. Post 후보는 `date_created`만 정렬하고 원본처럼 동률 승자를 새로 정하지 않는다. acceptance에는 직접 HTTP internal 전이 거부, source-only/destination-only moderator 거부, projection trigger rollback, 정상 이동·양 projection·read cleanup·무관 행 보존·same-Forum 검증을 둔다. 로컬 DB 검사는 실행하지 않는다. 정적 검사는 통과했고 새 SHA PG17 CI 제출을 남겼으며 G-6/전체 포팅은 미완료다.
+현재 구현은 extension worker가 source/destination Forum의 moderator 전이를 각각 호출하고, same-Forum이면 변경 없이 반환하며, 그 외에는 internal `Topic.relocate`로 Topic/Post.forum FK 이동과 TopicRead 삭제를 실행하고 두 Forum의 날짜 기반 Post projection을 재계산한다. 전체는 extension owner transaction 한 건이다. Forum 집계는 저장 counter 컬럼이 아닌 AIP relation aggregate라 Post.forum 정합성으로 계산되며, acceptance는 해당 의미를 직접 검증한다. Post 후보는 `date_created`만 정렬하고 원본처럼 동률 승자를 새로 정하지 않는다.
+
+Run `44027917179`는 failed다. ORM job 원문은 회귀 13건 중 12건 통과, Topic.move oracle setup 1건이 `Post(id=...)` TypeError로 error였다. date-sort 및 Topic visibility negative controls는 각 예상 실패 표식을 기록했다. Native Node suite는 30건 중 29건 통과했으나 Topic.move acceptance가 `forum_moderator` 대신 존재하지 않는 `moderators` relation에 seed하려다 fixture init에서 실패했다. 따라서 이 Run에서는 HTTP move, 양-side authorization, direct internal denial, rollback 및 read cleanup 여정이 실행되지 않았다. 제품 결함이나 포팅 선언 결함의 증거는 없고 두 실패 모두 test fixture 가정 오류로 분류한다. 최소 교정은 위 Post ID 할당과 moderator relation/table 이름 변경이며 단언은 보존한다. 재제출 SHA/PG17 결과는 다음 Run에서 기록한다. 로컬 DB 검사는 실행하지 않으며 G-6/전체 포팅은 미완료다.
 
 ## 2026-11-17 Post.hide/delete 선행 포인터 조건·Topic 날짜 규칙
 

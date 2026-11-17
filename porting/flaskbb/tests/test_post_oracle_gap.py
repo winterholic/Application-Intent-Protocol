@@ -416,7 +416,8 @@ class PostOracleGap(unittest.TestCase):
         posts = {}
         for item in fixture["posts"]:
             topic = topics[item["topic"]]
-            post = Post(id=item["source_id"], content="body", user=users[item["user"]], topic=topic)
+            post = Post(content="body", user=users[item["user"]], topic=topic)
+            post.id = item["source_id"]
             post.date_created = self.parse_time(item["date_created"])
             db.session.add(post)
             posts[item["source_id"]] = post
