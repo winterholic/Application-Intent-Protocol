@@ -5,8 +5,10 @@ on:
   pull_request:
     paths:
       - 'crates/aip-cli/**'
+      - 'crates/aip-sema/**'
       - 'crates/aip-runtime/**'
       - 'crates/aip-test-support/**'
+      - 'conformance/**'
       - '.github/workflows/semantic-conformance.yml'
 
 permissions:
@@ -54,6 +56,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run Clippy
         run: cargo clippy -p aip-cli --test service_flow --locked -- -D warnings
+      - name: Run Core shared semantic fixture
+        run: cargo test -p aip-sema --test shared_semantic_fixture --locked -- --nocapture
       - name: Run focused service policy regressions
         run: cargo test -p aip-cli --test service_flow --locked service_policy_ -- --nocapture
       - name: Run service HTTP and PostgreSQL contract tests
