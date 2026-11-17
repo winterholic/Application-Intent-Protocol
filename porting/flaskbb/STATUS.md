@@ -1,6 +1,6 @@
 # FlaskBB 전체 포팅 상태
 
-## 2026-11-17 Topic.move 단일 요청 구현 — a02756d0 CI setup 오류 교정
+## 2026-11-17 Topic.move 단일 요청 구현 — Node extension 복원, PG17 CI 제출
 
 G-6 기준점 `958afd502f8cb85012ab6dfc776445c8b00764d0`의 GitHub Actions Run `44020437777`은 2026-11-17에 `completed/success`로 확인됐다. 부모가 job `133828369176` 원문에서 ORM 12건, Node 29건(pass 29/fail 0), UI 27건과 stage 전부 success를 직접 확인했고 이를 근거로 draft PR #10을 열었다. 이 성공은 해당 기준점에 한정되며 Topic.move 검증을 포함하지 않는다. PR #10의 branch `cycle/p1-flaskbb-g6-20261117`은 그대로 보존한다.
 
@@ -21,6 +21,8 @@ Run `44027917179`는 failed다. ORM job 원문은 회귀 13건 중 12건 통과,
 Run `44031353780`에서는 ORM regression 13건과 CLI 경계 검사가 통과했지만 Topic.move acceptance가 worker 시작 전 `SERVER_CONFIG`로 실패했다. workflow는 Linux `Auto` 격리의 필수 실행 파일 `bwrap`를 설치하지 않았고, `Isolation::validate_available`의 `NotFound`가 일반 worker runtime 누락 문구로 변환되는 경로를 확인했다. 이는 PG17 CI 준비 결함이며 제품 move 동작의 증거가 아니다. 격리 설정을 유지하고 CI 도구 설치에 `bubblewrap`를 추가해 재제출한다. 이 Run도 HTTP 여정에는 도달하지 않았다.
 
 Run `44032303956`에서는 ORM regression과 CLI 경계 검사까지 통과했고 `bubblewrap` 설치 후 worker probe 오류가 `io other`로 바뀌었으나 HTTP acceptance 전 setup에서 실패했다. `linux_bwrap_spec`은 선택한 runtime의 상위 디렉터리만 자동 mount하고, venv Python이 setup-python toolcache interpreter를 symlink할 때 그 target은 자동 노출되지 않는 구조다. 이를 원인 후보로 분류한 것은 소스 경로에 근거한 추론이며 서비스의 probe 세부 오류는 외부에 노출되지 않았다. Topic.move fixture에서 toolcache Python 루트를 읽기 전용 sandbox 경로로 지정해 다시 확인한다.
+
+Run `44033155559`(3c4db117)는 ORM regression과 CLI 경계 검사를 통과했지만, Python worker로 바꾼 뒤 setup이 `SERVER_CONFIG` io other error로 멈췄다. 제품 worker가 oracle 비교용 FlaskBB venv에 의존하면 독립 비교가 깨지고, 언어 전환은 Node probe 문제를 우회할 뿐이므로 `extensions/topic.mjs` Node 구현으로 되돌리고 `mail/topic.py`와 Python `runtime_executable`·`read_only_paths` 설정을 거뒀다. 유지한 교정은 forum_moderator 스키마 fixture, mail integration fixture, `test_post_oracle_gap.py`의 ID 할당과 CI의 `bubblewrap` 설치다. Node probe 2초 timeout은 별도 담당(PR #8)이며 이 단위에서 고치지 않는다. 이 복원 SHA의 PG17 CI는 한 번만 제출했고 결과는 제출 후 보고한다. G-6/전체 포팅은 미완료다.
 
 ## 2026-11-17 Post.hide/delete 선행 포인터 조건·Topic 날짜 규칙
 
