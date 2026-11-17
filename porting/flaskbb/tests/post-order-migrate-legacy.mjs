@@ -10,9 +10,9 @@ export function deriveLegacyDefinition(source) {
   const deletePredicates = legacy.match(/^predicate topicDelete(?:Candidate|RecalculatesForum|KeepsForum).*$/gm);
   assert.equal(deletePredicates?.length, 3);
   legacy = legacy.replace(/^predicate topicDelete(?:Candidate|RecalculatesForum|KeepsForum).*\n/gm, '');
-  const postPointerPredicates = legacy.match(/^predicate (?:postIsTopicLast|postIsForumLast|postRestoresTopicLast|topicLastCandidate|topicReplyBesides|topicHasRemainingReply).*$/gm);
-  assert.equal(postPointerPredicates?.length, 6);
-  legacy = legacy.replace(/^predicate (?:postIsTopicLast|postIsForumLast|postRestoresTopicLast|topicLastCandidate|topicReplyBesides|topicHasRemainingReply).*\n/gm, '');
+  const postPointerPredicates = legacy.match(/^predicate (?:postIsTopicLast|postIsForumLast|postUnhideHasOlderVisibleSibling|postRestoresTopicLast|postRestoresForumLast|topicLastCandidate|topicReplyBesides|topicHasRemainingReply).*$/gm);
+  assert.equal(postPointerPredicates?.length, 8);
+  legacy = legacy.replace(/^predicate (?:postIsTopicLast|postIsForumLast|postUnhideHasOlderVisibleSibling|postRestoresTopicLast|postRestoresForumLast|topicLastCandidate|topicReplyBesides|topicHasRemainingReply).*\n/gm, '');
 
   const deleteStart = legacy.indexOf('  transition delete {', legacy.indexOf('resource Topic {'));
   const deleteEnd = legacy.indexOf('  expose apply delete { target id; bulk maxRows 1 }', deleteStart);
@@ -45,10 +45,16 @@ export function deriveLegacyDefinition(source) {
   assert.equal(legacy.split(forumPointerGuard).length, 3);
   legacy = legacy.replaceAll(forumPointerGuard, 'update Forum where id = this.forum {');
   const legacyTopicDateUpdate = '    update Topic where id = this.topic {\n      last_updated = latest Post candidate where candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.date_created select candidate.date_created otherwise this.topic.date_created\n    }\n';
+  const unhideForumPointerUpdate = '    update Forum when postRestoresForumLast(this) where id = this.forum {\n      last_post = this\n      last_post_user = this.user\n      last_post_title = this.topic.title\n      last_post_username = this.username\n      last_post_created = this.date_created\n    }\n';
+  const legacyUnhideForumUpdate = '    update Forum where id = this.forum {\n      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.id\n      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.user\n      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title\n      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.username\n      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.date_created\n    }\n';
+  assert.equal(legacy.split(unhideForumPointerUpdate).length, 2);
+  legacy = legacy.replace(unhideForumPointerUpdate, legacyUnhideForumUpdate);
   const hidePointerUpdate = '    update Topic when postIsTopicLast(this) where id = this.topic {\n      last_post = latest Post candidate where topicLastCandidate(this, candidate) order by candidate.source_order.id select candidate.id otherwise this.topic.last_post\n      last_updated = this.date_created\n    }\n';
   assert.equal(legacy.split(hidePointerUpdate).length, 2);
   legacy = legacy.replace(hidePointerUpdate, legacyTopicDateUpdate);
-  removeOnce('    update Topic when postRestoresTopicLast(this) where id = this.topic { last_post = this }\n');
+  const unhideTopicPointerUpdate = '    update Topic when postRestoresTopicLast(this) where id = this.topic { last_post = this }\n';
+  assert.equal(legacy.split(unhideTopicPointerUpdate).length, 2);
+  legacy = legacy.replace(unhideTopicPointerUpdate, legacyTopicDateUpdate);
   const deletePointerUpdate = '    update Topic when postIsTopicLast(this) and topicHasRemainingReply(this) where id = this.topic {\n      last_post = latest Post candidate where topicLastCandidate(this, candidate) order by candidate.source_order.id select candidate.id otherwise this.topic.last_post\n      last_updated = this.date_created\n    }\n';
   assert.equal(legacy.split(deletePointerUpdate).length, 2);
   legacy = legacy.replace(deletePointerUpdate, legacyTopicDateUpdate);
@@ -62,6 +68,7 @@ export function deriveLegacyDefinition(source) {
   const topicFieldAnchor = 'resource Topic {\n  fields {\n    id: Uuid\n    last_post: Post?\n';
   assert.equal(legacy.split(topicFieldAnchor).length, 2);
   legacy = legacy.replace(topicFieldAnchor, 'resource Topic {\n  fields {\n    id: Uuid\n');
+  assert.doesNotMatch(legacy, /\b(?:postUnhideHasOlderVisibleSibling|postRestoresTopicLast|postRestoresForumLast)\b/);
   removeOnce('    update Topic where id = this.topic { last_post = this; last_updated = now }\n');
   legacy = legacy.replace('last_post = this.last_post\n', 'last_post = this.forum.last_post\n');
   removeOnce('  unique source_order\n  check sourceOrderBelongsToPost when source_order = null or source_order.post = this\n');

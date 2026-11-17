@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 UPSTREAM = Path(__file__).resolve().parents[1] / "upstream"
 ORDER_FIXTURE = json.loads((Path(__file__).with_name("post-order-regression.json")).read_text())
+UNHIDE_CASES = ORDER_FIXTURE["unhide_cases"]
 sys.path.insert(0, str(UPSTREAM))
 
 from flaskbb import create_app  # noqa: E402
@@ -374,6 +375,76 @@ class PostOracleGap(unittest.TestCase):
 
     def test_post_delete_pointer_conditions_use_the_shared_cases(self):
         self.run_pointer_cases("delete")
+
+    def test_post_unhide_pointer_and_preserved_projections_use_shared_cases(self):
+        """Run the original guard -> _restore_post_to_topic -> unhide -> counts -> commit path."""
+        for case in UNHIDE_CASES:
+            with self.subTest(case=case["name"]):
+                db.session.remove()
+                db.drop_all()
+                db.create_all()
+                group = Group(name="ordinary", description="unhide oracle fixture")
+                db.session.add(group)
+                db.session.flush()
+                users = {}
+                for key, name in ((2, "member-alice"), (3, "admin-bob")):
+                    users[key] = User(username=name, email=name + "@example.invalid",
+                                      _password="not-used", primary_group=group)
+                    db.session.add(users[key])
+                category = Category(title="unhide-category")
+                db.session.add(category)
+                db.session.flush()
+                forum = Forum(category_id=category.id, title="unhide-forum")
+                db.session.add(forum)
+                db.session.flush()
+                topic = Topic(title=case["topic_title"], user=users[case["topic_user"]])
+                topic.forum = forum
+                topic.hidden = case["topic_hidden"]
+                topic.last_updated = self.parse_time(case["topic_last_updated"])
+                db.session.add(topic)
+                db.session.flush()
+                rows = {}
+                for item in case["posts"]:
+                    row = Post(content="body", user=users[item["user"]], topic=topic)
+                    row.id = item["id"]
+                    row.date_created = self.parse_time(item["date_created"])
+                    row.hidden = item["hidden"]
+                    row.topic = topic
+                    rows[item["id"]] = row
+                    db.session.add(row)
+                    db.session.flush()
+                    if item["first"]:
+                        topic.first_post = row
+                if case["topic_last_post"] is not None:
+                    topic.last_post = rows[case["topic_last_post"]]
+                forum.last_post = rows[case["forum"]["last_post"]]
+                forum.last_post_user = users[case["forum"]["last_post_user"]]
+                forum.last_post_title = case["forum"]["last_post_title"]
+                forum.last_post_username = case["forum"]["last_post_username"]
+                forum.last_post_created = self.parse_time(case["forum"]["last_post_created"])
+                db.session.commit()
+
+                rows[case["target"]].unhide()
+                db.session.commit()
+
+                expected = case["expect"]
+                self.assertEqual(topic.last_post_id, expected["topic_last_post"])
+                self.assertEqual(topic.last_updated, self.parse_time(expected["topic_last_updated"]))
+                actual_forum = {
+                    "last_post": forum.last_post_id,
+                    "last_post_user": forum.last_post_user_id,
+                    "last_post_title": forum.last_post_title,
+                    "last_post_username": forum.last_post_username,
+                    "last_post_created": forum.last_post_created,
+                }
+                expected_forum = dict(expected["forum"])
+                expected_forum["last_post_user"] = users[expected_forum["last_post_user"]].id
+                expected_forum["last_post_created"] = self.parse_time(expected_forum["last_post_created"])
+                self.assertEqual(actual_forum, expected_forum)
+                self.assertFalse(rows[case["target"]].hidden)
+                print("POST_UNHIDE case={} topic_last={} topic_updated={} forum={}".format(
+                    case["name"], topic.last_post_id, topic.last_updated.isoformat(),
+                    actual_forum["last_post"]))
 
     def test_wrong_visibility_filter_negative_control_is_detected(self):
         forum, _, _ = self.seed([(110, 0, False, False),

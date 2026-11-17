@@ -1,5 +1,13 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-17 Post.unhide 무순서 후보의 결정적 경계 추가
+
+공유 `post-order-regression.json`의 `unhide_cases`에 세 사례를 추가했다. `single-visible-sibling-with-null-topic-pointer`와 `single-visible-sibling-with-hidden-topic-pointer`는 원본 query가 Topic.last_post 포인터와 독립적으로 visible sibling을 고른다는 점을, `multiple-visible-older-siblings-restore-without-order`는 여러 sibling이 모두 복원 글보다 엄격히 오래되면 원본의 어떤 무순서 선택에서도 Topic 포인터 복원이 성립한다는 점을 고정한다. 예상값은 `Post._restore_post_to_topic`의 visible sibling 조회와 strict date 비교, Topic.last_updated 비갱신, visible Topic일 때의 조건부 Forum projection에서 도출했다. 동률이나 날짜가 섞인 다중 후보에는 특정 순서를 정하지 않는다.
+
+원본 ORM과 Service HTTP가 같은 JSON을 읽도록 fixture setup을 확장했고, 기존 세 사례·각 다섯 단언은 유지했다. 테스트 전용 commit `d441ba41597a7fbcaa1249700c8c473d5582f333`의 공식 [PG17 Run 44069648933](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44069648933)은 마지막 관측에서 `in_progress`였고, ORM regression step은 success, native-order step은 진행 중이었다. HTTP step 결과는 아직 미확인이다. 추가로 사용자 제공 Run 44068436326 원문에 따르면 기존 HTTP 공유 사례는 pass 1/fail 0, native-order는 28 pass/1 fail이었고, 실패는 `post-order-migrate.test.mjs`의 파생 legacy 선언에 `postUnhideHasSingleVisibleCandidate`가 남아 `Topic.last_post` 미선언 및 연쇄 predicate 오류를 낸 것이다.
+
+현재 로컬 수정은 무순서 visible sibling을 모두 대상으로 엄격한 날짜 경계를 표현한다. 따라서 후보가 없거나 동률·날짜 혼합 다중 후보면 변경하지 않고, 모든 후보가 복원 글보다 오래되면 포인터를 복원한다. Forum의 visible Topic·NULL 또는 더 오래된 Forum pointer 조건과 다섯 projection, Topic.last_updated 보존은 유지한다. `post-order-migrate-legacy.mjs`는 새 unhide predicate 세 개를 파생 legacy에서 제거하고 구 스키마의 Forum date projection 및 Topic.last_updated 갱신을 복원한다. 기존 migration·잘못된 digest 거절·DB 불변 단언은 변경하지 않았다. 로컬 구문/legacy derivation 검사는 통과했지만 제품 선언 검증과 HTTP/PG 결과는 미확인이다. 현재 수정은 아직 commit/push하지 않았으며, Run 440696을 취소하거나 추가 CI를 제출하지 않는다.
+
 ## 2026-11-17 Post.hide/delete 후보 없음·숨김 Topic 후보 회귀 보강
 
 PR #10 head `958afd50` 독립 검토(Run a6ab667f)가 찾은 두 공유 회귀 공백을 `tests/post-order-regression.json`의 `pointer_cases` 5·6번으로 추가했다. 같은 JSON을 원본 ORM(`test_post_oracle_gap.py`)과 AIP HTTP(`post-order-pointer.test.mjs`)가 hide·delete 두 전이로 읽는다. 5번 `no-candidate-clears-every-forum-projection`은 후보가 없을 때 Forum의 `last_post`와 네 projection 필드가 모두 NULL이 되는 원본 규칙(`forum/models.py` 298–319)을, 6번 `hidden-topic-visible-post-is-forum-candidate`는 Topic.hidden을 거르지 않는 원본 쿼리라 숨김 Topic의 visible Post(174)가 가장 큰 Post.id 후보가 되는 것을 확인한다. 6번은 174의 날짜를 후보 중 가장 이르게 두어 날짜 정렬이나 Topic 숨김 필터를 쓰면 171로 갈라진다. Forum 후보는 원본이 `Post.id desc`를 명시하므로 고정하지만, Topic.last_post는 무정렬 `posts[-2]`라 임의 순서로 고정하지 않는다. hide는 숨긴 대상이 관계에 남아 `{대상, 첫 글}` 중 하나, delete는 autoflush로 대상이 빠져 첫 글로만 허용하고 `last_updated`는 기존 독립 날짜 규칙(hide 대상 날짜, delete 첫 글 날짜)을 쓴다. 기존 source ID·timestamp 역전, 선행 포인터 보존, 단일 효과, 같은 key replay 단언은 그대로다.
@@ -10,7 +18,7 @@ PR #10 head `958afd50` 독립 검토(Run a6ab667f)가 찾은 두 공유 회귀 �
 
 RED [44017218587](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44017218587) (`5b19bbad`, job 133817917976)에서 공유 JSON `pointer_cases` 4건이 AIP 제품 결함과 oracle 단언 오류로 갈렸다. 제품 결함은 Node `post-order-pointer`의 hide/delete 2건 실패였다: non-last 글을 숨겨도 Topic.last_updated가 재계산됨, Topic-last-but-not-Forum-last에서 Forum 포인터를 무조건 재선택함, Topic.last_post를 갱신하지 않음. oracle 오류는 ORM 12 tests 중 4건(`test_post_oracle_gap.py:350`)이다. 같은 ORM 실행으로 원본은 `Topic.last_post_id`를 `posts[-2]`에서 대입하지만 `last_updated`는 갱신 전에 읽은 `Topic.last_post` 관계(대상 Post)의 날짜를 쓰는 것을 확인했다. 따라서 두 값은 독립이며, `last_updated`는 두 번째 마지막 글이 있으면(hide는 항상, delete는 남은 글 2개 이상) 대상 Post 날짜, 없으면 첫 글 날짜다. 이전 단언(선택한 last_post의 날짜)과 `last-post-recompute`의 hide 후 날짜 되돌림 단언은 잘못이었다.
 
-app.aip 교정: Forum 갱신은 선행 `Topic.last_post = this`이고 `Forum.last_post = this`일 때만, Topic 갱신은 선행 `Topic.last_post = this`일 때만 실행한다. Topic.last_post는 보이는 다른 글 중 source_order 최대로 옮긴다. 이는 무정렬 원본 `posts[-2]`의 유일 승자 재현이 아니라 원본 허용 집합(대상 외 같은 Topic의 글)의 한 원소이며 동등성은 주장하지 않는다. hide 이후 포인터가 이동하므로 Post.unhide가 더 최신이면 Topic.last_post를 복원하는 update를 추가했다(unhide의 나머지 동작과 엄격 비교 의미는 여전히 open). `postOrderKnownForForum` 거부는 그대로다.
+app.aip 교정: Forum 갱신은 선행 `Topic.last_post = this`이고 `Forum.last_post = this`일 때만, Topic 갱신은 선행 `Topic.last_post = this`일 때만 실행한다. Topic.last_post는 보이는 다른 글 중 source_order 최대로 옮긴다. 이는 무정렬 원본 `posts[-2]`의 유일 승자 재현이 아니라 원본 허용 집합(대상 외 같은 Topic의 글)의 한 원소이며 동등성은 주장하지 않는다. Post.unhide는 현재 동일 공유 ORM/HTTP fixture에서 조건부 pointer 보존을 보강한다. `postOrderKnownForForum` 거부는 그대로다.
 
 ## 2026-11-17 G6 PostOrder·순서 기준별 회귀
 
@@ -20,7 +28,7 @@ app.aip 교정: Forum 갱신은 선행 `Topic.last_post = this`이고 `Forum.las
 
 동등성 확인: 위 공유 입력의 Post.hide/Post.delete Forum fallback은 원본 ORM과 AIP에서 결과가 같다. Topic.hide의 source-ID top/non-top/only/NULL 경계, Topic.delete의 날짜 후보/hidden viewer 경계, 원 ID mapping·high-water·rollback·replay 경계는 별도 AIP PG suite에서 통과했다.
 
-미확인: 원본 `Topic.posts[-2]` 관계에는 명시 `ORDER BY`가 없어 Post→Topic second-last 결과를 일반화할 수 없다. Post.unhide도 첫 visible 관계 후보를 순서 없이 고른다. 여러 후보가 이 모호성을 바꾸는 케이스의 원본 동등성, Topic.move의 양 Forum 갱신, 원본 DB manifest provenance/freshness, full live-catalog drift, 원본 물리 삭제/retention과 tombstone 등가성은 검증하지 않았다. 순서 업무별 차이가 달라 범용 selector DSL은 추가하지 않았고, 이 open 범위 때문에 G6와 전체 포팅은 계속 미완료다.
+미확인: 원본 `Topic.posts[-2]` 관계에는 명시 `ORDER BY`가 없어 Post→Topic second-last 결과를 일반화할 수 없다. Post.unhide는 첫 visible sibling을 순서 없이 고르므로 날짜 혼합 다중 후보에서 어느 결과가 나올지 확정할 수 없다. 후보 부재·동률의 원본 비교, 수정 선언의 PG HTTP 결과, Topic.move의 양 Forum 갱신, 원본 DB manifest provenance/freshness, full live-catalog drift, 원본 물리 삭제/retention과 tombstone 등가성은 검증하지 않았다. 순서 업무별 차이가 달라 범용 selector DSL은 추가하지 않았고, 이 open 범위 때문에 G6와 전체 포팅은 계속 미완료다.
 
 ## 2026-11-06 답글의 원자 publish 연결·확대 회귀 검증
 
@@ -515,3 +523,6 @@ TDD 증거: `explicit_null_optional_nbf_is_rejected`는 수정 전 기존 검증
 F01 read regression은 [porting/flaskbb/tests/aip-read.test.mjs](tests/aip-read.test.mjs)에 있다. `aip-read.log`는 Linux PostgreSQL 14.18 isolated DB `aip_flaskbb`/host `55439`, dynamic owned schemas, local ephemeral RS256 test issuer/JWKS, actual AIP SDK read, role-dependent rows, duplicate relationship rejection 기록이다. TDD 초기 실행에서 회원이 guest group의 포럼까지 읽는 정책 버그가 드러났고 predicate를 바로잡아 재실행 PASS. 원본 baseline DB는 별도 `flaskbb_baseline`/port `55438`에 계속 격리.
 
 초기화 상세, 명령 원문·raw output, 오류 캡처를 이 경로에 계속 누적하고 다음 상태 갱신 때 SHA-256을 함께 남긴다. 이 README/STATUS 변경은 기존 FaceReview UI blocker, MySQL adapter blocker, IdP 3/17 + 14 미실행 상태를 닫지 않는다.
+## 2026-11-17 Post.unhide 날짜·Forum 투영 후보
+
+기존 공유 fixture의 공식 PostgreSQL 17 HTTP RED (`4e830c83c42e7f0df25a67e2a87004d77bf0f23d`, Run `44065786844`, job `133978992389`)를 기준으로 `porting/flaskbb/app.aip`를 처음 교정했다. 당시 predicate는 Topic 포인터와 일치하는 단일 visible sibling만 처리해 검증 범위가 지나치게 좁았다. 후보 SHA `e8ea15e114c28a441e60fefb51fefc347708bcf5`의 자동 [PG17 workflow Run `44068436326`](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44068436326)은 이후 terminal FAILURE였다. 사용자 회수 원문 기준 HTTP 기존 3사례는 pass 1/fail 0, native-order는 28 pass/1 fail이며 실패는 `post-order-migrate-legacy.mjs`가 제거하지 않은 unhide predicate의 `Topic.last_post` 참조였다. 결정적 fixture 세 건과 교정 후보는 위 2026-11-17 항목에 기록한다. 후보 부재·동률·혼합 날짜 다중 후보 및 새 후보의 PG HTTP GREEN은 미검증이다.
