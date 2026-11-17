@@ -33,7 +33,12 @@ predicate topicHideNullReplacement(targetTopic: Topic) = exists Topic where foru
 // from the pre-state Topic.last_post/Forum.last_post pointers. See PRODUCT-GAPS.
 predicate postIsTopicLast(targetPost: Post) = targetPost.topic.last_post = targetPost
 predicate postIsForumLast(targetPost: Post) = targetPost.topic.last_post = targetPost and targetPost.forum.last_post = targetPost
-predicate postRestoresTopicLast(targetPost: Post) = targetPost.topic.last_post = null or targetPost.date_created > targetPost.topic.last_post.date_created
+// Upstream Post._restore_post_to_topic selects one visible sibling with no
+// ORDER BY. Restore only when every eligible sibling is strictly older, so
+// the result is independent of which row the unordered query returns.
+predicate postUnhideHasOlderVisibleSibling(targetPost: Post) = exists Post where topic = targetPost.topic and id != targetPost.id and hidden != true and date_created < targetPost.date_created and not (exists Post where topic = targetPost.topic and id != targetPost.id and hidden != true and date_created >= targetPost.date_created)
+predicate postRestoresTopicLast(targetPost: Post) = postUnhideHasOlderVisibleSibling(targetPost)
+predicate postRestoresForumLast(targetPost: Post) = postRestoresTopicLast(targetPost) and not targetPost.topic.hidden and (targetPost.forum.last_post = null or targetPost.date_created > targetPost.forum.last_post.date_created)
 predicate topicLastCandidate(targetPost: Post, candidate: Post?) = candidate != null and candidate.topic = targetPost.topic and candidate.id != targetPost.id and candidate.published and not candidate.deleted and candidate.hidden = false
 predicate topicReplyBesides(targetPost: Post, firstPost: Post?) = exists Post where topic = targetPost.topic and id != targetPost.id and id != firstPost.id and published and not deleted
 predicate topicHasRemainingReply(targetPost: Post) = exists TopicFirstPost where topic = targetPost.topic and topicReplyBesides(targetPost, post)
@@ -456,17 +461,14 @@ resource Post {
     allow canHide(actor, forum) and not isFirstPost(this)
     from hidden = true and deleted = false
     to hidden = false, hidden_at = null, hidden_by = null
-    update Forum where id = this.forum {
-      last_post = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.id
-      last_post_user = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.user
-      last_post_title = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.topic.title
-      last_post_username = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.username
-      last_post_created = latest Post candidate where candidate.forum = this.forum and candidate.published = true and candidate.hidden = false and candidate.deleted = false and not candidate.topic.deleted order by candidate.date_created select candidate.date_created
+    update Forum when postRestoresForumLast(this) where id = this.forum {
+      last_post = this
+      last_post_user = this.user
+      last_post_title = this.topic.title
+      last_post_username = this.username
+      last_post_created = this.date_created
     }
     update Topic when postRestoresTopicLast(this) where id = this.topic { last_post = this }
-    update Topic where id = this.topic {
-      last_updated = latest Post candidate where candidate.topic = this.topic and candidate.published = true and candidate.hidden = false and candidate.deleted = false order by candidate.date_created select candidate.date_created otherwise this.topic.date_created
-    }
   }
   expose apply unhide { target id; bulk maxRows 1 }
   transition delete {
