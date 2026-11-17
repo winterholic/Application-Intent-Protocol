@@ -1,5 +1,5 @@
 {
-  "scenario": "topic-move-date-projection-and-read-tracker",
+  "scenario": "topic-move-date-projection-pointer-preservation-and-read-tracker",
   "forums": [1, 2, 3],
   "topics": [
     {"key": "moving", "source_id": 10, "forum": 1, "last_post": 42, "title": "Moving topic", "user": 2, "post_count": 2},
@@ -18,6 +18,22 @@
     {"user": 2, "topic": "source_remaining", "forum": 1},
     {"user": 3, "topic": "destination_existing", "forum": 2}
   ],
+  "before_move_projection": {
+    "source": {
+      "last_post": 43,
+      "last_post_user": 3,
+      "last_post_title": "Stale source projection",
+      "last_post_username": "stale-writer",
+      "last_post_created": "2024-12-31T12:00:00Z"
+    },
+    "destination": {
+      "last_post": 44,
+      "last_post_user": 3,
+      "last_post_title": "Destination existing",
+      "last_post_username": "admin-bob",
+      "last_post_created": "2025-01-04T12:00:00Z"
+    }
+  },
   "after_move": {
     "topic_forum": 2,
     "topic_posts": [41, 42],
@@ -27,6 +43,29 @@
     "source_post_count": 1,
     "destination_topic_count": 2,
     "destination_post_count": 3,
-    "remaining_read_rows": 2
+    "remaining_read_rows": 2,
+    "forum_projection": {
+      "source": {
+        "last_post": 43,
+        "last_post_user": 3,
+        "last_post_title": "Stale source projection",
+        "last_post_username": "stale-writer",
+        "last_post_created": "2024-12-31T12:00:00Z"
+      },
+      "destination": {
+        "last_post": 42,
+        "last_post_user": 2,
+        "last_post_title": "Moving topic",
+        "last_post_username": "member-alice",
+        "last_post_created": "2025-01-05T12:00:00Z"
+      }
+    },
+    "empty_source_projection": {
+      "last_post": null,
+      "last_post_user": null,
+      "last_post_title": null,
+      "last_post_username": null,
+      "last_post_created": null
+    }
   }
 }

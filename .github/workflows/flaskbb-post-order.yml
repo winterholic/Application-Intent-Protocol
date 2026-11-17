@@ -158,6 +158,7 @@ jobs:
         continue-on-error: true
         env:
           FLASKBB_ORACLE_DATABASE_URI: postgresql://runner@127.0.0.1:5433/aip_test_ci?options=-csearch_path%3Dflaskbb_orm_oracle
+          FLASKBB_TOPIC_MOVE_ORACLE_OUTPUT: ${{ runner.temp }}/topic-move-orm-oracle.json
           PYTHONDONTWRITEBYTECODE: '1'
           PYTHONPATH: ${{ github.workspace }}/porting/flaskbb/upstream
         run: python3 porting/flaskbb/tests/record_command.py --name oracle-regression -- "$RUNNER_TEMP/flaskbb-upstream/bin/python" -m unittest porting.flaskbb.tests.test_post_oracle_gap -v
@@ -241,6 +242,7 @@ jobs:
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}
         env:
           AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
+          FLASKBB_TOPIC_MOVE_ORACLE_OUTPUT: ${{ runner.temp }}/topic-move-orm-oracle.json
         run: node --test --test-concurrency=1 porting/flaskbb/tests/post-order-native.test.mjs porting/flaskbb/tests/post-order-migrate.test.mjs porting/flaskbb/tests/post-order-import.test.mjs porting/flaskbb/tests/post-order-topic-projection.test.mjs porting/flaskbb/tests/post-order-pointer.test.mjs porting/flaskbb/tests/last-post-recompute.test.mjs porting/flaskbb/tests/aip-read.test.mjs porting/flaskbb/tests/topic-move.test.mjs
       - name: Verify FlaskBB UI atomic publish requests
         if: ${{ !cancelled() && steps.product-build.outcome == 'success' }}

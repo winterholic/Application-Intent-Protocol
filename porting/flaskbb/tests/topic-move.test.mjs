@@ -5,6 +5,9 @@ import {test} from 'node:test';
 import {GROUPS_SQL, USERS_SQL, seedNativePostOrders, startFixture} from './harness.mjs';
 
 const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('./topic-move-regression.json', import.meta.url)), 'utf8'));
+const oraclePath = process.env.FLASKBB_TOPIC_MOVE_ORACLE_OUTPUT;
+if (!oraclePath) throw new Error('FLASKBB_TOPIC_MOVE_ORACLE_OUTPUT must point to this Run\'s FlaskBB ORM result');
+const oracle = JSON.parse(readFileSync(oraclePath, 'utf8'));
 const uuid = (kind, n) => `00000000-0000-4000-8000-${kind}${String(n).padStart(11, '0')}`;
 const topicId = item => uuid('1', item.source_id);
 const postId = item => uuid('2', item.source_id);
@@ -58,8 +61,10 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
         if (item.first) sql(`INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES ('${topic}','${posts[item.source_id]}');`);
       }
       for (const item of fixture.topics) sql(`UPDATE ${q}.topic SET last_post_id='${posts[item.last_post]}' WHERE id='${topics[item.key]}';`);
-      sql(`UPDATE ${q}.forum SET last_post_id='${posts[42]}',last_post_user_id=2,last_post_title='Moving topic',last_post_username='member-alice',last_post_created='2025-01-05T12:00:00Z' WHERE id=1;
-        UPDATE ${q}.forum SET last_post_id='${posts[44]}',last_post_user_id=3,last_post_title='Destination existing',last_post_username='admin-bob',last_post_created='2025-01-04T12:00:00Z' WHERE id=2;`);
+      const sourceProjection = fixture.before_move_projection.source;
+      const destinationProjection = fixture.before_move_projection.destination;
+      sql(`UPDATE ${q}.forum SET last_post_id='${posts[sourceProjection.last_post]}',last_post_user_id=${sourceProjection.last_post_user},last_post_title='${sourceProjection.last_post_title}',last_post_username='${sourceProjection.last_post_username}',last_post_created='${sourceProjection.last_post_created}' WHERE id=1;
+        UPDATE ${q}.forum SET last_post_id='${posts[destinationProjection.last_post]}',last_post_user_id=${destinationProjection.last_post_user},last_post_title='${destinationProjection.last_post_title}',last_post_username='${destinationProjection.last_post_username}',last_post_created='${destinationProjection.last_post_created}' WHERE id=2;`);
       fixture.read_rows.forEach((row, index) => sql(`INSERT INTO ${q}.topic_read(id,user_id,topic_id,forum_id,last_read)
         VALUES (${index + 1},${row.user},'${topics[row.topic]}',${row.forum},'2025-01-06T12:00:00Z');`));
       // Source order disagrees with date order across forums: moved Post 42 sorts before Post 44 here,
@@ -77,12 +82,16 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
     (SELECT string_agg(id::text || ':' || forum_id::text || ':' || title || ':' || coalesce(last_post_id::text,'null') || ':' || published::text || ':' || deleted::text, ',' ORDER BY id) FROM ${q}.topic),
     (SELECT string_agg(id::text || ':' || user_id::text || ':' || topic_id::text || ':' || forum_id::text || ':' || last_read::text, ',' ORDER BY id) FROM ${q}.topic_read),
     (SELECT string_agg(id::text || ':' || topic_id::text || ':' || forum_id::text || ':' || content || ':' || date_created::text || ':' || hidden::text || ':' || published::text || ':' || deleted::text, ',' ORDER BY id) FROM ${q}.post))`);
+  const projection = forumId => {
+    const fields = sql(`SELECT coalesce(last_post_id::text,'null') || '|' || coalesce(last_post_user_id::text,'null') || '|' || coalesce(last_post_title,'null') || '|' || coalesce(last_post_username,'null') || '|' || coalesce(to_char(last_post_created AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),'null') FROM ${q}.forum WHERE id=${forumId}`).split('|');
+    return {last_post: fields[0] === 'null' ? null : fixture.posts.find(item => postId(item) === fields[0]).source_id, last_post_user: fields[1] === 'null' ? null : Number(fields[1]), last_post_title: fields[2] === 'null' ? null : fields[2], last_post_username: fields[3] === 'null' ? null : fields[3], last_post_created: fields[4] === 'null' ? null : fields[4]};
+  };
   const resetBaseline = () => {
     sql(`UPDATE ${q}.topic SET forum_id=CASE id WHEN '${topics.moving}' THEN 1 WHEN '${topics.source_remaining}' THEN 1 ELSE 2 END;
       UPDATE ${q}.post p SET forum_id=t.forum_id FROM ${q}.topic t WHERE p.topic_id=t.id;
       UPDATE ${q}.forum SET last_post_id=NULL,last_post_user_id=NULL,last_post_title=NULL,last_post_username=NULL,last_post_created=NULL;
-      UPDATE ${q}.forum SET last_post_id='${posts[42]}',last_post_user_id=2,last_post_title='Moving topic',last_post_username='member-alice',last_post_created='2025-01-05T12:00:00Z' WHERE id=1;
-      UPDATE ${q}.forum SET last_post_id='${posts[44]}',last_post_user_id=3,last_post_title='Destination existing',last_post_username='admin-bob',last_post_created='2025-01-04T12:00:00Z' WHERE id=2;
+      UPDATE ${q}.forum SET last_post_id='${postId({source_id: fixture.before_move_projection.source.last_post})}',last_post_user_id=${fixture.before_move_projection.source.last_post_user},last_post_title='${fixture.before_move_projection.source.last_post_title}',last_post_username='${fixture.before_move_projection.source.last_post_username}',last_post_created='${fixture.before_move_projection.source.last_post_created}' WHERE id=1;
+      UPDATE ${q}.forum SET last_post_id='${postId({source_id: fixture.before_move_projection.destination.last_post})}',last_post_user_id=${fixture.before_move_projection.destination.last_post_user},last_post_title='${fixture.before_move_projection.destination.last_post_title}',last_post_username='${fixture.before_move_projection.destination.last_post_username}',last_post_created='${fixture.before_move_projection.destination.last_post_created}' WHERE id=2;
       DELETE FROM ${q}.topic_read;
       INSERT INTO ${q}.topic_read(id,user_id,topic_id,forum_id,last_read) VALUES
         (1,2,'${topics.moving}',1,'2025-01-06T12:00:00Z'),
@@ -196,6 +205,10 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       assert.equal(sql(`SELECT string_agg(forum_id::text, ',' ORDER BY id) FROM ${q}.post WHERE topic_id='${topics.moving}'`), '2,2', 'AIP Post.forum must follow Topic.forum');
       assert.equal(sql(`SELECT last_post_id FROM ${q}.forum WHERE id=1`), posts[moved.source_last_post]);
       assert.equal(sql(`SELECT last_post_id FROM ${q}.forum WHERE id=2`), posts[moved.destination_last_post]);
+      assert.deepEqual(projection(1), moved.forum_projection.source);
+      assert.deepEqual(projection(2), moved.forum_projection.destination);
+      assert.deepEqual(projection(1), oracle.after_move.source);
+      assert.deepEqual(projection(2), oracle.after_move.destination);
       assert.equal(sql(`SELECT string_agg(id::text, ',' ORDER BY id) FROM ${q}.post WHERE topic_id='${topics.moving}'`), `${posts[41]},${posts[42]}`);
       assert.equal(sql(`SELECT count(*) FROM ${q}.topic_read WHERE topic_id='${topics.moving}'`), '0');
       assert.equal(sql(`SELECT count(*) FROM ${q}.topic_read`), String(moved.remaining_read_rows));
@@ -213,6 +226,8 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       assert.deepEqual(lastResponse.body.output, {moved: true});
       // concat_ws skips NULLs, so it cannot distinguish "all NULL" from other shapes; test NULLs explicitly.
       assert.equal(sql(`SELECT (last_post_id IS NULL AND last_post_user_id IS NULL AND last_post_title IS NULL AND last_post_username IS NULL AND last_post_created IS NULL)::text FROM ${q}.forum WHERE id=1`), 'true');
+      assert.deepEqual(projection(1), fixture.after_move.empty_source_projection);
+      assert.deepEqual(projection(1), oracle.after_empty.source);
     });
     assert.deepEqual(failures, [], `Topic.move HTTP journey failures: ${JSON.stringify(failures)}`);
   } finally { await fx.stop(); }

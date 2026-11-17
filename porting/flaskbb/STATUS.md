@@ -1,5 +1,13 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-17 PR #11 독립 검증 — Topic.move 투영 포인터 동일 조건
+
+원본 `Forum.update_last_post`를 `upstream/flaskbb/forum/models.py`에서 재확인했다. 후보 Post가 없으면 포인터와 네 필드를 모두 비우고, 후보가 있으면 `last_post != self.last_post`일 때만 last_post·title·user·username·created를 함께 대입한다. 따라서 기존 포인터가 후보와 같으면 투영 필드만 어긋나 있어도 원본은 그 상태를 보존한다. AIP의 Topic.move 투영이 매번 다섯 값을 다시 쓰던 것은 불일치였다.
+
+기존 predicate·조건부 update 문법으로 후보 ID가 현재 포인터와 같을 때 Forum 투영 update를 건너뛰게 했다. 동률 date_created 후보의 승자는 원본 쿼리가 정하지 않으므로 새 tie-break는 추가하지 않았다. 공유 `topic-move-regression.json`은 source 포인터 43을 후보 43과 같게 두고 user/title/username/created 투영을 의도적으로 어긋나게 한다. 원본 ORM test는 이 fixture로 Topic.move와 empty-source 후속 이동을 실행해 같은 Run의 JSON 결과를 `$RUNNER_TEMP/topic-move-orm-oracle.json`에 내보내며, HTTP test는 그 파일과 fixture 기대값을 다섯 필드 모두 직접 비교한다. 정상 이동은 양 Forum, empty-source 여정은 NULL source 다섯 필드를 검증한다.
+
+이 교정 전 로컬 DB 실행은 금지되어 수행하지 않는다. 요청된 정적 검사 후 PR #11 branch에 일반 push를 한 번만 하고 PG17 CI 한 회를 확인할 예정이다. cgroup suite-first의 Node 2초 probe timeout은 별건으로 유지한다.
+
 ## 2026-11-17 Topic.move 단일 요청 구현 — Python worker(mail/), PG17 CI 제출
 
 G-6 기준점 `958afd502f8cb85012ab6dfc776445c8b00764d0`의 GitHub Actions Run `44020437777`은 2026-11-17에 `completed/success`로 확인됐다. 부모가 job `133828369176` 원문에서 ORM 12건, Node 29건(pass 29/fail 0), UI 27건과 stage 전부 success를 직접 확인했고 이를 근거로 draft PR #10을 열었다. 이 성공은 해당 기준점에 한정되며 Topic.move 검증을 포함하지 않는다. PR #10의 branch `cycle/p1-flaskbb-g6-20261117`은 그대로 보존한다.
