@@ -15,16 +15,19 @@ entity Account { label: Text }
 entity Entry {
   account: Account
   fixtureKey: Text
+  title: Text
   note: Text?
   amount: Decimal(10,2)?
+  phase: Text
   score: Decimal(10,2)
+  checked: Bool
 }
 query Conformance(account: Account) {
   allow public
   from Entry e
   where e.account = account
   sort by e.score asc, e.fixtureKey asc
-  select { fixtureKey note amount }
+  select { fixtureKey note amount voteCount: count(Vote v where v.entry = e) }
 }
 query NullEquality(account: Account) {
   allow public
@@ -37,12 +40,13 @@ query EmptyAggregates(account: Account) {
   from Account a
   where a = account
   select {
-    count: count(Entry x where x.account = account),
-    sum: sum(Entry x where x.account = account: x.amount),
-    min: min(Entry x where x.account = account: x.amount),
+    count: count(Entry x where x.account = account)
+    sum: sum(Entry x where x.account = account: x.amount)
+    min: min(Entry x where x.account = account: x.amount)
     max: max(Entry x where x.account = account: x.amount)
   }
 }
+entity Vote { entry: Entry }
 "#;
 
 const ACCOUNT_ID: &str = "00000000-0000-4000-8000-000000000042";
@@ -74,15 +78,21 @@ async fn shared_fixture_core_runtime_matches_expected_values_on_postgres() {
 
     for row in cases {
         let key = row["id"].as_str().expect("fixture id");
+        let title = row["title"].as_str().expect("fixture title");
         let note = row["note"].as_str();
         let amount = row["amount"].as_str();
+        let phase = row["phase"].as_str().expect("fixture phase");
         let score = row["score"].as_str().expect("fixture score");
+        let checked = row["checked"].as_bool().expect("fixture checked flag");
         conn.execute(
-            "INSERT INTO entry (account_id, fixture_key, note, amount, score) VALUES ($1, $2, $3, $4, $5)",
-            &[&uuid::Uuid::parse_str(ACCOUNT_ID).unwrap(), &key, &note, &amount, &score],
+            "INSERT INTO entry (account_id, fixture_key, title, note, amount, phase, score, checked) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            &[&uuid::Uuid::parse_str(ACCOUNT_ID).unwrap(), &key, &title, &note, &amount, &phase, &score, &checked],
         )
         .await
         .expect("insert fixture entry");
+        for _ in row["votes"].as_array().expect("fixture votes") {
+            conn.execute("INSERT INTO vote (entry_id) SELECT id FROM entry WHERE fixture_key = $1", &[&key]).await.expect("insert fixture vote");
+        }
     }
 
     let rows = engine.call(call("Conformance")).await.expect("execute Core conformance query").data;
@@ -95,6 +105,8 @@ async fn shared_fixture_core_runtime_matches_expected_values_on_postgres() {
     assert_eq!(rows[0]["note"], expected["null"], "nullable value reaches Core runtime as JSON null");
     assert_eq!(rows[1]["note"], expected["value"], "present value reaches Core runtime unchanged");
     assert_eq!(rows[0]["amount"], expected["decimalExact"], "Decimal boundary wire value is exact");
+    assert_eq!(rows[0]["voteCount"], 1, "fixture relation selection preserves its non-empty count");
+    assert_eq!(rows[1]["voteCount"], expected["emptyCount"], "fixture relation selection preserves its empty count");
     assert!(
         expected["missingFields"].as_array().unwrap().iter().all(|field| rows[0].get(field.as_str().unwrap()).is_none()),
         "unselected fields are absent from Core runtime output: {}",
