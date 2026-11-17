@@ -85,7 +85,7 @@ async fn shared_fixture_core_runtime_matches_expected_values_on_postgres() {
         let score = row["score"].as_str().expect("fixture score");
         let checked = row["checked"].as_bool().expect("fixture checked flag");
         conn.execute(
-            "INSERT INTO entry (account_id, fixture_key, title, note, amount, phase, score, checked) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO entry (account_id, fixture_key, title, note, amount, phase, score, checked) VALUES ($1, $2, $3, $4, $5::text::numeric, $6, $7::text::numeric, $8)",
             &[&uuid::Uuid::parse_str(ACCOUNT_ID).unwrap(), &key, &title, &note, &amount, &phase, &score, &checked],
         )
         .await
