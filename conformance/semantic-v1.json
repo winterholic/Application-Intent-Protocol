@@ -1,0 +1,43 @@
+{
+  "cases": [
+    {"id":"11", "title":"first", "note":null, "amount":"99999999.99", "phase":"DONE", "score":"10.50", "checked":false, "votes":[1]},
+    {"id":"12", "title":"second", "note":"kept", "amount":"1.20", "phase":"READY", "score":"10.50", "checked":false, "votes":[]},
+    {"id":"13", "title":"boundary", "note":null, "amount":null, "phase":"READY", "score":"99999999.99", "checked":false, "votes":[]}
+  ],
+  "expected": {
+    "missingFields": ["checked"],
+    "null": null,
+    "value": "kept",
+    "policyNull": null,
+    "policyVisible": "READY",
+    "emptyCount": 0,
+    "emptySum": 0,
+    "emptyMin": null,
+    "emptyMax": null,
+    "decimalExact": "99999999.99",
+    "nullEqualityMatches": false,
+    "nonNullEqualityMatches": true,
+    "sortIds": ["11", "12", "13"]
+  },
+  "supportedBy": {
+    "missingFields": ["core", "service"],
+    "null": ["core", "service"],
+    "value": ["core", "service"],
+    "policyNull": ["service"],
+    "policyVisible": ["service"],
+    "emptyCount": ["core", "service"],
+    "emptySum": ["core", "service"],
+    "emptyMin": ["core", "service"],
+    "emptyMax": ["core", "service"],
+    "decimalExact": ["core", "service"],
+    "nullEqualityMatches": ["core", "service"],
+    "nonNullEqualityMatches": ["core", "service"],
+    "sortIds": ["core", "service"]
+  },
+  "unsupported": {
+    "avgAggregate": {"service": "unsupported"},
+    "decimalAggregates": {"service": "unsupported"},
+    "policyNull": {"core": "Core query output has no field-level read/redaction policy; row visibility would remove the row instead of returning this field as null."},
+    "policyVisible": {"core": "Core query output has no field-level read/redaction policy; row visibility would remove the row instead of returning this field value."}
+  }
+}
