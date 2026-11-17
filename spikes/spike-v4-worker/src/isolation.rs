@@ -133,12 +133,18 @@ impl Default for WorkerLaunchConfig {
 impl WorkerLaunchConfig {
     /// Verify the selected runtime, mounts, environment, and isolation before accepting work.
     pub async fn probe(&self, lang: crate::Lang, ext_dir: &std::path::Path) -> std::io::Result<()> {
+        #[cfg(target_os = "linux")]
+        let diagnostic = std::env::var("AIP_TEST_PROBE_DIAGNOSTICS").as_deref() == Ok("1");
+        #[cfg(target_os = "linux")]
+        let probe_started = std::time::Instant::now();
         crate::cgroup::validate_config(self.cgroup_root.as_deref(), self.resource_limits)?;
         self.isolation.validate_available()?;
         let program = runtime_path(lang, self)?;
         let ext_dir = extension_path(self.isolation, ext_dir)?;
         let args = [OsString::from("--version")];
         let spec = command_spec(self.isolation, program.as_os_str(), &args, &ext_dir, &self.read_only_paths)?;
+        #[cfg(target_os = "linux")]
+        let (probe_program, probe_args) = (spec.program.clone(), spec.args.clone());
         let mut command = tokio::process::Command::new(spec.program);
         command.args(spec.args);
         configure_environment(&mut command, self)?;
@@ -149,6 +155,20 @@ impl WorkerLaunchConfig {
             cgroup.attach(&mut command)?;
         }
         let mut child = command.spawn()?;
+        #[cfg(target_os = "linux")]
+        let probe_sequence = {
+            static NEXT_PROBE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            NEXT_PROBE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        };
+        #[cfg(target_os = "linux")]
+        if diagnostic {
+            eprintln!(
+                "AIP_PROBE_DIAG event=start sequence={probe_sequence} condition={} pid={} lang={lang:?} isolation={:?} runtime={program:?} launch_program={probe_program:?} launch_args={probe_args:?}",
+                std::env::var("AIP_EXPERIMENT_CONDITION").unwrap_or_else(|_| "unset".to_owned()),
+                child.id().unwrap_or_default(),
+                self.isolation,
+            );
+        }
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("worker runtime probe stdout pipe was not created"))?;
         let stderr = child.stderr.take().ok_or_else(|| std::io::Error::other("worker runtime probe stderr pipe was not created"))?;
         let stdout_bytes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -159,6 +179,15 @@ impl WorkerLaunchConfig {
             let status = status?;
             let stdout = stdout?;
             let stderr = stderr?;
+            #[cfg(target_os = "linux")]
+            if diagnostic {
+                eprintln!(
+                    "AIP_PROBE_DIAG event=exit sequence={probe_sequence} elapsed_ms={} status={status} stdout={:?} stderr={:?}",
+                    probe_started.elapsed().as_millis(),
+                    String::from_utf8_lossy(&stdout),
+                    String::from_utf8_lossy(&stderr)
+                );
+            }
             if !status.success() {
                 return Err(std::io::Error::other(format!(
                     "worker runtime probe exited with {status}; stdout={:?}; stderr={:?}",
@@ -174,16 +203,38 @@ impl WorkerLaunchConfig {
         let result = match tokio::time::timeout(std::time::Duration::from_secs(2), probe).await {
             Ok(result) => result,
             Err(_) => {
+                let pid = child.id().unwrap_or_default();
                 let child_status = match child.try_wait() {
                     Ok(Some(status)) => format!("exited({status})"),
                     Ok(None) => "running".to_owned(),
                     Err(error) => format!("unknown({error})"),
                 };
+                #[cfg(target_os = "linux")]
+                let process_sample = if diagnostic { linux_probe_process_sample(pid) } else { String::new() };
+                #[cfg(not(target_os = "linux"))]
+                let process_sample = String::new();
+                #[cfg(target_os = "linux")]
+                if diagnostic {
+                    eprintln!(
+                        "AIP_PROBE_DIAG event=timeout sequence={probe_sequence} elapsed_ms={} pid={pid} child_status={child_status} proc_sample={process_sample:?} stdout_bytes_read={} stderr_bytes_read={} action=start_kill",
+                        probe_started.elapsed().as_millis(),
+                        stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                        stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                    );
+                }
                 let _ = child.start_kill();
+                let residual_pid_present = std::path::PathBuf::from("/proc").join(pid.to_string()).exists();
+                #[cfg(target_os = "linux")]
+                if diagnostic {
+                    eprintln!(
+                        "AIP_PROBE_DIAG event=post-kill sequence={probe_sequence} pid={pid} residual_pid_present={residual_pid_present} child_status={:?}",
+                        child.try_wait()
+                    );
+                }
                 Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     format!(
-                        "worker runtime probe exceeded 2 seconds; child_status={child_status}; stdout_bytes_read={}; stderr_bytes_read={}",
+                        "worker runtime probe exceeded 2 seconds; pid={pid}; child_status={child_status}; proc_sample={process_sample:?}; residual_pid_present={residual_pid_present}; stdout_bytes_read={}; stderr_bytes_read={}",
                         stdout_bytes.load(std::sync::atomic::Ordering::Relaxed),
                         stderr_bytes.load(std::sync::atomic::Ordering::Relaxed)
                     ),
@@ -197,6 +248,29 @@ impl WorkerLaunchConfig {
         }
         result
     }
+}
+
+/// Read only a few capped `/proc` fields for timeout diagnostics; this never waits for the child.
+#[cfg(target_os = "linux")]
+fn linux_probe_process_sample(pid: u32) -> String {
+    use std::io::Read;
+
+    fn prefix(path: &std::path::Path, limit: u64) -> String {
+        let Ok(file) = std::fs::File::open(path) else { return "<unavailable>".to_owned() };
+        let mut bytes = Vec::new();
+        if file.take(limit).read_to_end(&mut bytes).is_err() {
+            return "<read-error>".to_owned();
+        }
+        String::from_utf8_lossy(&bytes).replace('\0', " ").replace('\n', " ")
+    }
+
+    let process = std::path::PathBuf::from("/proc").join(pid.to_string());
+    format!(
+        "status={:?} wchan={:?} cmdline={:?}",
+        prefix(&process.join("status"), 512),
+        prefix(&process.join("wchan"), 128),
+        prefix(&process.join("cmdline"), 256)
+    )
 }
 
 pub(crate) fn runtime_path(lang: crate::Lang, config: &WorkerLaunchConfig) -> std::io::Result<std::path::PathBuf> {
