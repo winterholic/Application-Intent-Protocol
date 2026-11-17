@@ -20,6 +20,18 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
       directory: fileURLToPath(new URL('../extensions/', import.meta.url)),
       language: 'node',
       enable_writes: true,
+      // Enabling write extensions also validates the app's existing durable
+      // jobs. This local-only broker satisfies their declared http.mail grant;
+      // the Topic.move fixture never invokes it.
+      integrations: [{
+        name: 'mail',
+        url: 'http://127.0.0.1:58080/api/v1/send',
+        method: 'POST',
+        timeout_ms: 5000,
+        max_request_bytes: 65536,
+        max_response_bytes: 65536,
+        allow_loopback: true,
+      }],
     }},
     seed(sql, q, schema) {
       sql(GROUPS_SQL(schema));

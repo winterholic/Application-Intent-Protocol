@@ -14,7 +14,9 @@ compiler/source 경로를 다시 확인했다. fixture compiler는 `expose apply
 
 현재 구현은 extension worker가 source/destination Forum의 moderator 전이를 각각 호출하고, same-Forum이면 변경 없이 반환하며, 그 외에는 internal `Topic.relocate`로 Topic/Post.forum FK 이동과 TopicRead 삭제를 실행하고 두 Forum의 날짜 기반 Post projection을 재계산한다. 전체는 extension owner transaction 한 건이다. Forum 집계는 저장 counter 컬럼이 아닌 AIP relation aggregate라 Post.forum 정합성으로 계산되며, acceptance는 해당 의미를 직접 검증한다. Post 후보는 `date_created`만 정렬하고 원본처럼 동률 승자를 새로 정하지 않는다.
 
-Run `44027917179`는 failed다. ORM job 원문은 회귀 13건 중 12건 통과, Topic.move oracle setup 1건이 `Post(id=...)` TypeError로 error였다. date-sort 및 Topic visibility negative controls는 각 예상 실패 표식을 기록했다. Native Node suite는 30건 중 29건 통과했으나 Topic.move acceptance가 `forum_moderator` 대신 존재하지 않는 `moderators` relation에 seed하려다 fixture init에서 실패했다. 따라서 이 Run에서는 HTTP move, 양-side authorization, direct internal denial, rollback 및 read cleanup 여정이 실행되지 않았다. 제품 결함이나 포팅 선언 결함의 증거는 없고 두 실패 모두 test fixture 가정 오류로 분류한다. 최소 교정은 위 Post ID 할당과 moderator relation/table 이름 변경이며 단언은 보존한다. 재제출 SHA/PG17 결과는 다음 Run에서 기록한다. 로컬 DB 검사는 실행하지 않으며 G-6/전체 포팅은 미완료다.
+Run `44027917179`는 failed다. ORM job 원문은 회귀 13건 중 12건 통과, Topic.move oracle setup 1건이 `Post(id=...)` TypeError로 error였다. date-sort 및 Topic visibility negative controls는 각 예상 실패 표식을 기록했다. Native Node suite는 30건 중 29건 통과했으나 Topic.move acceptance가 실제 `forum_moderator` 대신 `moderators` relation에 seed하려다 fixture init에서 실패했다. 따라서 이 Run에서는 HTTP 여정이 실행되지 않았다. 최소 교정은 Post를 생성 후 ID 할당하고 moderator table/column을 schema에 맞춘 것이다.
+
+재제출 Run `44028820544`에서 ORM regression은 Topic.move oracle을 포함해 통과했다. native acceptance는 fixture seed를 지나갔지만 service start가 `SERVER_CONFIG: durable job references an unconfigured HTTP integration`으로 거부됐다. app의 기존 durable jobs가 `http.mail` grant를 선언하고 있으므로, workers를 켠 fixture 설정에 외부 호출 없는 local-only `mail` integration을 추가한다. 이 두 Run의 실패 원인은 테스트 ORM/HTTP service fixture 가정 오류이며 제품 결함이나 포팅 선언 결함의 증거는 없다. 두 Run 모두 HTTP move 여정의 인가·rollback·read cleanup 단계에는 도달하지 않았다. 다음 PG17 Run에서 확인한다. 로컬 DB 검사는 실행하지 않으며 G-6/전체 포팅은 미완료다.
 
 ## 2026-11-17 Post.hide/delete 선행 포인터 조건·Topic 날짜 규칙
 
