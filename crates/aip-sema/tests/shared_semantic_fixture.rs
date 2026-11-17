@@ -34,6 +34,21 @@ fn shared_fixture_static_ir_shape_contract() {
     // exercised against PostgreSQL in aip-cli/tests/core_semantic_fixture.rs.
     let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
     let expected = &fixture["expected"];
+    let supported_by = fixture["supportedBy"].as_object().expect("fixture support matrix");
+    let unsupported = fixture["unsupported"].as_object().expect("fixture unsupported matrix");
+    let expected_keys = expected.as_object().expect("fixture expected values");
+    assert_eq!(
+        supported_by.keys().collect::<std::collections::BTreeSet<_>>(),
+        expected_keys.keys().collect::<std::collections::BTreeSet<_>>(),
+        "every expected key must have an explicit path support declaration"
+    );
+    for key in expected_keys.keys() {
+        for path in ["core", "service"] {
+            let supported = supported_by[key].as_array().unwrap().iter().any(|value| value == path);
+            let unsupported = unsupported.get(key).is_some_and(|entry| entry.get(path).is_some());
+            assert_ne!(supported, unsupported, "{key} must be exactly supported or explicitly unsupported by {path}");
+        }
+    }
     let cases = fixture["cases"].as_array().unwrap();
     assert!(cases.iter().any(|row| row["note"].is_null()), "fixture must include an explicit nullable input");
     assert!(cases.iter().any(|row| row["note"].as_str() == Some("kept")), "fixture must include a present value");

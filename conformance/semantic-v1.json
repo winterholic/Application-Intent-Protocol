@@ -19,8 +19,25 @@
     "nonNullEqualityMatches": true,
     "sortIds": ["11", "12", "13"]
   },
+  "supportedBy": {
+    "missingFields": ["core", "service"],
+    "null": ["core", "service"],
+    "value": ["core", "service"],
+    "policyNull": ["service"],
+    "policyVisible": ["service"],
+    "emptyCount": ["core", "service"],
+    "emptySum": ["core", "service"],
+    "emptyMin": ["core", "service"],
+    "emptyMax": ["core", "service"],
+    "decimalExact": ["core", "service"],
+    "nullEqualityMatches": ["core", "service"],
+    "nonNullEqualityMatches": ["core", "service"],
+    "sortIds": ["core", "service"]
+  },
   "unsupported": {
     "avgAggregate": {"service": "unsupported"},
-    "decimalAggregates": {"service": "unsupported"}
+    "decimalAggregates": {"service": "unsupported"},
+    "policyNull": {"core": "Core query output has no field-level read/redaction policy; row visibility would remove the row instead of returning this field as null."},
+    "policyVisible": {"core": "Core query output has no field-level read/redaction policy; row visibility would remove the row instead of returning this field value."}
   }
 }

@@ -513,6 +513,18 @@ async fn service_data_semantics_hold_across_http_and_database_state() {
         assert_eq!(first["rows"][1]["voteCount"],expected["emptyCount"],"empty relation count follows shared fixture");
         assert_eq!(first["rows"][0]["phase"],expected["policyNull"],"note = 'kept' is UNKNOWN for SQL NULL and field policy fails closed");
         assert_eq!(first["rows"][1]["phase"],expected["policyVisible"],"non-null note equality is TRUE");
+        let filtered = post(
+            address,
+            "/read",
+            &token,
+            fingerprint,
+            json!({"query":{"read":"Event","select":["id"],"filter":[{"field":"note","op":"eq","value":"kept"}],"sort":[{"field":"id","dir":"asc"}]}}),
+        )
+        .await;
+        assert_eq!(filtered["ok"],true,"{filtered}");
+        let filtered_ids = filtered["rows"].as_array().expect("filtered rows").iter().map(|row| row["id"].as_str().unwrap()).collect::<Vec<_>>();
+        assert_eq!(filtered_ids.contains(&"11"),expected["nullEqualityMatches"],"HTTP filter excludes the NULL note row");
+        assert_eq!(filtered_ids.contains(&"12"),expected["nonNullEqualityMatches"],"HTTP filter includes the matching non-null note row");
         assert_eq!(first["rows"][0]["member"],json!({"id":"42","name":"Ada"}));
         assert!(expected["missingFields"].as_array().unwrap().iter().all(|field| first["rows"][0].get(field.as_str().unwrap()).is_none()),"fixture fields omitted from selection stay absent");
         let patch = json!({"key":"semantic-partial","request":{"apply":"Event.edit","target":{"ids":["12"]},"values":{"title":"changed"}}});
