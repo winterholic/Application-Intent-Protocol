@@ -14,10 +14,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  startup-baseline:
-    name: startup baseline (no runtime pre-run)
+  startup-comparison:
+    name: ${{ matrix.condition }} sample ${{ matrix.sample }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - condition: suite-first
+            sample: 1
+          - condition: suite-first
+            sample: 2
+          - condition: isolated-node-first
+            sample: 1
+          - condition: isolated-node-first
+            sample: 2
     services:
       postgres:
         image: postgres:17
@@ -37,92 +49,15 @@ jobs:
       AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
       AIP_TEST_BWRAP: '1'
       AIP_TEST_PROBE_DIAGNOSTICS: '1'
-      AIP_EXPERIMENT_CONDITION: baseline-no-runtime-prerun
+      AIP_TEST_NODE_PRERUN: ${{ matrix.condition == 'isolated-node-first' && '1' || '0' }}
+      AIP_EXPERIMENT_CONDITION: ${{ matrix.condition }}-sample-${{ matrix.sample }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Install Linux sandbox and Rust tools
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y apparmor bubblewrap python3
-          rustup update stable
-          rustup default stable
-          rustup component add rustfmt clippy
-          systemd-run --version
-      - name: Configure scoped Bubblewrap user namespace profile
-        run: |
-          set -euo pipefail
-          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
-            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
-            sudo mkdir -p "$sandbox_bin"
-            sudo cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
-            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
-          abi <abi/4.0>,
-          include <tunables/global>
-          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
-            userns,
-          }
-          EOF
-            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
-            echo "$sandbox_bin" >> "$GITHUB_PATH"
-          fi
-      - name: Record condition and run original isolation suite first
-        shell: bash
-        run: |
-          set -uo pipefail
-          evidence="$RUNNER_TEMP/startup-baseline.log"
-          {
-            echo 'condition=baseline-no-runtime-prerun'
-            echo 'first_runtime_action=AIP_TEST_BWRAP=1 original isolation::tests suite; no Node or bwrap pre-run'
-            echo "runner=$(uname -a)"
-            echo "bwrap_path=$(command -v bwrap)"
-            echo "node_path=$(command -v node)"
-          } | tee "$evidence"
-          set +e
-          cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target -- --nocapture 2>&1 | tee -a "$evidence"
-          status=${PIPESTATUS[0]}
-          set -e
-          echo "isolation_suite_exit_status=$status" | tee -a "$evidence"
-          exit "$status"
-      - name: Preserve baseline experiment evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: startup-baseline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/startup-baseline.log
-          if-no-files-found: warn
 
-  startup-bwrap-first:
-    name: startup bwrap-first (isolated runner)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: runner
-          POSTGRES_DB: aip_test_ci
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - '127.0.0.1:5433:5432'
-        options: >-
-          --health-cmd "pg_isready -U runner -d postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
-      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
-      AIP_TEST_BWRAP: '1'
-      AIP_TEST_PROBE_DIAGNOSTICS: '1'
-      AIP_EXPERIMENT_CONDITION: bwrap-version-first-no-node-prerun
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
       - name: Install Linux sandbox and Rust tools
+        shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -131,7 +66,9 @@ jobs:
           rustup default stable
           rustup component add rustfmt clippy
           systemd-run --version
+
       - name: Configure scoped Bubblewrap user namespace profile
+        shell: bash
         run: |
           set -euo pipefail
           if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
@@ -148,45 +85,50 @@ jobs:
             sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
             echo "$sandbox_bin" >> "$GITHUB_PATH"
           fi
-      - name: Measure bwrap --version as first runtime action
+
+      - name: Run bounded startup condition and preserve raw suite result
         shell: bash
         run: |
           set -uo pipefail
-          evidence="$RUNNER_TEMP/startup-bwrap-first.log"
-          echo 'condition=bwrap-version-first-no-node-prerun' | tee "$evidence"
-          echo 'first_runtime_action=bwrap --version' | tee -a "$evidence"
-          start="$EPOCHREALTIME"
-          bwrap --version >"$RUNNER_TEMP/bwrap-version.out" 2>&1 &
-          pid=$!
-          set +e
-          wait "$pid"
-          status=$?
-          set -e
-          end="$EPOCHREALTIME"
-          python3 - "$start" "$end" >> "$evidence" <<'PY'
-          import sys
-          start, end = map(float, sys.argv[1:])
-          print(f'bwrap_version_elapsed_ms={(end - start) * 1000:.3f}')
-          PY
-          cat "$RUNNER_TEMP/bwrap-version.out" | tee -a "$evidence"
-          echo "bwrap_version_exit_status=$status" | tee -a "$evidence"
-          if kill -0 "$pid" 2>/dev/null; then echo "bwrap_version_residual_pid=$pid:present" | tee -a "$evidence"; else echo "bwrap_version_residual_pid=$pid:absent" | tee -a "$evidence"; fi
-          echo 'next_action=original AIP_TEST_BWRAP=1 isolation::tests suite at default cargo test parallelism' | tee -a "$evidence"
+          evidence="$RUNNER_TEMP/startup-${{ matrix.condition }}-sample-${{ matrix.sample }}.log"
+          {
+            echo "condition=$AIP_EXPERIMENT_CONDITION"
+            echo "runner=$(uname -a)"
+            echo "node_path=$(command -v node)"
+            echo 'timeout_seconds=2; AIP_TEST_BWRAP=1; cargo default test parallelism; no timeout, isolation, mount, cache, or host setting changes'
+            echo 'prior_suite_results_run_44024129940: baseline=16/16, bwrap-version-first=16/16, delegated-cgroup-v2=2/2'
+            echo 'prior_run_44024129940: direct isolated probe sequence=2 baseline=634ms/bwrap-version-first=440ms; both exit=0; these bwrap-version values do not measure Node startup'
+            echo 'prior_negative_control_run_44024129940: sequence=3 timeout was expected hung-runtime.sh, not Node'
+          } | tee "$evidence"
+
+          prerun_status=0
+          if [[ '${{ matrix.condition }}' == 'isolated-node-first' ]]; then
+            echo 'first_runtime_action=production WorkerLaunchConfig::probe(Node) via command_spec Auto/LinuxBubblewrap, node --version' | tee -a "$evidence"
+            set +e
+            cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::startup_experiment::run_isolated_node_version_once --locked --target-dir target -- --exact --nocapture 2>&1 | tee -a "$evidence"
+            prerun_status=${PIPESTATUS[0]}
+            set -e
+            echo "isolated_node_prerun_exit_status=$prerun_status" | tee -a "$evidence"
+          else
+            echo 'first_runtime_action=original AIP_TEST_BWRAP=1 isolation::tests suite; no runtime pre-run' | tee -a "$evidence"
+          fi
+
           set +e
           cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target -- --nocapture 2>&1 | tee -a "$evidence"
           suite_status=${PIPESTATUS[0]}
           set -e
           echo "isolation_suite_exit_status=$suite_status" | tee -a "$evidence"
           final_status=$suite_status
-          if [[ "$status" -ne 0 ]]; then final_status=$status; fi
+          if [[ "$prerun_status" -ne 0 ]]; then final_status=$prerun_status; fi
           echo "condition_exit_status=$final_status" | tee -a "$evidence"
           exit "$final_status"
-      - name: Preserve bwrap-first experiment evidence
+
+      - name: Preserve this runner's original evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: startup-bwrap-first-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/startup-bwrap-first.log
+          name: worker-startup-${{ matrix.condition }}-${{ matrix.sample }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/startup-${{ matrix.condition }}-sample-${{ matrix.sample }}.log
           if-no-files-found: warn
 
   cgroup-v2:
@@ -213,7 +155,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+
       - name: Install Linux sandbox and Rust tools
+        shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -222,7 +166,9 @@ jobs:
           rustup default stable
           rustup component add rustfmt clippy
           systemd-run --version
+
       - name: Configure scoped Bubblewrap user namespace profile
+        shell: bash
         run: |
           set -euo pipefail
           if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
@@ -239,6 +185,7 @@ jobs:
             sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
             echo "$sandbox_bin" >> "$GITHUB_PATH"
           fi
+
       - name: Verify cgroup v2 resource limits in delegated systemd scope
         shell: bash
         run: |

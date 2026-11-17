@@ -14,7 +14,7 @@ The earlier raw job output reported Node probe sequence 2 at 634 ms in the basel
 
 ## Bounded comparison
 
-The manual workflow `.github/workflows/worker-startup-experiment.yml` creates exactly two fresh Ubuntu 24.04 runners per condition, with `fail-fast: false` so one failed sample does not cancel another:
+The manual startup matrix in `.github/workflows/cgroup.yml` creates exactly two fresh Ubuntu 24.04 runners per condition, with `fail-fast: false` so one failed sample does not cancel another:
 
 - `suite-first`: run the original `AIP_TEST_BWRAP=1` `isolation::tests` suite first at Cargo's default test parallelism.
 - `isolated-node-first`: call the production `WorkerLaunchConfig::probe(Lang::Node, ...)` path once (`Auto` resolves through the same Linux Bubblewrap `command_spec`), then run the same suite at the same parallelism.
