@@ -19,19 +19,19 @@ test('Post.unhide follows the shared upstream pointer conditions and preserves s
       for (const [index, item] of cases.entries()) {
         const forum = item.forumId;
         const topic = topicId(100 + index);
-        const candidate = item.posts.find(post => post.id === item.candidate);
         const target = item.posts.find(post => post.id === item.target);
         const initial = item.forum;
         sql(`INSERT INTO ${q}.forum(id,category_id,title,description,position,locked,show_moderators) VALUES(${forum},1,'Forum ${item.name}','fixture',${forum},false,false);
           INSERT INTO ${q}.forum_group_access(id,forum_id,group_id) VALUES(${forum},${forum},3);
           INSERT INTO ${q}.topic(id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden)
             VALUES('${topic}',${forum},'${item.topic_title}',${item.topic_user},'${users[item.topic_user]}','2025-01-01T00:00:00Z','${item.topic_last_updated}',false,false,0,true,false,${item.topic_hidden});`);
-        for (const post of [candidate, target]) {
+        for (const post of item.posts) {
           sql(`INSERT INTO ${q}.post(id,topic_id,forum_id,user_id,username,content,date_created,hidden,hidden_by_id,hidden_at,published,version,deleted)
             VALUES('${postId(post.id)}','${topic}',${forum},${post.user},'${users[post.user]}','body-${post.id}','${post.date_created}',${post.hidden},${post.hidden ? 3 : 'NULL'},${post.hidden ? "'2025-02-10T00:00:00Z'" : 'NULL'},true,0,false);`);
         }
-        sql(`INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topic}','${postId(candidate.id)}');
-          UPDATE ${q}.topic SET last_post_id='${postId(item.topic_last_post)}' WHERE id='${topic}';
+        const firstPost = item.posts.find(post => post.first);
+        sql(`INSERT INTO ${q}.topic_first_post(topic_id,post_id) VALUES('${topic}','${postId(firstPost.id)}');
+          UPDATE ${q}.topic SET last_post_id=${item.topic_last_post === null ? 'NULL' : `'${postId(item.topic_last_post)}'`} WHERE id='${topic}';
           UPDATE ${q}.forum SET last_post_id='${postId(initial.last_post)}',last_post_user_id=${initial.last_post_user},
             last_post_title='${initial.last_post_title}',last_post_username='${initial.last_post_username}',
             last_post_created='${initial.last_post_created}' WHERE id=${forum};`);

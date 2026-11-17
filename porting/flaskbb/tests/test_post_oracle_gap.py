@@ -415,7 +415,8 @@ class PostOracleGap(unittest.TestCase):
                     db.session.flush()
                     if item["first"]:
                         topic.first_post = row
-                topic.last_post = rows[case["topic_last_post"]]
+                if case["topic_last_post"] is not None:
+                    topic.last_post = rows[case["topic_last_post"]]
                 forum.last_post = rows[case["forum"]["last_post"]]
                 forum.last_post_user = users[case["forum"]["last_post_user"]]
                 forum.last_post_title = case["forum"]["last_post_title"]
