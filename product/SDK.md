@@ -81,7 +81,7 @@ composed = client.compose("Project", ["11"], [{"transition": "archive"},
 
 생성 TypeScript binding과 Python SDK는 계약을 사용하는 요청에 `x-aip-contract`를 보낸다. `/read`, `/apply`, `/status`에서 헤더가 없으면 `WIRE.CONTRACT_REQUIRED`, 서버 지문과 다르면 `WIRE.CONTRACT_MISMATCH`다. 인증 검사가 먼저 실행된다. 직접 HTTP를 호출하는 클라이언트는 `/capabilities`에서 배포된 지문을 얻어 헤더에 넣는다. 지문을 고정한 클라이언트는 배포가 바뀌면 binding을 다시 생성해야 한다.
 
-JSON 실패 본문은 `requestId`와 `retry`를 싣는다. `requestId`는 응답 헤더 `x-request-id`와 같으며, 운영자는 같은 ID의 요청 로그를 찾는다. 성공 본문에는 이 두 필드를 추가하지 않는다. TypeScript의 오류·실패 결과와 Python의 `AipError`는 서버의 재시도 지침을 보존한다. Python 예외의 요청 ID 속성은 `request_id`다.
+JSON 실패 본문은 `requestId`와 `retry`를 싣는다. `requestId`는 응답 헤더 `x-request-id`와 같으며, 운영자는 같은 ID의 요청 로그를 찾는다. 성공 본문에는 이 두 필드를 추가하지 않는다. 확정된 `/read` 거부는 TypeScript와 Python SDK에서 코드가 포함된 예외로 전달되지만, 확정된 `/apply` 거부는 두 SDK 모두 `{ok: false, code: "WIRE...", ...}` 결과 객체로 반환한다. `WIRE.COMMIT_UNKNOWN` 같은 쓰기 결과 미확정은 `WriteUnsettled`로 전달되며, 거부 결과와 구분한다. TypeScript 오류와 실패 결과, Python 예외와 실패 결과는 서버의 재시도 지침을 보존한다. Python 예외의 요청 ID 속성은 `request_id`다.
 
 | `retry` | 호출자가 할 일 |
 |---|---|
