@@ -1,6 +1,6 @@
 # FlaskBB 전체 포팅 상태
 
-## 2026-11-17 Topic.move 단일 요청 구현 — Node extension 복원, PG17 CI 제출
+## 2026-11-17 Topic.move 단일 요청 구현 — Python worker(mail/), PG17 CI 제출
 
 G-6 기준점 `958afd502f8cb85012ab6dfc776445c8b00764d0`의 GitHub Actions Run `44020437777`은 2026-11-17에 `completed/success`로 확인됐다. 부모가 job `133828369176` 원문에서 ORM 12건, Node 29건(pass 29/fail 0), UI 27건과 stage 전부 success를 직접 확인했고 이를 근거로 draft PR #10을 열었다. 이 성공은 해당 기준점에 한정되며 Topic.move 검증을 포함하지 않는다. PR #10의 branch `cycle/p1-flaskbb-g6-20261117`은 그대로 보존한다.
 
@@ -23,6 +23,8 @@ Run `44031353780`에서는 ORM regression 13건과 CLI 경계 검사가 통과�
 Run `44032303956`에서는 ORM regression과 CLI 경계 검사까지 통과했고 `bubblewrap` 설치 후 worker probe 오류가 `io other`로 바뀌었으나 HTTP acceptance 전 setup에서 실패했다. `linux_bwrap_spec`은 선택한 runtime의 상위 디렉터리만 자동 mount하고, venv Python이 setup-python toolcache interpreter를 symlink할 때 그 target은 자동 노출되지 않는 구조다. 이를 원인 후보로 분류한 것은 소스 경로에 근거한 추론이며 서비스의 probe 세부 오류는 외부에 노출되지 않았다. Topic.move fixture에서 toolcache Python 루트를 읽기 전용 sandbox 경로로 지정해 다시 확인한다.
 
 Run `44033155559`(3c4db117)는 ORM regression과 CLI 경계 검사를 통과했지만, Python worker로 바꾼 뒤 setup이 `SERVER_CONFIG` io other error로 멈췄다. 제품 worker가 oracle 비교용 FlaskBB venv에 의존하면 독립 비교가 깨지고, 언어 전환은 Node probe 문제를 우회할 뿐이므로 `extensions/topic.mjs` Node 구현으로 되돌리고 `mail/topic.py`와 Python `runtime_executable`·`read_only_paths` 설정을 거뒀다. 유지한 교정은 forum_moderator 스키마 fixture, mail integration fixture, `test_post_oracle_gap.py`의 ID 할당과 CI의 `bubblewrap` 설치다. Node probe 2초 timeout은 별도 담당(PR #8)이며 이 단위에서 고치지 않는다. 이 복원 SHA의 PG17 CI는 한 번만 제출했고 결과는 제출 후 보고한다. G-6/전체 포팅은 미완료다.
+
+부모 지시 정정: 직전 Node 복원 지시는 앱의 worker가 디렉터리·언어 하나뿐이라는 제약을 놓친 판단이었다. 이 앱의 기존 mail job은 Python(`flaskbb_mail`)이므로 `extensions/topic.mjs`를 더하면 운영 배포에서 두 언어 worker를 동시에 띄울 수 없다. 따라서 `moveToForum`은 `mail/` 디렉터리의 Python 모듈 `topic.py`가 올바른 포팅 선언이며 `app.aip`의 `implementation "topic.moveToForum"`과 일치한다. 근거는 Run `44034168885` job `133872928358` 원문의 `extension sendActivationEmail needs flaskbb_mail.mjs in the worker directory, which does not exist` 오류다. Python 전환 방향은 맞았고 `44033155559`의 문제는 oracle venv를 runtime으로 쓴 점이었다. 이번에는 `mail/topic.py`(표준 라이브러리 import 없음)를 복원하고 test worker runtime을 runner 시스템 Python `/usr/bin/python3`(sandbox가 `/usr`를 ro-bind)로 지정했다. oracle venv와 toolcache `read_only_paths`는 쓰지 않는다. 이전 Run `44030446449`의 기본 `python3` 탐색 실패가 setup-python toolcache PATH 때문이라는 설명은 추론이며 새 CI로 확인한다. 이 SHA의 PG17 CI는 한 번만 제출하며 G-6/전체 포팅은 미완료다.
 
 ## 2026-11-17 Post.hide/delete 선행 포인터 조건·Topic 날짜 규칙
 

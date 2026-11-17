@@ -17,8 +17,11 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
     prefix: 'aip-flaskbb-topic-move-',
     actors: {'alice-sub': 2, 'admin-sub': 3, 'carol-sub': 6},
     serviceExtra: {workers: {
-      directory: fileURLToPath(new URL('../extensions/', import.meta.url)),
-      language: 'node',
+      directory: fileURLToPath(new URL('../mail/', import.meta.url)),
+      language: 'python',
+      // Ubuntu runner system Python lives under /usr, which the sandbox already
+      // ro-binds. Do not use the oracle venv or the setup-python toolcache.
+      runtime_executable: '/usr/bin/python3',
       enable_writes: true,
       // Enabling write extensions also validates the app's existing durable
       // jobs. This local-only broker satisfies their declared http.mail grant;
