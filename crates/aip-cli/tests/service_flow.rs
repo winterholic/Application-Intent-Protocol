@@ -623,7 +623,7 @@ async fn service_policy_default_deny_redaction_and_hidden_target_invariants() {
 async fn service_policy_aggregate_noninterference_http_postgres() {
     let mut fixture = service_policy_http_fixture().await;
     let outcome = AssertUnwindSafe(async {
-        let query = json!({"query":{"read":"Record","select":["id","owner","secret","ownVoteCount","publicVoteCount","minOwnVote","maxOwnVote","votes"],"sort":[{"field":"id","dir":"asc"}]}});
+        let query = json!({"query":{"read":"Record","select":["id","owner","secret","ownVoteCount","publicVoteCount","minOwnVote","maxOwnVote",{"votes":{"select":["id","owner","amount"]}}],"sort":[{"field":"id","dir":"asc"}]}});
         let before = post(&fixture.address, "/read", &fixture.token, &fixture.fingerprint, query.clone()).await;
         assert_eq!(before["ok"], true, "{before}");
         assert_eq!(before["rows"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["1", "3", "4"], "row policy hides another organization");
