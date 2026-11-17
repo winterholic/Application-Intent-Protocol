@@ -140,11 +140,11 @@ jobs:
           source = Path(sys.argv[1])
           text = source.read_text()
           anchor = """            let (stdout, stderr) =
-                tokio::join!(capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));
-            let status = child.wait().await?;"""
+                          tokio::join!(capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));
+                      let status = child.wait().await?;"""
           mutation = """            let status = child.wait().await?;
-            let (stdout, stderr) =
-                tokio::join!(capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));"""
+                      let (stdout, stderr) =
+                          tokio::join!(capture_bounded(stdout, 4096, stdout_bytes.clone()), capture_bounded(stderr, 4096, stderr_bytes.clone()));"""
           if text.count(anchor) != 1:
               raise SystemExit("expected one pipe-drain anchor for early-wait mutation")
           source.write_text(text.replace(anchor, mutation, 1))
