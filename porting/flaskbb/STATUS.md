@@ -20,6 +20,8 @@ Run `44027917179`는 failed다. ORM job 원문은 회귀 13건 중 12건 통과,
 
 Run `44031353780`에서는 ORM regression 13건과 CLI 경계 검사가 통과했지만 Topic.move acceptance가 worker 시작 전 `SERVER_CONFIG`로 실패했다. workflow는 Linux `Auto` 격리의 필수 실행 파일 `bwrap`를 설치하지 않았고, `Isolation::validate_available`의 `NotFound`가 일반 worker runtime 누락 문구로 변환되는 경로를 확인했다. 이는 PG17 CI 준비 결함이며 제품 move 동작의 증거가 아니다. 격리 설정을 유지하고 CI 도구 설치에 `bubblewrap`를 추가해 재제출한다. 이 Run도 HTTP 여정에는 도달하지 않았다.
 
+Run `44032303956`에서는 ORM regression과 CLI 경계 검사까지 통과했고 `bubblewrap` 설치 후 worker probe 오류가 `io other`로 바뀌었으나 HTTP acceptance 전 setup에서 실패했다. `linux_bwrap_spec`은 선택한 runtime의 상위 디렉터리만 자동 mount하고, venv Python이 setup-python toolcache interpreter를 symlink할 때 그 target은 자동 노출되지 않는 구조다. 이를 원인 후보로 분류한 것은 소스 경로에 근거한 추론이며 서비스의 probe 세부 오류는 외부에 노출되지 않았다. Topic.move fixture에서 toolcache Python 루트를 읽기 전용 sandbox 경로로 지정해 다시 확인한다.
+
 ## 2026-11-17 Post.hide/delete 선행 포인터 조건·Topic 날짜 규칙
 
 RED [44017218587](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44017218587) (`5b19bbad`, job 133817917976)에서 공유 JSON `pointer_cases` 4건이 AIP 제품 결함과 oracle 단언 오류로 갈렸다. 제품 결함은 Node `post-order-pointer`의 hide/delete 2건 실패였다: non-last 글을 숨겨도 Topic.last_updated가 재계산됨, Topic-last-but-not-Forum-last에서 Forum 포인터를 무조건 재선택함, Topic.last_post를 갱신하지 않음. oracle 오류는 ORM 12 tests 중 4건(`test_post_oracle_gap.py:350`)이다. 같은 ORM 실행으로 원본은 `Topic.last_post_id`를 `posts[-2]`에서 대입하지만 `last_updated`는 갱신 전에 읽은 `Topic.last_post` 관계(대상 Post)의 날짜를 쓰는 것을 확인했다. 따라서 두 값은 독립이며, `last_updated`는 두 번째 마지막 글이 있으면(hide는 항상, delete는 남은 글 2개 이상) 대상 Post 날짜, 없으면 첫 글 날짜다. 이전 단언(선택한 last_post의 날짜)과 `last-post-recompute`의 hide 후 날짜 되돌림 단언은 잘못이었다.

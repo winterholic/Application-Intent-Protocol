@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
-import {join} from 'node:path';
+import {readFileSync, realpathSync} from 'node:fs';
+import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {test} from 'node:test';
 import {GROUPS_SQL, USERS_SQL, seedNativePostOrders, startFixture} from './harness.mjs';
@@ -11,6 +11,9 @@ const topicId = item => uuid('1', item.source_id);
 const postId = item => uuid('2', item.source_id);
 
 test('Topic.move is atomic, checks both forum moderators, refreshes date projections, and clears moved reads', {timeout: 90000}, async () => {
+  const pythonRuntime = process.env.RUNNER_TEMP
+    ? join(process.env.RUNNER_TEMP, 'flaskbb-upstream/bin/python')
+    : undefined;
   const topics = Object.fromEntries(fixture.topics.map(item => [item.key, topicId(item)]));
   const posts = Object.fromEntries(fixture.posts.map(item => [item.source_id, postId(item)]));
   let fx;
@@ -20,9 +23,12 @@ test('Topic.move is atomic, checks both forum moderators, refreshes date project
     serviceExtra: {workers: {
       directory: fileURLToPath(new URL('../mail/', import.meta.url)),
       language: 'python',
-      runtime_executable: process.env.RUNNER_TEMP
-        ? join(process.env.RUNNER_TEMP, 'flaskbb-upstream/bin/python')
-        : 'python3',
+      runtime_executable: pythonRuntime ?? 'python3',
+      // The venv interpreter may symlink into setup-python's toolcache. Make
+      // that Python installation visible read-only to LinuxBubblewrap as well.
+      read_only_paths: pythonRuntime
+        ? [dirname(dirname(realpathSync(pythonRuntime)))]
+        : [],
       enable_writes: true,
       // Enabling write extensions also validates the app's existing durable
       // jobs. This local-only broker satisfies their declared http.mail grant;
