@@ -215,7 +215,7 @@ pub fn extract_define(src: &str, host: Host) -> R<(Lit, Span)> {
     let i = match found.len() {
         1 => found[0],
         0 => return Err(Diag::new("DEF.NO_BLOCK", "define(...) 선언 없음", Span::default())),
-        _ => return Err(Diag::new("DEF.MULTIPLE_BLOCKS", "spike는 파일당 define 하나만 지원", Span::default())),
+        _ => return Err(Diag::new("DEF.MULTIPLE_BLOCKS", "파일당 define 하나만 지원", Span::default())),
     };
     if !toks.get(i + 1).is_some_and(|t| is_punct(t, '(')) {
         return Err(Diag::new("DEF.NON_LITERAL", "`define`은 직접 호출로만 사용", crate::host::span_at(src, toks[i].start)));

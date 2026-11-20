@@ -339,8 +339,8 @@ a key that the object does not accept (host-literal form)
 
 a required part is missing
 
-- 원인: Some declarations have no safe default, so the definition must say the value: there is no unlimited bulk size, no implicit aggregate source access, no implicit actor. The message names the missing part.
-- 수정: Add the part the message names.
+- 원인: Some declarations have no safe default, so the definition must say the value: there is no unlimited bulk size, no implicit aggregate source access, no implicit actor. A `transition` always needs `from` and `allow` (even a patch-only one) and at least one of `to`, `patch`, `delete`; `from` never defaults to "any row". The message names the missing part.
+- 수정: Add the part the message names. For a transition that should be allowed on every row write `from true`.
 
 ```aip
 actor Member
@@ -483,8 +483,19 @@ resource Club {
 
 a literal does not have the form of its type
 
-- 원인: A Url, Email, Time, Date or Decimal literal must be written in its canonical form.
-- 수정: Write the literal as the message says, for example an absolute https URL or an RFC 3339 time.
+- 원인: A Url, Email, Time, Date or Decimal literal must be written in its canonical form. A Decimal literal is a quoted string with exactly the declared scale or fewer digits (`"0.00"`, `"-12.5"`); a bare number (`0`, `0.00`) is not a Decimal literal and is rejected with this code.
+- 수정: Write the literal as the message says, for example an absolute https URL, an RFC 3339 time or a quoted Decimal such as `"0.00"`.
+
+```aip
+actor Member
+resource Member { fields { id: Id; name: Text } }
+resource Invoice {
+  fields { id: Id; owner: Member; total: Decimal(10,2); paid: Bool }
+  rows read when owner = actor
+  transition reset { from paid = false; to total = "0.00"; allow owner = actor }
+  expose apply reset { target id; bulk maxRows 1 }
+}
+```
 
 ### `DEF.BAD_DECIMAL_TYPE`
 
@@ -709,6 +720,45 @@ an invariant condition that cannot be enforced in the database
 - 원인: An invariant is a unique index; it can use the fields of the row and literals, not time, the actor or sub-queries.
 - 수정: Make the condition use only fields of the row and literals.
 
+### `DEF.MULTIPLE_ACTORS`
+
+more than one `actor` declaration
+
+- 원인: A definition names exactly one actor resource: the row of the caller that `actor` means in every condition. A second declaration used to replace the first silently, and every condition written for the first one then failed with unrelated field and type errors. The second declaration is now reported on its own, before those follow-on errors can arise.
+- 수정: Keep one `actor Resource` line. If two kinds of callers exist, model them as one resource (for example with a role field) and write the difference in the conditions.
+
+```aip
+actor Member
+resource Member { fields { id: Id; admin: Bool } rows read when id = actor }
+```
+
+### `DEF.TRAVERSE_VIA_FORM`
+
+`traverse ... via` is not written as `Child.field`
+
+- 원인: A one-to-many `traverse` names the child resource and the reference field in it that points back: `traverse votes via Vote.record { select id; limit 10 }`. `via record` (the field alone) and `via Vote` (the resource alone) are not accepted.
+- 수정: Write `via Child.field`, where `field` is the reference field of `Child` that points to this resource.
+
+```aip
+actor Member
+resource Member { fields { id: Id } rows read when true }
+resource Record {
+  fields { id: Id; owner: Member }
+  rows read when owner = actor
+  expose read {
+    select id, owner
+    traverse votes via Vote.record { select id; limit 10 }
+    sort id
+    budget { rows 10; depth 2; deadline 2s; cost 100 }
+  }
+}
+resource Vote {
+  fields { id: Id; record: Record }
+  rows read when true
+  expose read { select id, record; sort id; budget { rows 10; depth 1; deadline 2s; cost 100 } }
+}
+```
+
 ### `DEF.UNSUPPORTED`
 
 a form that the product does not support yet
@@ -761,9 +811,34 @@ a predicate that nothing uses (advisory)
 - 원인: Not an error: the definition is accepted. An unused predicate is usually a rule that was meant to be applied and is not.
 - 수정: Use the predicate in a `rows read`, `field ... read`, `allow` or `access`, or remove it.
 
-### `DEF.ADVISORY_CALLER_FILTER_POLICY`
+### `DEF.CALLER_FILTER_POLICY_REQUIRED`
 
-a caller-filtered aggregate omits its source row policy (advisory)
+a caller-filtered aggregate does not require its source row policy
 
-- 원인: Not an error: the definition is accepted. A standalone aggregate does not inherit the source resource's `rows read` policy. With `callerFilter read` and no aggregate `where`, the count may reveal whether rows hidden from the caller match a supplied filter.
-- 수정: Repeat the intended row policy in the aggregate's `where`.
+- 원인: A `count` does not apply the source resource's `rows read` policy. With `callerFilter read` the caller's filter is added to the aggregate's own `where`, so a caller could count the rows that match a value in a field of rows it cannot read, one value at a time. When the source has a `rows read` policy, the aggregate's `where` must therefore imply that policy: the whole policy, or one branch of a policy written as `A or B`, appears as an AND term of `where`, written the same way. Before 1.0 this was only the advisory `DEF.ADVISORY_CALLER_FILTER_POLICY` under `--dev-checks`, and only when `where` was missing.
+- 수정: Repeat the source's `rows read` condition in the aggregate's `where`, alone or as an AND term (`where owner = actor and amount > 0`). When the policy is `A or B`, `where B` is enough. Or use `callerFilter none`.
+
+```aip
+actor Member
+access allMembers(a: Member) = true
+resource Member {
+  fields { id: Uuid; owner: Member; name: Text(1..100) }
+  rows read when owner = actor
+  aggregate nameCount: Int {
+    source Member
+    sourceAccess allMembers(actor)
+    where owner = actor
+    callerFilter read
+    rowOutput none
+    release count
+  }
+  expose aggregate nameCount
+}
+```
+
+### `DEF.ADVISORY_PUBLIC_COUNT`
+
+a count without `where` is a public count (advisory)
+
+- 원인: Not an error: the definition is accepted and the response value is unchanged. `release count` counts the rows that `sourceAccess` and `where` select and does not apply the source's `rows read` policy. Without `where` it also counts rows the caller cannot read, and the value changes when hidden rows are added. `sum`, `min` and `max` do apply `rows read`. This advisory is reported by every `aip service check`, with or without `--dev-checks`.
+- 수정: If the broad count is intended, keep it and treat the number as public. Otherwise add the intended population to `where` (for example the source's `rows read` condition). See "공개 count 계약" in spec/definition-syntax.md and product/SDK.md.
