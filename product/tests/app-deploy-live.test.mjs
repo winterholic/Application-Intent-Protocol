@@ -9,6 +9,7 @@ import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { test } from "node:test";
+import { npmTarballName } from "../tools/version.mjs";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 function run(program, args, { cwd = repo, env = process.env, input } = {}) {
@@ -157,7 +158,7 @@ test("moved app package initializes, serves HTTP, stops, migrates by digest and 
         const installed = join(base, `worker-installed-${language}`);
         run(process.execPath, [join(bundle, "tools/app-deploy.mjs"), "install", "--out", installed], { cwd: base });
         await rm(input, { recursive: true }); await rm(bundle, { recursive: true });
-        const report = JSON.parse(run(process.execPath, [join(repo, "product/tools/smoke.mjs"), "--bin", join(installed, "bin/aip"), "--sdk-package", join(installed, "sdk/aip-sdk-0.1.0.tgz"), "--app-definition", join(installed, "app/app.aip"), "--workers", language, "--extension-dir", join(installed, "app/extensions")], { cwd: base, env: { ...env, AIP_TEST_DATABASE_URL: env.AIP_DEPLOY_TEST_DSN } }));
+        const report = JSON.parse(run(process.execPath, [join(repo, "product/tools/smoke.mjs"), "--bin", join(installed, "bin/aip"), "--sdk-package", join(installed, "sdk", npmTarballName()), "--app-definition", join(installed, "app/app.aip"), "--workers", language, "--extension-dir", join(installed, "app/extensions")], { cwd: base, env: { ...env, AIP_TEST_DATABASE_URL: env.AIP_DEPLOY_TEST_DSN } }));
         assert.equal(report.ok, true); assert.equal(report.worker, language);
         for (const wire of report.wires) { assert.equal(wire.extension.writesApplied, 1); assert.equal(wire.operation.job.status, "SUCCEEDED"); }
         console.log(`${language} installed package: both Id wires, installed SDK, authenticated HTTP read/apply, isolated extension and durable job PASS`);

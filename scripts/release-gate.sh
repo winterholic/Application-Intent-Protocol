@@ -98,7 +98,8 @@ step release-build bash -c "cd '$src' && cargo build --release -p aip-cli --lock
 step package bash -c "cd '$src' && node product/tools/package.mjs --out '$artifact' --profile release"
 step artifact-checksums bash -c "cd '$artifact' && shasum -a 256 -c SHA256SUMS"
 step artifact-binary bash -c "'$artifact/bin/aip' service --help"
-step artifact-smoke bash -c "cd '$src' && node product/tools/smoke.mjs --bin '$artifact/bin/aip' --sdk-package '$artifact/sdk/aip-sdk-0.1.0.tgz' --workers python"
+sdk_tarball="$(cd "$src" && node product/tools/version.mjs npm-tarball)"
+step artifact-smoke bash -c "cd '$src' && node product/tools/smoke.mjs --bin '$artifact/bin/aip' --sdk-package '$artifact/sdk/$sdk_tarball' --workers python"
 
 # Upgrade from the previous release and the two rollbacks, with the release binary that was just packaged.
 step baseline-build bash -c "cd '$baseline_src' && cargo build -p aip-cli --locked"

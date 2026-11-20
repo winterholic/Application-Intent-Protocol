@@ -1,18 +1,36 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
+# name과 version은 scripts/sync-version.mjs가 Cargo.toml과 product/release.config.json에서 쓴다.
+# 손으로 고치지 말고 scripts/check-versions.mjs로 일치를 확인한다.
 [project]
-name = "aip-sdk"
-version = "0.1.0"
+name = "application-intent-protocol-sdk"
+version = "1.0.0"
 description = "Python caller SDK for Application Intent Protocol services"
+readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Kim Daeseon" }]
+keywords = ["aip", "application-intent-protocol", "sdk"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Typing :: Typed",
+]
 requires-python = ">=3.9"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/winterholic/Application-Intent-Protocol"
+Repository = "https://github.com/winterholic/Application-Intent-Protocol"
+Issues = "https://github.com/winterholic/Application-Intent-Protocol/issues"
+Compatibility = "https://github.com/winterholic/Application-Intent-Protocol/blob/main/COMPATIBILITY.md"
 
 [tool.setuptools]
 packages = ["aip_sdk"]
 
 [tool.setuptools.package-data]
 aip_sdk = ["py.typed"]
-

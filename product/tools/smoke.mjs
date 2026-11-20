@@ -5,11 +5,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireTestDatabase } from "../test-support/postgres-guard.mjs";
+import { releaseConfig, workspaceVersion } from "./version.mjs";
 
 const productDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoDir = resolve(productDir, "..");
 const testDb = requireTestDatabase();
 const testDatabase = testDb.raw;
+const sdkName = releaseConfig().npmPackage;
+const sdkVersion = workspaceVersion();
 const issuer = "https://issuer.example";
 const audience = "aip-api";
 
@@ -217,7 +220,7 @@ function makeSmokeConsumer(wire) {
   const idType = wire === "decimal" ? "string" : "number";
   const idValue = wire === "decimal" ? '"11"' : "11";
   return `
-import { connect } from "@aip/sdk";
+import { connect } from "${sdkName}";
 import { contract } from "./binding.js";
 
 const base = process.env.AIP_SMOKE_BASE;
@@ -323,7 +326,7 @@ async function runWire({ binary, wire, workRoot, tarball, worker, extensionDir, 
     const principal = runJson(binary, ["service", "principal", "--config", configPath, "bind", "--subject", "user-42", "--actor", "42"], "principal-bind");
     if (principal.affected !== 1) throw new SmokeFailure("principal-bind", "PRINCIPAL_NOT_BOUND", "주체와 actor 연결이 생성되지 않았습니다");
     const bindingPath = join(wireDir, "binding.ts");
-    runJson(binary, ["service", "gen", appPath, "--wire", wire, "--out", bindingPath, "--sdk-import", "@aip/sdk"], "gen");
+    runJson(binary, ["service", "gen", appPath, "--wire", wire, "--out", bindingPath, "--sdk-import", sdkName], "gen");
     const consumer = await typecheckAndInstall(wireDir, tarball, wire, bindingPath);
     server = await startService(binary, appPath, configPath);
     const base = `http://${server.address}`;
@@ -420,8 +423,8 @@ async function buildAndPack(workRoot, suppliedPackage) {
     } catch {
       throw new SmokeFailure("sdk-package-metadata", "BAD_PACKAGE_METADATA", "SDK tarball package.json을 읽지 못했습니다");
     }
-    if (metadata.name !== "@aip/sdk" || metadata.version !== "0.1.0") {
-      throw new SmokeFailure("sdk-package-metadata", "PACKAGE_IDENTITY", "SDK tarball이 @aip/sdk@0.1.0이 아닙니다");
+    if (metadata.name !== sdkName || metadata.version !== sdkVersion) {
+      throw new SmokeFailure("sdk-package-metadata", "PACKAGE_IDENTITY", `SDK tarball이 ${sdkName}@${sdkVersion}이 아닙니다`);
     }
     return { tarball: suppliedPackage, metadata };
   }
@@ -437,7 +440,7 @@ async function buildAndPack(workRoot, suppliedPackage) {
   } catch {
     throw new SmokeFailure("pack", "BAD_PACK_OUTPUT", "npm pack 결과를 읽지 못했습니다");
   }
-  if (result.length !== 1 || result[0].name !== "@aip/sdk" || result[0].version !== "0.1.0") {
+  if (result.length !== 1 || result[0].name !== sdkName || result[0].version !== sdkVersion) {
     throw new SmokeFailure("pack", "PACKAGE_IDENTITY", "로컬 tarball의 package 이름 또는 버전이 다릅니다");
   }
   return { tarball: join(packDir, result[0].filename), metadata: result[0] };
