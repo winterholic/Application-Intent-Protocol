@@ -10,7 +10,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from aip_sdk import AipError, ScopeConflict, WriteUnsettled, connect  # noqa: E402
+from aip_sdk import AipError, ExtensionRejected, ScopeConflict, WriteUnsettled, connect, extension_rejection  # noqa: E402
 
 FP = "a" * 64
 OTHER = "b" * 64
@@ -421,6 +421,68 @@ class RetryMetadataTest(unittest.TestCase):
         server.script('/apply', {'ok': False, 'code': 'WIRE.BAD_VALUE', 'retry': 'sometimes'})
         client = connect('http://aip', 't1', FP, transport=server)
         self.assertNotIn('retry', client.apply({'apply': 'Event.mark'}, key='bad-retry'))
+
+
+class ExtensionAndTokenTest(unittest.TestCase):
+    def test_an_empty_token_is_named_instead_of_failing_the_session_contract(self):
+        for blank in ("", "   "):
+            with self.assertRaises(AipError) as raised:
+                connect("http://aip", blank, transport=FakeServer())
+            self.assertEqual(raised.exception.code, "CLIENT.INVALID_TOKEN")
+            self.assertIn("None", str(raised.exception))
+        anonymous = FakeServer(actors={"": None})
+        self.assertIsNotNone(connect("http://aip", None, transport=anonymous))
+        client = connect("http://aip", "t1", FP, transport=FakeServer())
+        for bad in ("", None):
+            with self.assertRaises(AipError) as raised:
+                client.replace_session(bad)
+            self.assertEqual(raised.exception.code, "CLIENT.INVALID_TOKEN")
+
+    def test_write_extension_sends_the_extension_request_and_reads_the_business_rejection(self):
+        server = FakeServer()
+        rejected = {"ok": False, "code": "WIRE.EXTENSION_REJECTED", "appCode": "INSUFFICIENT_STOCK", "msg": "재고가 부족합니다",
+                    "retry": "never", "requestId": "req_0123456789abcdef"}
+        server.script("/apply", {"ok": True, "output": {"total": "30.00"}, "tags": ["Order"], "contractFingerprint": FP}, rejected,
+                      {"ok": False, "code": "WIRE.EXTENSION_ERROR", "retry": "never"})
+        client = connect("http://aip", "t1", FP, transport=server)
+        done = client.write_extension("Order.place", {"id": "7"}, key="place-7")
+        self.assertEqual(done["output"], {"total": "30.00"})
+        self.assertIsNone(extension_rejection(done))
+        sent = [c for c in server.calls if c[0] == "/apply"][0]
+        self.assertEqual(sent[2], {"request": {"extension": "Order.place", "input": {"id": "7"}}, "key": "place-7"})
+        result = client.write_extension("Order.place", {"id": "8"}, key="place-8")
+        self.assertEqual((result["code"], result["appCode"], result["retry"]), ("WIRE.EXTENSION_REJECTED", "INSUFFICIENT_STOCK", "never"))
+        rejection = extension_rejection(result)
+        self.assertIsInstance(rejection, ExtensionRejected)
+        self.assertEqual((rejection.code, rejection.app_code, str(rejection), rejection.request_id), ("WIRE.EXTENSION_REJECTED", "INSUFFICIENT_STOCK", "재고가 부족합니다", "req_0123456789abcdef"))
+        self.assertEqual(client.pending(), [], "a business rejection is final, not an unsettled write")
+        broken = client.write_extension("Order.place", {"id": "9"}, key="place-9")
+        self.assertEqual(broken["code"], "WIRE.EXTENSION_ERROR")
+        self.assertIsNone(extension_rejection(broken), "a failing extension is a code bug, not a business refusal")
+        for bad in ("place", "order.place", "Order."):
+            with self.assertRaises(AipError):
+                client.write_extension(bad, {})
+
+    def test_write_extension_keeps_the_key_and_replays_after_a_lost_response(self):
+        server = FakeServer()
+        stored = {"ok": True, "output": {"total": "30.00"}, "tags": ["Order"], "replayed": True, "contractFingerprint": FP}
+        server.script("/apply", ConnectionResetError(), stored)
+        client = connect("http://aip", "t1", FP, transport=server)
+        result = client.write_extension("Order.place", {"id": "7"}, key="place-7")
+        self.assertTrue(result["recovered"] and result["replayed"])
+        applies = [c for c in server.calls if c[0] == "/apply"]
+        self.assertEqual([c[2]["key"] for c in applies], ["place-7", "place-7"])
+
+    def test_create_is_a_one_operation_atomic_bundle_and_returns_the_new_id(self):
+        server = FakeServer()
+        server.script("/apply", {"ok": True, "applied": [], "created": [{"resource": "Task", "id": "5"}], "tags": ["Task"], "contractFingerprint": FP})
+        client = connect("http://aip", "t1", FP, transport=server)
+        result = client.create("Task", {"title": "t"}, key="c1")
+        self.assertEqual(result["created"][0]["id"], "5")
+        sent = [c for c in server.calls if c[0] == "/apply"][0]
+        self.assertEqual(sent[2], {"request": {"atomic": [{"create": "Task", "values": {"title": "t"}}]}, "key": "c1"})
+        with self.assertRaises(AipError):
+            client.create("", {})
 
 
 class GeneratedSdkTest(unittest.TestCase):

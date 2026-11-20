@@ -63,7 +63,7 @@ async fn product_accepts_canonical_https_frontend_origins() {
         "127.0.0.1:0".parse().unwrap(),
         "host=127.0.0.1 port=1".into(),
         None,
-        ServerOptions { allowed_origins: vec!["https://app.example.com".into()] },
+        ServerOptions { allowed_origins: vec!["https://app.example.com".into()], ..ServerOptions::default() },
         false,
         Arc::new(Provider),
     )
@@ -78,6 +78,9 @@ async fn product_accepts_canonical_https_frontend_origins() {
         "https://*.example.com",
         "http://app.example.com",
     ] {
-        assert!(ServerOptions { allowed_origins: vec![invalid.into()] }.validate_product().is_err(), "accepted {invalid}");
+        assert!(
+            ServerOptions { allowed_origins: vec![invalid.into()], ..ServerOptions::default() }.validate_product().is_err(),
+            "accepted {invalid}"
+        );
     }
 }

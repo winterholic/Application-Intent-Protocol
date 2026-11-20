@@ -338,8 +338,15 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 
 `class` server, `retry` never
 
-- 원인: A write extension returned an error; its code is in `msg`.
-- 수정: Fix the extension or the input that makes it fail.
+- 원인: A write extension failed: its code raised an error, or a call it made to its context was refused and the extension ended anyway. Nothing was committed. The response says no more than that. The server log line of the request carries `cause`, the class of the first failure (for example `ctx.read.filter_not_exposed`, `ctx.apply.access_not_declared`, `ctx.apply.key_format`, `extension.exception`), and a server that runs in development mode (`developer_diagnostics`) also returns `cause` and `detail` to the caller.
+- 수정: Operator or extension author: read `cause` in the log line with the `x-request-id` (or in the development response) and fix the extension or the definition. A business refusal is not this code: the extension raises it with `ctx.reject` and the caller gets `WIRE.EXTENSION_REJECTED`.
+
+### `WIRE.EXTENSION_REJECTED`
+
+`class` request, `retry` never
+
+- 원인: A write extension refused the call on business grounds with `ctx.reject(code, message)`. Everything the extension wrote was rolled back and no idempotency record is kept, so the same key may be sent again and the extension judges the state as it is then. The body carries `appCode`, the code the extension chose (upper-case letters, digits and `_`, at most 48 bytes), and `msg`, its text (at most 200 characters).
+- 수정: Switch on `appCode` and show or act on `msg`; do not retry blindly: the same request is refused again until the business state changes.
 
 ### `WIRE.FIELD_NOT_EXPOSED`
 

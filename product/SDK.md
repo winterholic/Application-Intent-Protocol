@@ -45,6 +45,87 @@ node product/tools/package.mjs
 
 CLI나 compiler 변경 뒤 service smoke·패키징 전에 위 `cargo build`를 실행한다. package 도구는 기존 실행 파일을 복사하므로 SDK 소스만 최신이라고 해서 생성 계약도 최신인 것은 아니다.
 
+## 읽기 질의 모양
+
+TypeScript와 Python SDK는 같은 JSON 질의를 서버에 보낸다. TypeScript는 생성 binding이 모양을 타입으로 검사하고, Python은 `dict`를 그대로 보내므로 서버가 검사한다. 모양을 알면 `.d.ts`를 읽지 않아도 된다.
+
+```ts
+const page = await client.read({
+  read: "TodoList",                                    // expose read가 있는 resource
+  select: [
+    "id", "title",                                     // 공개한 필드
+    { owner: { select: ["id", "name"] } },             // N:1 관계: 관계 이름을 키로 하는 객체와 그 안의 select
+    { items: { select: ["id", "done"], limit: 20 } },  // 1:N 관계: select와 limit(정의 상한 이하). 자식 안의 관계는 열리지 않는다
+  ],
+  filter: [{ field: "done", op: "eq", value: false }], // 항상 {field, op, value}의 배열. 정의의 `filter done.eq`로 연 연산만 쓴다
+  sort: [{ field: "createdAt", dir: "desc" }],         // {field, dir}의 배열. dir은 "asc"(기본) 또는 "desc"이고 field는 `sort`로 연 것
+  limit: 20,                                           // 정의의 budget rows 이하
+});
+page.rows;                                             // [{ id, title, owner: {...}, items: [...] }]
+```
+
+```python
+rows = client.read({
+    "read": "TodoList",
+    "select": ["id", "title", {"owner": {"select": ["id", "name"]}}, {"items": {"select": ["id", "done"], "limit": 20}}],
+    "filter": [{"field": "done", "op": "eq", "value": False}],
+    "sort": [{"field": "createdAt", "dir": "desc"}],
+    "limit": 20,
+})   # Python은 rows 목록을 돌려준다(TypeScript는 {rows, cached, stale})
+```
+
+- 관계의 필드는 `select`에 객체로 넣는다(`{owner: {select: [...]}}`). `"owner.id"` 같은 점 표기는 필드 이름이 아니므로 `WIRE.FIELD_NOT_EXPOSED`다. 문자열 `"owner"`는 관계 필드 자체(참조한 행의 Id)다.
+- `filter`는 객체가 아니라 `{field, op, value}`의 배열이다. 연산 이름(`eq`, `prefix`, `lte`, `in` 등)은 정의의 `filter <field>.<op>` 선언이 연 것만 쓸 수 있고, 열지 않은 필터는 `WIRE.FILTER_NOT_ALLOWED`다. 배열이 아닌 객체(`filter: {title: "al"}`)는 `WIRE.BAD_REQUEST`다. `in`의 값은 배열(상한 50), `isNull`의 값은 bool이다.
+- 정렬 방향 키는 `direction`이 아니라 `dir`이다(`direction`은 `WIRE.UNKNOWN_KEY`).
+- 다음 쪽은 `offset`(정의가 허용한 resource만) 또는 `after`(cursor를 연 resource만, 마지막 행의 id와 정렬 필드 값)로 연다.
+- Id는 생성 binding의 wire를 따른다(`decimal-string-v13`은 문자열, `safe-number-v13`은 숫자).
+
+## 익명 호출과 빈 토큰
+
+로그인하지 않은 호출은 토큰 자리에 `null`(TypeScript) 또는 `None`(Python)을 준다. 서버의 `/session`은 그때 `{principal: {actorId: null}}`을 돌려주고, 읽기는 행 정책이 익명에게 허용한 행만 보인다.
+
+```ts
+const anonymous = connect(url, null, binding);   // 익명
+const signedIn = connect(url, accessToken, binding);
+```
+
+빈 문자열(`""`, 공백만 있는 문자열)과 `undefined`(환경 변수가 설정되지 않은 경우)는 "토큰 없음"이 아니다. 두 SDK는 요청을 보내기 전에 `CLIENT.INVALID_TOKEN`으로 거절하고 메시지가 `null`/`None`을 쓰라고 말한다. 예전에는 서버의 세션 응답과 계약이 맞지 않는다는 `CLIENT.PROTOCOL_ERROR "세션 응답 계약 오류"`로 보여 원인이 가려졌다. `replaceSession`·`replace_session`에 빈 토큰을 줘도 같다. 근거 테스트: `spikes/spike-v6-transport/client/extension-rejection.test.ts`, `product/tests/python_sdk_test.py`의 `ExtensionAndTokenTest`.
+
+## 쓰기 확장과 create 호출, 업무 거절
+
+| 하는 일 | TypeScript | Python |
+|---|---|---|
+| 쓰기 확장 호출 | `client.writeExtension("Order.place", input, {key})` | `client.write_extension("Order.place", input, key=...)`, 생성 helper `write_order_place(client, input, key=...)` |
+| 행 하나 만들기 | `client.bundle({atomic: [{create: "Task", values}]}, {key})` | `client.create("Task", values, key=...)`, 생성 helper `create_task(client, values, key=...)` |
+| 여러 연산을 한 번에 | `client.bundle(...)`, `client.compose(...)` | `client.bundle(...)`, `client.compose(...)` |
+
+Python의 `write_extension`과 `create`는 `apply`와 같은 키 복구를 쓴다. 응답이 유실되면 같은 key와 본문으로 다시 보내고, 끝내 확정하지 못하면 `WriteUnsettled`다. `create`는 만든 행의 id를 `result["created"][0]["id"]`로 돌려준다. `aip service gen --lang python`은 정의의 `expose create`마다 `<Resource>CreateValues` TypedDict와 `create_<resource>()`를, 공개한 쓰기 확장마다 `<Resource><Extension>WriteInput`·`WriteOutput` TypedDict와 `write_<resource>_<extension>()`을 만든다. `internal` 확장은 만들지 않는다. 생성기가 모르는 필드 타입은 `Any`로 둔다. 범위: 반환 값(`dict`)은 `apply_*` helper와 같이 정적 타입이 없고, 성공 결과의 `output`만 `WriteOutput`으로 문서화한다. TypeScript에는 `create` 전용 메서드가 없고 `bundle`로 만든다(두 SDK의 create 동작은 같다). 근거 테스트: `spikes/spike-v5-sdk/tests/python_create_write_helpers.rs`.
+
+**업무 거절.** 쓰기 확장이 업무 규칙으로 호출을 거절하면 호출자는 `WIRE.EXTENSION_REJECTED`, 확장이 고른 업무 코드 `appCode`, 사용자에게 보일 문장 `msg`를 받는다. 확장 안에서는 `throw ctx.reject("INSUFFICIENT_STOCK", "재고가 부족합니다")`(Node) 또는 `raise ctx.reject("INSUFFICIENT_STOCK", "재고가 부족합니다")`(Python)를 쓴다. 코드 버그로 난 예외는 이 경로가 아니고 그대로 `WIRE.EXTENSION_ERROR`다. 자세한 규칙은 [관리형 실행](MANAGED-EXECUTION.md)의 "업무 거절" 절을 따른다.
+
+```ts
+const result = await client.writeExtension("Order.place", { id: "7" }, { key: "place-7" });
+if (!result.ok && result.code === "WIRE.EXTENSION_REJECTED") {
+  switch (result.appCode) {                        // 확장이 정한 코드로 분기한다
+    case "INSUFFICIENT_STOCK": showMessage(result.msg); break;
+  }
+}
+```
+
+```python
+from aip_sdk import extension_rejection
+
+result = client.write_extension("Order.place", {"id": "7"}, key="place-7")
+if (rejected := extension_rejection(result)):     # 업무 거절이면 ExtensionRejected, 아니면 None
+    if rejected.app_code == "INSUFFICIENT_STOCK":
+        show(str(rejected))                         # 확장이 준 문장
+```
+
+- 거절은 확정된 결과다. `WriteUnsettled`나 pending이 아니고 `retry`는 `never`다. 같은 요청은 업무 상태가 바뀌기 전까지 다시 거절된다.
+- 쓰기는 모두 되돌려지고 멱등 기록은 남지 않는다. 같은 key로 다시 보내면 확장이 그때의 상태로 다시 판단한다(재고를 채운 뒤 같은 key로 성공할 수 있다). 거절 결과를 저장해 재생하지 않는다.
+- TypeScript의 `WriteExtensionResult` 실패 변형에는 `appCode`와 개발 모드의 `cause`·`detail`이 있고, Python은 실패 결과 dict의 같은 키와 `ExtensionRejected`(`app_code`)·`AipError.app_code`가 있다.
+- 확장이 실패했을 때 원인은 운영에서는 서버 로그 줄의 `cause`(`x-request-id`로 찾는다)에, 개발 모드 서버에서는 응답의 `cause`·`detail`에도 있다. 설정은 [관리형 실행](MANAGED-EXECUTION.md)의 "확장 실패의 원인" 절이다.
+
 ## 묶음(bundle)과 조합(compose)
 
 서버가 공개한 동작(`expose apply` 전이, `expose create`, `expose compose`)을 호출자가 골라 한 요청에 묶어 원자적으로 실행한다. 일반 필드 수정은 전이에 명시한 patch 목록으로 열며 [일반·부분 수정](GENERAL-UPDATE.md)을 따른다. 선언 없는 update나 물리 delete는 열리지 않는다. 같은 `/apply` 경로를 쓰므로 멱등 키, 응답 유실 복구, `x-aip-contract` 지문 검사, 커밋 시점 `check`·불변식 재검사가 전이 하나와 같다. 전부 성공하거나 아무것도 바뀌지 않으며, 실패한 묶음은 멱등 결과를 남기지 않는다.
@@ -137,6 +218,8 @@ job = client.jobs.enqueue("report", {"text": "hello"}, key="report-42")
 run = client.jobs.wait(job["id"])
 ```
 
+익명 클라이언트는 토큰에 `None`을 준다. 빈 문자열은 `CLIENT.INVALID_TOKEN`으로 거절된다("익명 호출과 빈 토큰" 절).
+
 `session()` validates the access token through `/session` and returns the already bound AIP actor id. An anonymous client returns `{"actorId": null}`. It never creates or binds an actor; resource reads and writes still pass through normal server authorization.
 
 The official TypeScript SDK exposes the same `client.session()` check and returns `{ actorId: string | null }`; the result is cached for the current token generation and is revalidated after `replaceSession()`.
@@ -146,8 +229,9 @@ The official TypeScript SDK exposes the same `client.session()` check and return
 | 계약 지문 | 고정한 지문을 `x-aip-contract`로 보내고 응답 지문과 비교한다. 지문을 주지 않으면 `/capabilities`가 알려 준 값을 쓴다. 이 경우 배포 변경 감지는 고정했을 때만 의미가 있다 |
 | 쓰기 복구 | 통신 실패·`WIRE.COMMIT_UNKNOWN`·`WIRE.INTERNAL`이면 같은 key·같은 본문으로 다시 보낸다. 재시도에서 실행 전 거부를 받으면 확정으로 보지 않고 `WriteUnsettled`를 던진다. 같은 key에 다른 본문은 `WIRE.IDEMPOTENCY_MISMATCH` |
 | 세션 교체 | `replace_session(token)`은 같은 principal일 때만 바꾸고 미확정 쓰기를 다시 확정한다. 다른 사용자면 `ScopeConflict` |
+| 쓰기 확장·create | `client.write_extension(name, input, key=...)`, `client.create(resource, values, key=...)`. TypeScript의 `writeExtension`·`bundle`과 같은 키 복구를 쓴다. 업무 거절은 `extension_rejection(result)`로 읽는다. 위 "쓰기 확장과 create 호출, 업무 거절" 절 |
 | 관리 API | `jobs.enqueue/status/result/cancel/wait`, `files.put/get/delete`, `events.read/watch`. SSE·WebSocket helper는 없다 |
-| 타입 | `service gen --lang python`은 read Row/ReadResult, apply 입력·helper, operation 입력·출력·helper 및 JobState/JobRun 타입을 생성한다. read query와 일반 `Client.operation()`은 동적 API다. 생성된 `call_*`와 capability를 발견한 동적 `Client.operation()`은 공통 scalar descriptor로 반환 객체의 키·타입·범위를 검사한 뒤 TypedDict 또는 dict로 돌려준다. nullable 출력도 키가 있고 값이 None이다. 계약 불일치는 `CLIENT.PROTOCOL_ERROR`이며 값 자체는 오류에 싣지 않는다 |
+| 타입 | `service gen --lang python`은 read Row/ReadResult, apply 입력·helper, create 값·helper, 쓰기 확장 입력·출력·helper, operation 입력·출력·helper 및 JobState/JobRun 타입을 생성한다. read query와 일반 `Client.operation()`은 동적 API다. 생성된 `call_*`와 capability를 발견한 동적 `Client.operation()`은 공통 scalar descriptor로 반환 객체의 키·타입·범위를 검사한 뒤 TypedDict 또는 dict로 돌려준다. nullable 출력도 키가 있고 값이 None이다. 계약 불일치는 `CLIENT.PROTOCOL_ERROR`이며 값 자체는 오류에 싣지 않는다 |
 | 캐시 | read 캐시가 없다 |
 
 설치는 `pip install ./product/python`이다(PyPI 게시는 아직 없음). 새 binding과 같은 revision의 SDK를 함께 설치한다. 클린 wheel 빌드·설치와 타입 검사는 `python3 -W error::ResourceWarning -m unittest product.tests.python_sdk_test`, 실제 서비스 검증은 `node --test product/tests/service-smoke.test.mjs`다. 타입 검사는 mypy 2.4.0 또는 uv가 필요하며 도구가 없으면 실패한다. smoke는 TypeScript 소비자가 커밋한 쓰기를 Python 소비자가 같은 key로 재생하는지까지 확인한다.

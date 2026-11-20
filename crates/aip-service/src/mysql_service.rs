@@ -507,7 +507,8 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         infrastructure.relational_jobs = Some(Arc::new(jobs));
     }
     let read_adapters = infrastructure.catalog()["readAdapters"].clone();
-    let options = spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins };
+    let options =
+        spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins, developer_diagnostics: config.developer_diagnostics };
     #[cfg(unix)]
     let mut termination =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|_| error("SIGNAL_CONFIG", "종료 signal 등록 실패"))?;

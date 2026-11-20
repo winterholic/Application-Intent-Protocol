@@ -106,6 +106,10 @@ function makeCtx(token, job) {
     // durable job 전용: `throw ctx.retryLater("이유")`로 같은 job을 backoff 뒤 다시 시도하게 한다.
     // `{afterMs}`를 주면 기본 backoff 대신 그 시간(서버가 1초~1시간으로 맞춘다) 뒤에 다시 시도한다.
     retryLater: (reason, options) => Object.assign(new Error(String(reason ?? "WIRE.RETRY_LATER")), { code: "WIRE.RETRY_LATER", afterMs: options?.afterMs }),
+    // 쓰기 확장: `throw ctx.reject("INSUFFICIENT_STOCK", "재고가 부족합니다")`는 업무상 거절이다. 서버가 쓴 것을 모두 되돌리고 호출자에게
+    // WIRE.EXTENSION_REJECTED와 이 코드·메시지를 돌려준다. 코드는 대문자·숫자·밑줄 48자 이하, 메시지는 200자 이하(서버가 검사한다).
+    // 코드 버그로 던진 예외는 이 경로가 아니고 WIRE.EXTENSION_ERROR로 남는다.
+    reject: (appCode, message) => Object.assign(new Error(String(message ?? appCode)), { code: "WIRE.EXTENSION_REJECTED", appCode: String(appCode) }),
     // 시험용: 서버가 허용하지 않은 원시 요청을 보내 본다.
     _raw: (m) => new Promise((resolve, reject) => { const id = ++seq; pending.set(id, { resolve, reject }); send({ ...m, type: "call", call: id, token }); }),
   };
@@ -129,7 +133,8 @@ rl.on("line", async (line) => {
       send({ type: "done", invoke: m.invoke, output: out });
     } catch (e) {
       const afterMs = e.code === "WIRE.RETRY_LATER" && Number.isSafeInteger(e.afterMs) && e.afterMs >= 0 ? e.afterMs : undefined;
-      send({ type: "done", invoke: m.invoke, error: { code: e.code ?? "WIRE.EXTENSION_ERROR", message: String(e.message ?? e), afterMs } });
+      const appCode = e.code === "WIRE.EXTENSION_REJECTED" ? e.appCode : undefined;
+      send({ type: "done", invoke: m.invoke, error: { code: e.code ?? "WIRE.EXTENSION_ERROR", message: String(e.message ?? e), afterMs, appCode } });
     }
   }
 });

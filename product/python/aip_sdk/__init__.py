@@ -18,7 +18,7 @@ import urllib.request
 import uuid
 from typing import Any, Callable, Iterator, Optional
 
-__all__ = ["connect", "Client", "AipError", "WriteUnsettled", "ScopeConflict", "validate_operation_output"]
+__all__ = ["connect", "Client", "AipError", "ExtensionRejected", "WriteUnsettled", "ScopeConflict", "extension_rejection", "validate_operation_output"]
 __version__ = "0.1.0"
 
 _FINGERPRINT = re.compile(r"^[a-f0-9]{64}$")
@@ -40,11 +40,22 @@ class AipError(Exception):
     it so the operator can find the log line. `retry` is the server's guidance for the code, one of `never`, `later`,
     `check-first` or `reauthenticate` (None when the failure did not come from a server reply)."""
 
-    def __init__(self, code: str, message: Optional[str] = None, request_id: Optional[str] = None, retry: Optional[str] = None):
+    def __init__(self, code: str, message: Optional[str] = None, request_id: Optional[str] = None, retry: Optional[str] = None,
+                 app_code: Optional[str] = None):
         super().__init__(message or code)
         self.code = code
         self.request_id = request_id
         self.retry = retry
+        # The business code a write extension chose with `ctx.reject` (`WIRE.EXTENSION_REJECTED`); None for every other failure.
+        self.app_code = app_code
+
+
+class ExtensionRejected(AipError):
+    """A write extension refused the call on business grounds (`WIRE.EXTENSION_REJECTED`): everything it wrote was rolled back.
+    `app_code` is the code the extension chose (switch on it) and `str(error)` is its text for the user."""
+
+    def __init__(self, app_code: str, message: str, request_id: Optional[str] = None, retry: Optional[str] = None):
+        super().__init__("WIRE.EXTENSION_REJECTED", message, request_id, retry, app_code)
 
 
 class WriteUnsettled(AipError):
@@ -59,6 +70,25 @@ class WriteUnsettled(AipError):
 class ScopeConflict(AipError):
     def __init__(self) -> None:
         super().__init__("CLIENT.SCOPE_CONFLICT", "다른 사용자 세션으로 미확정 쓰기를 이관할 수 없음")
+
+
+def extension_rejection(result: Any) -> Optional[ExtensionRejected]:
+    """The business refusal in the failure result of `write_extension()` (or `apply()`), or None for any other result.
+
+    `/apply` rejections come back as result dicts, so `if (rejected := extension_rejection(result)): ... rejected.app_code`
+    is how a caller reads the code and the text an extension gave with `ctx.reject`."""
+    if not isinstance(result, dict) or result.get("ok") is not False or result.get("code") != "WIRE.EXTENSION_REJECTED":
+        return None
+    app_code, text = result.get("appCode"), result.get("msg")
+    if not isinstance(app_code, str) or not isinstance(text, str):
+        return None
+    return ExtensionRejected(app_code, text, _request_id(result) or (result.get("requestId") if isinstance(result.get("requestId"), str) else None), _retry(result))
+
+
+def _check_token(token: Optional[str]) -> None:
+    """An empty token is not "no token": the service answers it with a session error that hides the cause."""
+    if token is not None and (not isinstance(token, str) or not token.strip()):
+        raise AipError("CLIENT.INVALID_TOKEN", "토큰이 비어 있습니다. 로그인하지 않은 호출은 빈 문자열이 아니라 None을 주세요")
 
 
 def _operation_scalar(value: object, descriptor: dict, wire: str) -> bool:
@@ -223,6 +253,7 @@ def _urllib_transport(url: str, headers: dict, body: bytes, timeout: float) -> A
 class Client:
     def __init__(self, base_url: str, token: Optional[str], contract_fingerprint: Optional[str] = None,
                  timeout: float = 30.0, transport: Optional[Transport] = None):
+        _check_token(token)
         if contract_fingerprint is not None and not _FINGERPRINT.match(contract_fingerprint):
             raise AipError("CLIENT.PROTOCOL_ERROR", "계약 식별값 형식 오류")
         self._base = base_url.rstrip("/")
@@ -268,7 +299,8 @@ class Client:
 
     def _checked(self, response: Any, expect_contract: bool) -> dict:
         if isinstance(response, dict) and response.get("ok") is False and isinstance(response.get("code"), str):
-            raise AipError(response["code"], response.get("msg") if isinstance(response.get("msg"), str) else None, _request_id(response), _retry(response))
+            app_code = response.get("appCode") if response["code"] == "WIRE.EXTENSION_REJECTED" and isinstance(response.get("appCode"), str) else None
+            raise AipError(response["code"], response.get("msg") if isinstance(response.get("msg"), str) else None, _request_id(response), _retry(response), app_code)
         if not isinstance(response, dict) or response.get("ok") is not True:
             raise AipError("CLIENT.PROTOCOL_ERROR", "응답 형식 오류", _request_id(response))
         if expect_contract and response.get("contractFingerprint") != self.contract_fingerprint:
@@ -381,6 +413,23 @@ class Client:
             return response
         raise WriteUnsettled(key, copy.deepcopy(snapshot), last_request_id, last_retry)
 
+    def write_extension(self, name: str, input: dict, key: Optional[str] = None, retries: int = 2) -> dict:
+        """Runs a write extension of the contract (`"Resource.name"`) as the signed-in user. The result is
+        `{"ok": True, "output": {...}, "tags": [...]}`, or a rejection: `WIRE.EXTENSION_REJECTED` with `appCode` and `msg` when the
+        extension refused on business grounds (read it with `extension_rejection(result)`), `WIRE.EXTENSION_ERROR` when its code failed.
+        The key, lost-response recovery and `WriteUnsettled` work as for `apply`: send the same key again to get the stored result."""
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*", name):
+            raise AipError("WIRE.BAD_REQUEST", "확장 이름은 Resource.name 형식이어야 함")
+        return self.apply({"extension": name, "input": copy.deepcopy(input)}, key=key, retries=retries)
+
+    def create(self, resource: str, values: dict, key: Optional[str] = None, retries: int = 2) -> dict:
+        """Creates one row of an exposed create (`expose create`) as a one-operation atomic bundle. The result is
+        `{"ok": True, "created": [{"resource", "id"}], ...}` or a rejection; the id of the new row is `result["created"][0]["id"]`.
+        Use `bundle()` to create or change several rows in one atomic request."""
+        if not isinstance(resource, str) or not resource:
+            raise AipError("WIRE.BAD_REQUEST", "create에는 resource 이름이 필요함")
+        return self.bundle([{"create": resource, "values": copy.deepcopy(values)}], key=key, retries=retries)
+
     def bundle(self, operations: list, key: Optional[str] = None, retries: int = 2) -> dict:
         """Runs exposed transitions (`{"apply": "R.t", "target": {...}}`) and exposed creates
         (`{"create": "R", "values": {...}}`) as one atomic request: all succeed or nothing changes. The result is
@@ -416,6 +465,9 @@ class Client:
 
     def replace_session(self, token: str) -> list:
         """Swaps to a renewed token for the same principal and retries unsettled writes."""
+        _check_token(token)
+        if token is None:
+            raise AipError("CLIENT.INVALID_TOKEN", "새 토큰이 없습니다. replace_session에는 갱신된 토큰 문자열이 필요합니다")
         current = self._ensure_principal()
         following = self._describe(token)
         if current is None or following != current:

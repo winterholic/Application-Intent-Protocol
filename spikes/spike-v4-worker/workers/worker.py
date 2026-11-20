@@ -14,10 +14,12 @@ def send(m):
 
 
 class AipError(Exception):
-    def __init__(self, code, after_ms=None):
+    def __init__(self, code, after_ms=None, app_code=None, message=None):
         super().__init__(code)
         self.code = code
         self.after_ms = after_ms
+        self.app_code = app_code
+        self.message = message
 
 
 class Data:
@@ -173,6 +175,12 @@ class Ctx:
     def retry_later(self, reason=None, after_ms=None):
         return AipError("WIRE.RETRY_LATER", after_ms)
 
+    # 쓰기 확장: `raise ctx.reject("INSUFFICIENT_STOCK", "재고가 부족합니다")`는 업무상 거절이다. 서버가 쓴 것을 모두 되돌리고 호출자에게
+    # WIRE.EXTENSION_REJECTED와 이 코드·메시지를 돌려준다. 코드는 대문자·숫자·밑줄 48자 이하, 메시지는 200자 이하(서버가 검사한다).
+    # 코드 버그로 난 예외는 이 경로가 아니고 WIRE.EXTENSION_ERROR로 남는다.
+    def reject(self, app_code, message=None):
+        return AipError("WIRE.EXTENSION_REJECTED", app_code=str(app_code), message=str(message if message is not None else app_code))
+
     async def call(self, op, name, inp, **extra):
         global seq
         seq += 1
@@ -204,6 +212,9 @@ async def run_invoke(m):
         send({"type": "done", "invoke": m["invoke"], "output": out})
     except AipError as e:
         error = {"code": e.code, "message": e.code}
+        if e.code == "WIRE.EXTENSION_REJECTED":
+            error["appCode"] = e.app_code
+            error["message"] = e.message
         if e.code == "WIRE.RETRY_LATER" and isinstance(e.after_ms, int) and not isinstance(e.after_ms, bool) and e.after_ms >= 0:
             error["afterMs"] = e.after_ms
         send({"type": "done", "invoke": m["invoke"], "error": error})

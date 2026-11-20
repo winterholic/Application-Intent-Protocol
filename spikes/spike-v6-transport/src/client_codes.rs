@@ -51,6 +51,7 @@ use Retry::{Check, Later, Never};
 
 pub static REGISTRY: &[Info] = &[
     c("CLIENT.AUTH_TIMEOUT", Later, "The server did not acknowledge the authentication message of a WebSocket connection within `authTimeoutMs`; the SDK closed the connection.", "Open the subscription again; raise `authTimeoutMs` if the network is slow."),
+    c("CLIENT.INVALID_TOKEN", Never, "`connect` (or `replaceSession`) was given an empty or blank string as the token. An empty string is not \"no token\": a service answers it with a session error that hides the cause, so the SDK refuses it before any request is sent. An unset variable (`undefined`) is refused the same way.", "Anonymous calls pass `null` (TypeScript) or `None` (Python) as the token; a signed-in call passes the access token string. Check that the variable that holds the token is set."),
     c("CLIENT.NETWORK_ERROR", Later, "The connection failed before a response arrived (a WebSocket `error` event).", "Open the connection again after a short delay. A write keeps its idempotency key."),
     c("CLIENT.NOT_DURABLE", Never, "`enqueue` was called for an operation whose lifetime is not `durable`, so the server keeps no job for it.", "Call the operation directly, or declare it `durable` in the definition and regenerate the client."),
     c("CLIENT.OFFLINE", Later, "A transport adapter reported that the device has no network. The SDK treats it as retryable for event streams.", "Wait until the device is online; the event stream resumes from its cursor."),

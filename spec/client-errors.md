@@ -15,6 +15,13 @@ TypeScript 클라이언트와 Python SDK가 서버 응답과 무관하게 스스
 - 원인: The server did not acknowledge the authentication message of a WebSocket connection within `authTimeoutMs`; the SDK closed the connection.
 - 수정: Open the subscription again; raise `authTimeoutMs` if the network is slow.
 
+### `CLIENT.INVALID_TOKEN`
+
+`retry` never
+
+- 원인: `connect` (or `replaceSession`) was given an empty or blank string as the token. An empty string is not "no token": a service answers it with a session error that hides the cause, so the SDK refuses it before any request is sent. An unset variable (`undefined`) is refused the same way.
+- 수정: Anonymous calls pass `null` (TypeScript) or `None` (Python) as the token; a signed-in call passes the access token string. Check that the variable that holds the token is set.
+
 ### `CLIENT.NETWORK_ERROR`
 
 `retry` later

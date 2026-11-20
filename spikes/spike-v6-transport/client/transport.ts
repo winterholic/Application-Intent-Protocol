@@ -111,7 +111,15 @@ async function readJsonBounded(response: Response, limit: number): Promise<any> 
   }
 }
 
+/** 빈 문자열은 "토큰 없음"이 아니다. 서버는 이를 세션 오류로 답해 원인이 가려지므로 먼저 이름 붙여 거절한다. */
+export function assertToken(token: unknown, what = "토큰"): void {
+  if (token !== null && (typeof token !== "string" || token.trim() === "")) {
+    throw failure("CLIENT.INVALID_TOKEN", `${what}이 비어 있습니다. 로그인하지 않은 호출은 빈 문자열이 아니라 null을 주세요`);
+  }
+}
+
 export function connect(base: string, initialToken: string | null, fetchImpl: typeof fetch = fetch, options: { identityKinds?: Readonly<Record<string,"uuid"|"bigint">>; contractFingerprint?: string; idWire?: IdWireKind; maxResponseBytes?: number; validateRead?: (query: unknown, rows: unknown[]) => void; validateWrite?: (request: unknown, response: unknown) => void } = {}) {
+  assertToken(initialToken);
   const identityKinds = options.identityKinds === undefined ? undefined : structuredClone(options.identityKinds);
   if (identityKinds !== undefined && (identityKinds === null || typeof identityKinds !== "object" || Array.isArray(identityKinds) || Object.values(identityKinds).some(kind => kind !== "uuid" && kind !== "bigint"))) {
     throw failure("CLIENT.PROTOCOL_ERROR", "Id 종류 계약 형식 오류");
@@ -273,6 +281,8 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     return resultWire === undefined ? out : Object.freeze(out);
   }
   function replaceSession(nextToken: string) {
+    if (nextToken === null) return Promise.reject(failure("CLIENT.INVALID_TOKEN", "새 토큰이 없습니다. replaceSession에는 갱신된 토큰 문자열이 필요합니다"));
+    try { assertToken(nextToken, "새 토큰"); } catch (error) { return Promise.reject(error); }
     const operation = renewalQueue.then(async () => {
       const current = await ensurePrincipal();
       const next = await describe(nextToken);

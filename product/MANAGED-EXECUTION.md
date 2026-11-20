@@ -103,7 +103,7 @@ Python은 `await ctx.data.read({...})`, `await ctx.data.apply("Order", "pay", [i
 | capability | 선언 | ctx 호출 | 실행 계약 |
 |---|---|---|---|
 | 읽기 | `read.<Resource>` | `ctx.data.read(query)`, `ctx.data.aggregate(resource, name, input)` | `/read`와 같은 planner·행/필드 정책·budget을 job 주체로 실행한다. 효과 journal은 남기지 않는다 |
-| 전이 | `<Resource>.<transition>` (공개 `expose apply`만) | `ctx.data.apply(resource, transition, ids, key)` | 전이, deferred 검사, effect journal 기록이 **하나의 PostgreSQL transaction**에서 commit된다 |
+| 전이 | `<Resource>.<transition>` (공개 `expose apply`만) | `ctx.data.apply(resource, transition, ids, key)` (durable job. 쓰기 확장의 시그니처와 key의 뜻은 아래 "쓰기 확장의 `ctx.data.apply`와 key") | 전이, deferred 검사, effect journal 기록이 **하나의 PostgreSQL transaction**에서 commit된다 |
 
 - 권한은 job을 수락한 principal의 것이다. 행 정책에서 보이지 않는 행에 대한 전이는 동기 `/apply`와 같은 `WIRE.MISSING_TARGET`으로 끝나 행 존재 여부를 알리지 않는다. 선언하지 않은 전이는 job 전체가 `WIRE.ACCESS_NOT_DECLARED`로 실패한다.
 - `apply`에는 다른 managed effect처럼 안정 key가 필요하다. 같은 run에서 같은 key를 다시 부르거나 worker가 commit 뒤에 죽어 재시도되면, 전이를 다시 실행하지 않고 journal의 결과를 그대로 돌려준다. 외부 HTTP와 달리 `WIRE.EFFECT_UNKNOWN`은 없다. 다만 COMMIT을 보낸 뒤 응답을 잃거나 해석하지 못하면 전이가 커밋됐는지 이 연결로는 알 수 없다. 이때 job은 확장 오류가 아니라 `WIRE.COMMIT_UNKNOWN`으로 끝나고 자동으로 다시 실행하지 않는다. 커밋됐다면 journal 행도 함께 남아 있으므로 데이터 상태를 먼저 확인한다. COMMIT을 보내기 전에 연결을 잃은 경우는 아무것도 커밋되지 않았고 `WIRE.DB_UNAVAILABLE`로 job이 다시 시도된다.
@@ -165,6 +165,8 @@ for await (const event of client.events.watch("notifications", { after: "0", int
 }
 ```
 
+`developer_diagnostics`(기본 `false`)는 개발용이다. 켜면 실패한 쓰기 확장의 응답에 원인 분류 `cause`와 `detail`이 붙는다. 운영 설정에는 켜지 않는다. 요청 로그 줄의 `cause`는 이 설정과 무관하게 항상 남는다("확장 실패의 원인" 절).
+
 secret은 명시한 process environment variable에서만 읽고 `.env`는 불러오지 않는다. startup은 DNS를 최대 2초 동안 조회하고 결과 주소를 고정한다. HTTPS를 사용하며 기본적으로 private/special-use 주소와 redirect, proxy를 차단한다. 서버 endpoint별 `allow_private_networks:true`는 사설 unicast HTTPS 연동을 허용하지만 link-local 등 특수 주소는 계속 거부한다. 명시적으로 `allow_loopback:true`인 개발 설정만 loopback HTTP를 쓸 수 있다. endpoint, DNS 답, method, 제한값, secret의 digest가 implementation bundle fingerprint에 포함되므로 값이 바뀐 worker 설정으로 기존 job을 이어 실행하지 않는다. 설정 오류 출력은 endpoint URL이나 secret 값을 노출하지 않는다.
 
 MySQL read extensions can also use server-owned MongoDB and Redis read adapters. Configure `workers.mongo` and/or `workers.redis` with environment variable **names**; the service reads URI values in its own process and never adds them to the worker subprocess environment. Mongo uses the Rust driver's bounded connection pool (1–64) and readiness ping. Redis uses a reconnecting connection manager with a bounded in-flight semaphore (1–256) and readiness ping. Timeouts are 1–30,000 ms. If an adapter is absent, the corresponding capability call fails with `WIRE.ADAPTER_UNAVAILABLE`; an empty in-memory result is never substituted.
@@ -176,6 +178,69 @@ A write extension may carry the declaration-only `internal` marker when only tru
 **Reading and creating inside a write extension (WBS 7.2.8, MySQL).** A write extension may also declare `access read.<Resource>` and `access create.<Resource>` (the resource needs an `expose create`). `ctx.data.read(query)` runs the public read under the caller's row and field policies inside the extension's own transaction, so the extension sees the row that its next transition is checked against. `ctx.data.create(res, {id: ...})` is a one-operation atomic bundle of the exposed create under the caller's `allow` rule. `ctx.data.apply(res, name, ids, key, values, expect)` passes the caller values and the expected current values of a `patch ... expect` transition (GENERAL-UPDATE), which is how an extension keeps an optimistic lock: when the row changed after the extension read it, the `expect` fails with `WIRE.CONFLICT`, the whole transaction rolls back, and an extension that lets the error out unchanged answers `WIRE.CONFLICT` to the caller, who may send the request again. Any refused ctx call poisons the invocation: an extension that swallows the error and returns normally is refused instead of committing. The Mongo and Redis read commands of the declared grants (`access mongo.<collection>`) are plain reads: they run at once and leave no step or saga log. The transition stays public (`expose apply`), so a caller can also call it directly; use it only for data that nothing else reads.
 
 **PostgreSQL write extensions.** The PostgreSQL `/apply` write-extension path supports exactly two `ctx` operations: `ctx.data.apply` of a declared transition and `ctx.data.read` of a declared `access read.<Resource>`. `ctx.data.read` plans the query with the same facts, ID wire and caller as `/read`, so the same row and field policies and budgets apply, and runs it on the extension's own transaction connection. A later read therefore sees the transaction's uncommitted writes, and no second connection is used. The read request must name the declared resource twice consistently (`read: "<Resource>"`); a missing grant is `WIRE.ACCESS_NOT_DECLARED`, a mismatching name `WIRE.BAD_VALUE`. Every refused call of the running invocation poisons it as above, so an extension that swallows the error is refused instead of committing. A call made with the `ctx` of an earlier invocation answers `WIRE.TOKEN_EXPIRED`, reads nothing, and is not counted against the running invocation. Rows with encrypted fields are refused with `WIRE.UNSUPPORTED` because the transport's decryption and blind index step does not run inside this transaction. `ctx.data.create`, `ctx.data.aggregate`, Mongo and Redis calls are not supported on PostgreSQL write extensions and answer `WIRE.UNSUPPORTED`; the MySQL paragraph above does not extend to them.
+
+### 쓰기 확장의 `ctx.data.apply`와 key
+
+쓰기 확장(PostgreSQL·MySQL)의 시그니처는 `ctx.data.apply(resource, transition, ids, key, values, expect)`이고 Python은 `await ctx.data.apply(res, name, ids, key=None, values=None, expect=None)`다. 뒤의 세 인자는 생략할 수 있다(Node는 `undefined`, Python은 `None`).
+
+**key는 받아서 검사하고 버린다.** 문자열 key를 주면 동작한다. 길이 1~100바이트이고 제어 문자·보이지 않는 서식 문자가 없어야 하며, 그 밖의 값은 `WIRE.BAD_VALUE`(원인 분류 `ctx.apply.key_format`)다. `null`/`undefined`는 key가 없는 것과 같다. 이 호출은 전에 문자열 key를 `WIRE.UNKNOWN_KEY`로 거부했다(재현: 독립 소비자 검증 D1·C1). 서버가 key를 전이 대상(`target`)에 그대로 넘겼고 대상 검사가 모르는 키로 본 것이 원인이다.
+
+key를 지원하되 쓰지 않는 이유(선택과 근거):
+
+- 쓰기 확장 호출 전체가 바깥 요청의 멱등 key 아래 하나의 transaction에서 커밋된다. 같은 바깥 key로 다시 보내면 저장된 결과를 그대로 돌려주고(`replayed: true`) **확장을 다시 실행하지 않으므로** 안쪽 전이가 두 번 실행될 길이 없다. 안쪽 key가 따로 맡을 중복 제거가 없다.
+- 반대로 안쪽 key를 장부로 쓰면 같은 호출 안에서 key 충돌 규칙을 새로 정해야 하고, 바깥 key와 이중 장부가 된다. 같은 확장 코드가 durable job(안쪽 key가 journal key다)과 쓰기 확장 사이에서 그대로 움직이도록 시그니처만 맞춘다.
+- 결과적으로 한 호출 안에서 같은 key로 `ctx.data.apply`를 두 번 불러도 둘 다 실행된다. 중복을 막으려면 key가 아니라 전이의 `from` 조건이나 `expect`를 쓴다. 안쪽 key는 durable job의 `apply`에서만 journal에 남는다.
+- 같은 이유로 `ctx.data.create`의 key(MySQL)도 effect 장부에 남는 것은 job에서뿐이다.
+
+`ctx.data.apply`가 거부되어도 확장이 오류를 잡고 성공을 반환하면 위 규칙대로 호출이 거부된다(poison). 이때 호출자에게는 `WIRE.EXTENSION_ERROR`만 가고, 원인은 아래 절에서 확인한다.
+
+### 확장 실패의 원인
+
+호출자가 보는 `WIRE.EXTENSION_ERROR`는 원인에 따라 다른 내용을 가질 수 없다(내부 정보와 비밀을 응답에 싣지 않기 위해서다). 그래서 서버가 첫 실패의 **원인 분류 코드** `cause`를 정해 두 곳에 남긴다.
+
+| `cause` | 뜻 | 고칠 곳 |
+|---|---|---|
+| `ctx.apply.access_not_declared` / `ctx.read.access_not_declared` / `ctx.create.access_not_declared` | 확장 계약의 `access`에 없는 전이·읽기·create를 불렀다 | 확장의 `access` 목록 |
+| `ctx.read.filter_not_exposed` | `ctx.data.read`의 필터가 해당 resource의 `expose read ... filter`에 열려 있지 않다(`id.eq`가 없는데 `id` 필터를 쓰는 경우 등) | 정의의 `filter` 선언 |
+| `ctx.read.field_not_exposed` | 열리지 않은 필드를 `select`했다 | 정의의 `expose read select` |
+| `ctx.apply.key_format` | `ctx.data.apply`의 key가 위 형식이 아니다 | 확장 코드 |
+| `ctx.apply.unknown_key`·`ctx.read.unknown_key` | 요청에 알 수 없는 키가 있다 | 확장 코드 |
+| `ctx.<op>.unsupported` | 이 어댑터가 지원하지 않는 ctx 호출(PostgreSQL의 `create`·`aggregate` 등) | 설계 |
+| `ctx.<op>.stale_ctx` | 끝난 호출의 `ctx`를 붙들고 썼다 | 확장 코드 |
+| `ctx.<op>.<코드 이름>` | 그 밖의 거부(`forbidden`, `missing_target`, `conflict` 등, 서버의 `WIRE.` 코드 이름을 소문자로) | 해당 코드의 설명 |
+| `extension.exception` | 확장 코드가 예외를 던졌다(ctx 거부가 먼저 없었다) | 확장 코드 |
+| `extension.reject_invalid` | `ctx.reject`의 코드나 메시지가 제한을 넘었다 | 확장 코드 |
+
+- **서버 로그(항상).** 요청당 한 줄의 JSON 로그에 `cause` 필드가 붙는다: `{"event":"request","requestId":"req_...","route":"apply","status":200,"code":"WIRE.EXTENSION_ERROR","cause":"ctx.read.filter_not_exposed","ms":12}`. 신고에 적힌 `x-request-id`로 줄을 찾는다. 로그에는 분류 코드만 있고 확장이 던진 예외 문장, 필터 값, 토큰은 없다.
+- **개발 모드 호출자 응답(선택).** 서비스 설정 `"developer_diagnostics": true`이면 응답에 `cause`와 `detail`이 더 붙는다. `detail`은 거부된 ctx 호출이 한 말(예: member.eq 필터는 계약에 없음, 허용: id.eq) 또는 확장이 던진 예외 문장이고 200자까지 잘린다. 기본값은 `false`이며 **운영 설정에 켜지 않는다**. 켜지 않으면 응답은 `{"ok":false,"code":"WIRE.EXTENSION_ERROR","msg":"공식 WRITE 확장 호출 거부","retry":"never","requestId":"..."}`뿐이다.
+
+`ctx` 거부 하나 뒤 확장이 계속 진행해 다른 예외를 던져도 첫 거부가 원인이다(뒤의 예외는 증상이다). 재현·회귀: `spikes/spike-v4-worker/tests/write_ctx_key_and_rejection.rs`, `spikes/spike-v6-transport/tests/write_extension_dx_http.rs`.
+
+### 업무 거절: `ctx.reject`
+
+확장이 업무 규칙으로 호출을 거절할 때(재고 부족, 마감 지남 등)는 예외가 아니라 `ctx.reject`를 던진다.
+
+```js
+export async function place(input, ctx) {
+  const stock = /* ... ctx.data.read로 재고를 읽는다 ... */ 0;
+  if (stock < input.qty) throw ctx.reject("INSUFFICIENT_STOCK", "재고가 부족합니다");
+  // ...
+}
+```
+
+```python
+async def place(input, ctx):
+    if stock < input["qty"]:
+        raise ctx.reject("INSUFFICIENT_STOCK", "재고가 부족합니다")
+```
+
+- 호출자는 `{"ok": false, "code": "WIRE.EXTENSION_REJECTED", "appCode": "INSUFFICIENT_STOCK", "msg": "재고가 부족합니다", "retry": "never"}`를 받는다. SDK의 읽는 법은 [SDK](SDK.md)의 "쓰기 확장과 create 호출, 업무 거절"이다.
+- **제한(서버가 검사한다).** `appCode`는 대문자 영문으로 시작하는 대문자·숫자·밑줄 48바이트 이하(`^[A-Z][A-Z0-9_]{0,47}$`)다. `.`을 허용하지 않으므로 `WIRE.FORBIDDEN` 같은 플랫폼 코드를 흉내 낼 수 없다. 메시지는 공백만이 아닌 200자 이하이고 제어 문자(줄바꿈 포함)와 보이지 않는 서식 문자가 없다. 제한을 넘으면 거절이 아니라 확장의 버그로 보고 `WIRE.EXTENSION_ERROR`(`cause` `extension.reject_invalid`)가 된다. 메시지는 호출자 화면에 그대로 보일 수 있으니 내부 정보나 비밀을 넣지 않는다.
+- **롤백.** 거절을 던지기 전까지 이 호출이 쓴 모든 것(`ctx.data.apply`, MySQL의 `create`, Mongo·Redis의 보상 가능한 효과)이 되돌려진다. 확장이 부른 ctx 호출이 이미 거부된 뒤(poison)에 `ctx.reject`로 끝나면 첫 거부가 원인이므로 `WIRE.EXTENSION_ERROR`다(업무 거절로 가장하지 못한다).
+- **멱등 기록.** 거절은 멱등 기록을 남기지 않는다. 다른 롤백형 실패(`WIRE.FORBIDDEN`, 불변식 위반 등)와 같다. 같은 key로 같은 요청을 다시 보내면 확장이 새로 실행되어 그때의 상태로 다시 판단한다(재고를 채운 뒤 같은 key가 성공할 수 있다). 거절 결과를 재생하지 않는 이유는 업무 판단이 시간에 따라 바뀌는 것이 정상인 경우(재고, 마감)를 거절 결과 하나가 영구히 고정하면 안 되기 때문이다. 성공만 key에 묶여 재생된다. 같은 요청을 거절된 채로 두고 싶은 앱은 호출자가 거절을 기억해야 한다.
+- 코드 버그는 이 경로가 아니다. 예외를 던지면 그대로 `WIRE.EXTENSION_ERROR`이고 응답은 원인을 말하지 않는다(위 절).
+- 범위: 쓰기 확장(PostgreSQL·MySQL의 `/apply` 확장)에서 동작한다. 읽기 확장과 durable job에서는 `ctx.reject`를 던져도 `WIRE.EXTENSION_ERROR`로 끝난다(해당 경로의 호출자 전달은 아직 없다).
+
 
 MySQL durable HTTP jobs now connect enqueue/status/result/cancel to the lease store and an adapter-owned worker supervisor. Managed data reads, aggregates, transitions and nested jobs use declared capabilities. Each data effect commits its business change, audit and receipt together; a retry replays the receipt. Status hides output, and result access rechecks the current principal and operation policy. Existing deployments install the additive effect journal by reapplying `adopt-external --apply` with the migration role; runtime startup checks its InnoDB engine, primary key and columns and performs no DDL. Real Node/Python asynchronous execution passed Linux CI. Configured schedules, signed webhooks and outbox handlers start jobs in the same store as the bound service principal; a user cannot enqueue the operations they feed or use their reserved keys. Managed files, external HTTP capabilities, events, messages and file uploads remain unsupported in this MySQL runtime.
 

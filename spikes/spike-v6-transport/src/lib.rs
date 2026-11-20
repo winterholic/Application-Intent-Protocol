@@ -79,6 +79,39 @@ impl spike_v4_worker::write::WriteActionHost for RelationalWriteActionHost {
     }
 }
 
+/// The body a caller gets for a failed write extension, and the cause class the request log records.
+///
+/// - `WIRE.EXTENSION_REJECTED` (`ctx.reject`): the business code and text the extension chose go to the caller as `appCode` and `msg`.
+///   Both passed the limits of the worker layer, and they are what the author meant the caller to read.
+/// - `WIRE.EXTENSION_ERROR`: the caller gets the generic text. The cause class goes to the log; only a server that runs with
+///   `developer_diagnostics` also puts `cause` and `detail` (what the refused call or the exception said) in the response.
+/// - Any other failure keeps the generic text, as before: no internal message reaches the caller.
+fn shape_extension_failure(result: &mut Value, developer: bool) -> Option<String> {
+    if result["ok"] != false {
+        return None;
+    }
+    let msg = result["msg"].as_str().unwrap_or("").to_string();
+    let tagged = spike_v4_worker::write::untag(&msg);
+    result["msg"] = json!("공식 WRITE 확장 호출 거부");
+    match (result["code"].as_str(), tagged) {
+        (Some("WIRE.EXTENSION_REJECTED"), Some((app_code, text))) => {
+            result["appCode"] = json!(app_code);
+            result["msg"] = json!(text);
+            Some(format!("rejected:{app_code}"))
+        }
+        (Some("WIRE.EXTENSION_ERROR"), Some((cause, text))) => {
+            if developer {
+                result["cause"] = json!(cause);
+                if let (Some(detail), _) = spike_v4_worker::write::split_detail(text) {
+                    result["detail"] = json!(detail);
+                }
+            }
+            Some(cause.to_string())
+        }
+        _ => None,
+    }
+}
+
 /// What the caller is told when external effects could not be undone after a failed write: the effects may still be in place.
 fn compensation_failed(steps: &[String]) -> Value {
     json!({"ok": false, "code": "WIRE.COMPENSATION_FAILED", "msg": format!("쓰기가 실패했고 외부 효과를 되돌리지 못한 단계가 있음: {}", steps.join(", "))})
@@ -854,7 +887,10 @@ async fn run_relational_write_extension(
             if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
                 return compensation_failed(&steps);
             }
-            return err(error.code, "공식 WRITE 확장 호출 거부");
+            // The tagged text of an extension failure is shaped by the caller of this function (`shape_extension_failure`); any other
+            // failure keeps the generic text.
+            let carries_cause = matches!(error.code, "WIRE.EXTENSION_ERROR" | "WIRE.EXTENSION_REJECTED");
+            return err(error.code, if carries_cause { &error.msg } else { "공식 WRITE 확장 호출 거부" });
         }
         Err(_) => {
             if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
@@ -1685,7 +1721,7 @@ async fn serve_request(
             return reply(&mut w, &result.to_string()).await;
         }
         if write_extension {
-            let result = run_relational_write_extension(
+            let mut result = run_relational_write_extension(
                 &runtime,
                 &backend,
                 &facts,
@@ -1698,6 +1734,9 @@ async fn serve_request(
                 contract_fingerprint.as_deref(),
             )
             .await;
+            if let Some(cause) = shape_extension_failure(&mut result, runtime.options.developer_diagnostics) {
+                w.trace.set_cause(&cause);
+            }
             return reply(&mut w, &result.to_string()).await;
         }
         if path == "/extension" {
@@ -1934,8 +1973,8 @@ async fn serve_request(
             &runtime.infrastructure.worker_launch,
         )
         .await;
-        if result["ok"] == false {
-            result["msg"] = json!("공식 WRITE 확장 호출 거부");
+        if let Some(cause) = shape_extension_failure(&mut result, runtime.options.developer_diagnostics) {
+            w.trace.set_cause(&cause);
         }
         result
     } else if path == "/extension" {

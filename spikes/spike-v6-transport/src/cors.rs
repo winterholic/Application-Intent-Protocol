@@ -6,6 +6,9 @@ use std::{
 #[derive(Default)]
 pub struct ServerOptions {
     pub allowed_origins: Vec<String>,
+    /// Development only: the response to a failed write extension also names the cause class and its detail (`cause`, `detail`).
+    /// Off by default, so a production response never carries the server's reasoning.
+    pub developer_diagnostics: bool,
 }
 
 struct Origin<'a> {
