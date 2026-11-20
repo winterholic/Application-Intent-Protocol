@@ -270,6 +270,16 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/aip-browser"
           "$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0
           "$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium
+      - name: Verify FaceReview browser harness regressions
+        if: ${{ !inputs.admin_metrics_diagnostic }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "FaceReview browser harness regressions"
+          "$RUNNER_TEMP/aip-browser/bin/python" -m unittest \
+            product.tests.test_facereview_ui_browser_evidence \
+            product.tests.test_facereview_first_main_browser
       - name: Verify real HTTP to Node and Python workers to MySQL
         env:
           AIP_E2E_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}
