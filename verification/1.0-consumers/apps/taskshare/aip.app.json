@@ -1,0 +1,2 @@
+{ "name": "taskshare", "version": "1.0.0", "definition": "app.aip",
+  "extensions": { "directory": "./extensions", "language": "node", "entrypoints": ["todo.mjs"], "enable_writes": true } }

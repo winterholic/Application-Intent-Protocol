@@ -1,0 +1,12 @@
+{
+  "schema": "aip_taskshare",
+  "database_url_env": "TASKSHARE_DATABASE_URL",
+  "listen": "127.0.0.1:18081",
+  "wire": "decimal",
+  "auth": {
+    "issuer": "https://issuer.example",
+    "audience": "aip-api",
+    "jwks": {"kind": "file", "path": "./dev-idp/jwks.json"}
+  },
+  "workers": { "directory": "./extensions", "language": "node", "enable_writes": true }
+}

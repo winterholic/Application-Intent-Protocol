@@ -1,0 +1,65 @@
+name: Independent 1.0 consumers
+on:
+  push:
+    branches: [verify/1.0-independent-consumer-20261121]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  consumers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 4e1325644b267f2b3177a327258c0882ee5711c2
+          path: core
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '26'
+      - name: Install test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client bubblewrap apparmor python3-venv
+          rustup update stable
+          rustup default stable
+      - name: Use the same runner isolation configuration as App packages
+        run: |
+          set -euo pipefail
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
+            mkdir -p "$sandbox_bin"
+            cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
+            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
+            echo "$sandbox_bin" >> "$GITHUB_PATH"
+          fi
+      - name: Build the exact Core candidate
+        working-directory: core
+        run: |
+          cargo build --release --locked -p aip-cli
+          npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+      - name: Install, run, migrate, and roll back both independent apps
+        working-directory: core
+        run: |
+          set -o pipefail
+          python3 ../verification/1.0-consumers/run.py | tee "$RUNNER_TEMP/independent-consumers.log"
+      - name: Preserve console results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: independent-consumers-4e132564
+          path: ${{ runner.temp }}/independent-consumers.log
+          if-no-files-found: ignore
