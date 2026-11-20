@@ -1,6 +1,8 @@
 name: Linux worker jobs
 
 on:
+  # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
+  workflow_call:
   workflow_dispatch:
     inputs:
       crypto_repair_only:

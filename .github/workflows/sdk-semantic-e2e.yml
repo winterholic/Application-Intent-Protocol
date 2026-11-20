@@ -1,6 +1,8 @@
 name: SDK semantic end-to-end
 
 on:
+  # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
+  workflow_call:
   pull_request:
     paths:
       - 'product/SDK.md'

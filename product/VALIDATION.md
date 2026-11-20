@@ -48,7 +48,9 @@ cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked
 
 첫 명령은 재배치한 binary와 설치한 SDK로 decimal/safe 두 wire를 검사하고 Node/Python worker도 실행한다. Linux에서는 기본 Bubblewrap, macOS에서는 `sandbox-exec`가 적용된다. Ttakkari sandbox가 macOS `sandbox-exec`를 막는 경우 일반 macOS Terminal에서 [worker smoke 스크립트](../scripts/verify-macos-worker-smoke.sh)를 실행한다. Core 검증 뒤 실행할 때는 마지막 build의 제품 binary를 사용한다.
 
-v1~v6의 전체 독립 suite와 prototype CLI는 `tools/verify.sh`에서도 실행한다. root target 디렉터리를 공유해 이미 빌드한 의존성을 재사용한다. 그 밖의 `spikes/spike-v7-migrate`, `spike-v11-dev-checks`의 Cargo.toml에도 같은 독립 테스트 명령을 적용할 수 있다. 이 두 실험 엔진은 자동 core 검증과 별도다.
+v1~v6과 `spike-v11-dev-checks`의 전체 독립 suite와 prototype CLI는 `tools/verify.sh`에서도 실행한다(clippy와 test 두 루프). root target 디렉터리를 공유해 이미 빌드한 의존성을 재사용한다. `spike-v11-dev-checks`는 `crates/aip-service`가 `load` 경로에서 호출하는 제품 엔진이라 목록에 넣었다(감사 P1-1).
+
+`spikes/spike-v7-migrate`는 의도적으로 목록 밖에 둔다. 근거: 어떤 제품 crate도 이 crate를 의존하지 않는다(`grep spike-v7 -r --include=Cargo.toml`은 root workspace의 `exclude` 한 줄과 자기 매니페스트만 찾는다). 제품 migration은 `crates/aip-migrate`의 별개 구현이다. v7은 RK-10 마이그레이션 실험으로 남기며, lockfile 점검은 `tools/dependency-check.sh`(Dependencies workflow)가 계속 맡는다. 시험을 돌리려면 `cargo test --manifest-path spikes/spike-v7-migrate/Cargo.toml --locked`를 직접 실행한다(전용 PostgreSQL 필요). v7을 제품 경로에 연결하면 그때 목록에 넣는다.
 
 ## 2026-10-06 보완
 
