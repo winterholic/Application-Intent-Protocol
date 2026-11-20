@@ -17,7 +17,15 @@
 | FlaskBB remaining contracts | 브랜치 `ci/1.0-required-checks-20261121` | [44764251211](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44764251211) | 성공 | main에는 `workflow_dispatch`가 없어 이 PR에서 추가했고, 추가한 브랜치 ref에서 실행했다. 브랜치 트리는 main 723fb474에 CI·문서 변경만 얹은 것이다 |
 | FlaskBB PostOrder | 브랜치 `ci/1.0-required-checks-20261121` | [44764257315](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44764257315) | 성공 | 같은 이유. joserfc pin 변경 뒤 `eeac61e8`에서 [44766850008](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44766850008)로 다시 실행해 성공 |
 
-main에서 직접 돌리지 못한 두 개는 이 PR이 병합된 뒤 main에서 한 번 더 dispatch해야 "main에서" 확인된 것이 된다.
+main이 723fb474에서 `7846fb2e`(#16 FaceReview 시험 수정, #18 패키징)로 움직여 세 개를 새 main에서 다시 실행했다.
+
+| workflow | ref | run | 판정 |
+|---|---|---|---|
+| Database contracts | main `7846fb2e` | [44774143346](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44774143346) | 성공 |
+| Linux worker jobs | main `7846fb2e` | [44774148060](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44774148060) | 성공 |
+| Deployment checks | main `7846fb2e` | [44774153048](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44774153048) | 성공 |
+
+main에서 직접 돌리지 못한 것: `FlaskBB remaining contracts`, `FlaskBB PostOrder`(main에 dispatch 트리거가 없음)와 수정 후 `Dependencies`(main에서는 chrono 때문에 실패). 이 PR이 병합된 뒤 main에서 `release-candidate`를 한 번 실행하면 이 셋을 포함해 전부 main SHA에서 확인된다. `AIP 1.0 release gate`와 `Dependencies`의 새 main(`7846fb2e`) 실행은 하지 않았다(release gate는 아래 RC 실행이 브랜치 SHA에서 대신 확인).
 
 ## 2. 필수 검사가 경로 필터와 무관하게 도는 구조 (P0-3)
 
@@ -28,6 +36,13 @@ main에서 직접 돌리지 못한 두 개는 이 PR이 병합된 뒤 main에서
 - 14개 workflow에 `workflow_call`을 추가했다(`verify`, `aip-release-gate`, `database-contracts`, `worker-jobs-linux`, `cgroup`, `flaskbb-parity`, `flaskbb-post-order`, `deploy-checks`, `dependencies`, `app-packages`, `brokers`, `object-storage`, `sdk-semantic-e2e`, `semantic-conformance`). 호출된 workflow에는 경로 필터가 적용되지 않는다. `flaskbb-*` 두 개에는 `workflow_dispatch`도 추가했다.
 - `.github/workflows/release-candidate.yml`: `release/**` 브랜치 push, `v*` 태그 push, 수동 실행에서 위 14개를 모두 호출한다. 마지막 `required` job은 14개의 결과가 전부 `success`일 때만 통과한다. 건너뜀·취소는 실패다. 로그에 SHA와 workflow별 결과를 남긴다.
 - 기존 push/PR 트리거는 건드리지 않았다. 일상 PR에서 경로 필터로 CI 비용을 줄이는 동작은 그대로다.
+
+RC 시험 실행(병합 전, `release/rc-dryrun-20261121` 브랜치 push):
+
+| 실행 | SHA | 결과 |
+|---|---|---|
+| [44766873892](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44766873892) | `eeac61e8` | **실패(의도하지 않은 실패, 내 변경이 원인)**. `verify / core`와 `release-gate`가 `tools/verify.sh` 마지막 단계의 `product/tests/test_rust_lint_gate.py`에서 `AssertionError: 10 != 9`로 실패. 이 시험이 엔진 목록을 6개(clippy 11·runtime 9)로 고정하고 있었다. 집계 job `required`도 실패해 부정 경로(하나라도 실패하면 막힘)를 확인했다. 수정: 시험의 목록과 개수에 v11을 추가(12·10). 로컬에서 수정 전 9건 실패, 수정 후 `Ran 11 tests ... OK` |
+| [44772231845](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44772231845) | `535ea857` | **성공**. 14개 workflow 전부 success, 로그 `ALL REQUIRED WORKFLOWS PASSED for 535ea857e00866e93179f2ebb89fff815a7a56cb`. 이 실행의 Verify는 FaceReview MySQL 단계를 포함해 통과했다(P0-4는 간헐 실패라 한 번의 성공이 해소의 증거는 아니다) |
 
 한계: 새 workflow 파일은 기본 브랜치에 병합되기 전에는 `gh workflow run`으로 실행할 수 없다(`HTTP 404: workflow release-candidate.yml not found on the default branch`). 병합 전 확인은 `release/**` 브랜치 push로 했다(§1 아래 RC 실행). 병합 후에는 `gh workflow run release-candidate.yml --ref <SHA의 브랜치>`로 쓴다. 태그를 만들 때는 같은 SHA에서 `required` job이 성공했는지 확인한다([CONTRIBUTING](../../CONTRIBUTING.md#릴리스)). `workflow_call` 대상 중 `Verify`는 MySQL FaceReview 단계를 포함하므로, 그 단계가 간헐 실패하면 RC도 실패한다(감사 P0-4, 다른 작업자 담당). 이를 숨기려고 단계를 빼지 않았다.
 
@@ -74,6 +89,8 @@ dispatch `44763971217`(main 723fb474) 로그로 확정한 실패 원인:
 | cgroup 정리 | 문제 없음 | `CgroupGuard`가 `Drop`에서 kill·rmdir하므로 `spawn()` 실패 경로에서도 남지 않는다 |
 
 관찰(수정 대상 아님, 1.1 후보):
+
+- `spikes/spike-v11-dev-checks/Cargo.toml`에 cargo 경고 두 개가 있다(`unused dependency spike-v5-sdk`, `missing [lints] to inherit [workspace.lints]`). `-D warnings`가 매니페스트 경고는 막지 않아 clippy 단계는 통과한다. v11을 gate에 넣으면서 눈에 띈 것이며 이번 범위 밖이라 고치지 않았다.
 
 - `kill_tree`는 동기 함수이고 `std::process::Command("ps")`를 최대 10 라운드 × 3회 호출한다. `Worker::drop`, `kill_all`, probe timeout 경로가 async 문맥에서 이를 직접 호출해 해당 tokio worker thread를 `ps` 시간만큼 막는다. 누수나 오종료는 아니고 지연이다.
 - timeout 후 `cgroup.terminate()`가 실패하면 반환 오류가 `TimedOut`이 아니라 cgroup 오류로 바뀐다.
