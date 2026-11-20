@@ -37,6 +37,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Format tag written as the first key of every serialized program.
+///
+/// Deliberately not raised to 1.0 with the 1.0 release: the tag is part of the canonical JSON, so it is part of
+/// `digest()`, and `aip-runtime` stores both in `_aip_deployment`. Changing the string changes the digest of every
+/// existing deployment (each one would read as "changed" and replan) and an older binary that rolls back would reject
+/// the newer tag with POC.I101. Raise it only together with a real change of the IR's meaning; see COMPATIBILITY.md.
 pub const CORE_IR_VERSION: &str = "aip-core/0.11";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

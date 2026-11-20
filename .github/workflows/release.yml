@@ -1,0 +1,439 @@
+name: Release
+
+# 태그(v1.0.0, v1.0.0-rc.1)가 push되면 빌드, 검증, provenance, GitHub Release 초안, npm과 PyPI publish를 한다.
+# pull_request와 workflow_dispatch는 항상 dry-run이다: 같은 빌드와 검증을 하고 산출물을 artifact로만 남기며,
+# attestation, release, publish job은 태그 push가 아니면 시작하지 않는다.
+# attestation, release 생성, publish는 GitHub environment `release`의 승인을 거친다(설정은 plan-docs/reviews/2026-11-21-1.0-distribution-plan.md §7.3).
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'COMPATIBILITY.md'
+      - 'LICENSE'
+      - 'crates/aip-test-support/**'
+      - 'product/INSTALL.md'
+      - 'product/release.config.json'
+      - 'product/python/**'
+      - 'product/sdk/**'
+      - 'product/tools/**'
+      - 'scripts/check-versions.mjs'
+      - 'scripts/make-release-manifest.mjs'
+      - 'scripts/package-cli-archive.sh'
+      - 'scripts/sync-version.mjs'
+  workflow_dispatch:
+    inputs:
+      npm_package:
+        description: 'dry-run 전용: npm 패키지 이름을 덮어써 이름 주입을 시험한다(비우면 product/release.config.json)'
+        required: false
+        default: ''
+      pypi_package:
+        description: 'dry-run 전용: PyPI 배포 이름을 덮어써 이름 주입을 시험한다(비우면 product/release.config.json)'
+        required: false
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # 이름 덮어쓰기는 workflow_dispatch 입력에서만 온다. 태그 push에서는 두 값이 모두 빈 문자열이라 설정 파일 값을 쓴다.
+  AIP_NPM_PACKAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.npm_package || '' }}
+  AIP_PYPI_PACKAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.pypi_package || '' }}
+  # macOS runner에서 쓰는 toolchain. Linux는 같은 버전의 rust:<version>-bookworm 컨테이너 이미지를 쓴다.
+  RUST_VERSION: '1.98.1'
+  # Linux 아카이브가 요구해도 되는 glibc 상한. bookworm(2.36) 컨테이너에서 빌드한 바이너리는 2.34를 넘지 않는다.
+  GLIBC_FLOOR: '2.34'
+
+jobs:
+  verify:
+    name: Verify versions and tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      publish: ${{ steps.meta.outputs.publish }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      npm_tag: ${{ steps.meta.outputs.npm_tag }}
+      npm_package: ${{ steps.meta.outputs.npm_package }}
+      pypi_distribution: ${{ steps.meta.outputs.pypi_distribution }}
+      notes_file: ${{ steps.meta.outputs.notes_file }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Apply the dry-run package name overrides to the Python files
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: node scripts/sync-version.mjs
+      - name: Check that every version marker follows Cargo.toml
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish=false
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_TYPE" == "tag" ]]; then
+            publish=true
+            # 태그는 main에 있는 커밋이어야 한다.
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::태그 커밋이 origin/main에 없습니다"; exit 1; }
+            node scripts/check-versions.mjs --tag "$GITHUB_REF_NAME"
+            # 같은 커밋의 release gate가 성공해야 한다. 없으면 소유자가 gate를 먼저 실행한다.
+            passed="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow aip-release-gate.yml --commit "$GITHUB_SHA" --status success --json databaseId --jq length)"
+            [[ "$passed" -ge 1 ]] || { echo "::error::$GITHUB_SHA에 성공한 'AIP 1.0 release gate' 실행이 없습니다"; exit 1; }
+          else
+            node scripts/check-versions.mjs
+          fi
+          version="$(node product/tools/version.mjs version)"
+          base="${version%%-*}"
+          prerelease=false
+          [[ "$version" == *-rc.* ]] && prerelease=true
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "publish=$publish"
+            echo "prerelease=$prerelease"
+            echo "npm_tag=$(node product/tools/version.mjs npm-dist-tag)"
+            echo "npm_package=$(node product/tools/version.mjs npm-package)"
+            echo "pypi_distribution=$(node product/tools/version.mjs pypi-distribution)"
+            echo "notes_file=product/RELEASE-NOTES-$base.md"
+          } >> "$GITHUB_OUTPUT"
+          test -f "product/RELEASE-NOTES-$base.md" || { echo "::error::product/RELEASE-NOTES-$base.md가 없습니다"; exit 1; }
+          echo "publish=$publish version=$version" >> "$GITHUB_STEP_SUMMARY"
+
+  build-cli:
+    name: CLI ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    # Linux는 오래된 glibc(bookworm 2.36) 이미지에서 빌드해 바이너리의 glibc 하한을 낮춘다. macOS는 runner에서 바로 빌드한다.
+    container: ${{ matrix.container }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            container: rust:1.98.1-bookworm
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            container: rust:1.98.1-bookworm
+          # macos-14 이미지는 2026-11-02에 GitHub Actions에서 퇴출됐다.
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          # Intel macOS runner 제공 종료 시점은 확인 필요. 제공이 끊기면 이 target을 빼고 문서를 고친다.
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Select the Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            rustup toolchain install "$RUST_VERSION" --profile minimal
+            rustup default "$RUST_VERSION"
+          fi
+          rustc --version
+          # 빌드 환경에 PG* 변수가 없어야 테스트 안전장치와 섞이지 않는다. build.rs는 제품 빌드를 막지 않지만 기록은 남긴다.
+          env | grep '^PG' | sed 's/=.*/=<set>/' || true
+      - name: Build the release binary
+        shell: bash
+        run: cargo build --release --locked -p aip-cli
+      - name: Record the glibc requirement of the Linux binary
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ldd --version | head -1
+          floor="$(objdump -T target/release/aip | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | uniq | tail -1)"
+          echo "${{ matrix.target }}: binary requires glibc >= $floor (allowed: <= $GLIBC_FLOOR)" | tee -a "$GITHUB_STEP_SUMMARY"
+          highest="$(printf '%s\n%s\n' "$floor" "$GLIBC_FLOOR" | sort -V | tail -1)"
+          [[ "$highest" == "$GLIBC_FLOOR" ]] || { echo "::error::glibc 요구가 상한 $GLIBC_FLOOR를 넘습니다: $floor"; exit 1; }
+      - name: Package the product bundle and the platform archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+          node product/tools/package.mjs --profile release --out "$RUNNER_TEMP/bundle"
+          (cd "$RUNNER_TEMP/bundle" && shasum -a 256 -c SHA256SUMS)
+          scripts/package-cli-archive.sh "$RUNNER_TEMP/bundle" "${{ matrix.target }}" "$RUNNER_TEMP/archive"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-cli-${{ matrix.target }}
+          path: ${{ runner.temp }}/archive/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  build-sdk-ts:
+    name: TypeScript SDK tarball
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Build, test, pack and inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+          node --test product/tests/sdk-package.test.mjs
+          node product/tools/build-sdk.mjs --out "$RUNNER_TEMP/sdk"
+          mkdir -p "$RUNNER_TEMP/npm-dist"
+          (cd "$RUNNER_TEMP/sdk" && npm pack --ignore-scripts --dry-run 2>&1 | tee -a "$GITHUB_STEP_SUMMARY")
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/npm-dist" "$RUNNER_TEMP/sdk"
+          tarball="$RUNNER_TEMP/npm-dist/$(node product/tools/version.mjs npm-tarball)"
+          test -f "$tarball"
+          node scripts/check-versions.mjs --npm-tarball "$tarball"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-sdk-npm
+          path: ${{ runner.temp }}/npm-dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  build-sdk-py:
+    name: Python SDK wheel and sdist
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Apply the dry-run package name overrides to the Python files
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: node scripts/sync-version.mjs
+      - name: Build outside the source tree, check metadata, install into a clean venv
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip build twine
+          python -m build --outdir "$RUNNER_TEMP/py" product/python
+          python -m twine check --strict "$RUNNER_TEMP/py"/*
+          wheel="$RUNNER_TEMP/py/$(node product/tools/version.mjs wheel-file)"
+          sdist="$(ls "$RUNNER_TEMP"/py/*.tar.gz)"
+          test -f "$wheel"
+          node scripts/check-versions.mjs --wheel "$wheel" --sdist "$sdist"
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --no-index "$wheel"
+          expected="$(node product/tools/version.mjs python-version)"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/python" -c "import aip_sdk; assert aip_sdk.__version__ == '$expected', aip_sdk.__version__; print('import ok', aip_sdk.__version__, aip_sdk.PROTOCOL)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-sdk-python
+          path: ${{ runner.temp }}/py/*
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble:
+    name: SHA256SUMS and manifest
+    needs: [verify, build-cli, build-sdk-ts, build-sdk-py]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Write SHA256SUMS and the manifest, then verify them
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/make-release-manifest.mjs dist --tag "$TAG" --git-sha "$GITHUB_SHA"
+          (cd dist && sha256sum -c SHA256SUMS)
+          ls -l dist | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release-draft:
+    name: Attest and create the draft GitHub Release
+    needs: [verify, assemble]
+    if: ${{ needs.verify.outputs.publish == 'true' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-dist
+          path: dist
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          NOTES: ${{ needs.verify.outputs.notes_file }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=(--draft --verify-tag --title "AIP $VERSION" --notes-file "$NOTES")
+          [[ "$PRERELEASE" == "true" ]] && flags+=(--prerelease)
+          gh release create "$TAG" "${flags[@]}" dist/*
+
+  publish-npm:
+    name: Publish the TypeScript SDK to npm
+    needs: [verify, release-draft]
+    if: ${{ needs.verify.outputs.publish == 'true' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-dist
+          path: dist
+      - name: Publish with provenance
+        env:
+          PACKAGE: ${{ needs.verify.outputs.npm_package }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          NPM_TAG: ${{ needs.verify.outputs.npm_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # npm Trusted Publishing(OIDC)은 npm CLI 11.5.1 이상이 필요하다.
+          npm_version="$(npm --version)"
+          lowest="$(printf '%s\n%s\n' "$npm_version" "11.5.1" | sort -V | head -1)"
+          [[ "$lowest" == "11.5.1" ]] || { echo "::error::npm $npm_version은 11.5.1보다 낮아 trusted publishing을 쓸 수 없습니다"; exit 1; }
+          if npm view "$PACKAGE@$VERSION" version >/dev/null 2>&1; then
+            echo "$PACKAGE@$VERSION은 이미 publish돼 있어 건너뜁니다"
+            exit 0
+          fi
+          tarball="dist/$(node product/tools/version.mjs npm-tarball)"
+          test -f "$tarball"
+          node scripts/check-versions.mjs --tag "v$VERSION" --npm-tarball "$tarball"
+          npm publish "$tarball" --provenance --access public --tag "$NPM_TAG"
+
+  publish-pypi:
+    name: Publish the Python SDK to PyPI
+    needs: [verify, release-draft]
+    if: ${{ needs.verify.outputs.publish == 'true' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-dist
+          path: dist
+      - name: Select the Python distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir pypi-dist
+          wheel="dist/$(node product/tools/version.mjs wheel-file)"
+          test -f "$wheel"
+          cp "$wheel" pypi-dist/
+          cp dist/*-"$(node product/tools/version.mjs python-version)".tar.gz pypi-dist/
+          ls pypi-dist
+      # 장기 토큰 없이 OIDC trusted publishing만 쓴다. PyPI 쪽 trusted publisher는 workflow release.yml, environment release로 등록한다.
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: pypi-dist
+          attestations: true
+
+  finalize-release:
+    name: Publish the GitHub Release draft
+    needs: [verify, publish-npm, publish-pypi]
+    if: ${{ needs.verify.outputs.publish == 'true' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # 두 publish가 모두 성공했을 때만 draft를 푼다. 하나라도 실패하면 draft로 남고 소유자가 판단한다.
+      - name: Undraft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest=(--latest)
+          [[ "$PRERELEASE" == "true" ]] && latest=(--latest=false)
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false "${latest[@]}"

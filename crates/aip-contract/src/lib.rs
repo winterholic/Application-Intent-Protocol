@@ -17,7 +17,9 @@ use ty::{ParamSpec, declared};
 
 /// Version of the wire protocol and of the shape of the contract document;
 /// separate from Core IR, which versions the meaning a contract is derived from.
-pub const PROTOCOL_VERSION: &str = "aip-protocol/0.1";
+/// The major number is the compatibility boundary: within one major, the contract document only gains optional keys.
+/// COMPATIBILITY.md records the engine and SDK versions that speak each protocol.
+pub const PROTOCOL_VERSION: &str = "aip-protocol/1.0";
 
 /// A callable intent as a client sees it.
 pub(crate) enum Item {
@@ -459,6 +461,15 @@ fn mark_decimal_wire(v: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protocol_version_declares_major_one_and_a_parseable_shape() {
+        let (name, number) = PROTOCOL_VERSION.split_once('/').expect("name/major.minor");
+        assert_eq!(name, "aip-protocol");
+        let (major, minor) = number.split_once('.').expect("major.minor");
+        assert_eq!(major.parse::<u32>().expect("numeric major"), 1, "1.x is the compatibility line for the 1.0 release");
+        minor.parse::<u32>().expect("numeric minor");
+    }
 
     #[test]
     fn decimal_and_money_are_marked_as_strings_everywhere() {

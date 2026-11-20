@@ -25,6 +25,31 @@ def wait_for_api_completion(page, started, finished, pending, failures, timeout_
         page.wait_for_timeout(50)
 
 
+# The pinned MainPage mounts three react-query queries: personalRecommended,
+# allVideos and the category lists. Member journeys on the same pinned UI record
+# exactly these three adapter extensions on a first main load.
+FIRST_MAIN_EXTENSIONS = frozenset({"Video.homeCategory", "Video.homeVideoAll", "Video.homePersonalized"})
+
+
+def wait_for_expected_extensions(page, observed, expected, failures, timeout_ms=15000):
+    """Pump browser events until every expected extension request has been seen.
+
+    `started == finished` is also true before a freshly rendered page has asked
+    for anything: its queries are scheduled after render, and Playwright's sync
+    API only delivers `request` events while it is pumped. A reload at that point
+    discards the old document's responses and leaves their requests unfinished.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        if failures:
+            raise AssertionError("API request failed before evidence was complete")
+        if expected <= observed:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError("expected extension requests were not issued before evidence was collected")
+        page.wait_for_timeout(50)
+
+
 def api_completion_diagnostics(started, finished, pending, failures, request_phases):
     """Describe unfinished requests without URLs, identifiers, bodies or errors."""
     phases = {"startup", "login", "tutorial_steps", "tutorial_action", "reload_main",

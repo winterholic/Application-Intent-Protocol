@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "aip-auth"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-test-support",
  "base64 0.22.1",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "aip-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-contract",
  "aip-ir",
@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "aip-contract"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-ir",
  "serde",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "aip-crypto"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "aip-execution"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-crypto",
  "aip-test-support",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "aip-ir"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -198,7 +198,7 @@ dependencies = [
 
 [[package]]
 name = "aip-migrate"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-crypto",
  "aip-execution",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "aip-pg"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-ir",
  "aip-plan",
@@ -228,7 +228,7 @@ dependencies = [
 
 [[package]]
 name = "aip-plan"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "aip-runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "aip-ir",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "aip-sema"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-ir",
  "aip-syntax",
@@ -275,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "aip-service"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-auth",
  "aip-crypto",
@@ -301,7 +301,7 @@ dependencies = [
 
 [[package]]
 name = "aip-syntax"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-ir",
  "serde",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "aip-test-fault-proxy"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aip-test-support",
  "tokio",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "aip-test-support"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "url",
 ]

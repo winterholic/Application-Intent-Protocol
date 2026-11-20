@@ -15,7 +15,10 @@ fn main() {
     if strict && admin_url.is_none() {
         panic!("AIP_TEST_ADMIN_URL is required; refusing PostgreSQL defaults");
     }
-    if let Some((key, _)) = std::env::vars_os().find(|(key, _)| key.to_string_lossy().starts_with("PG")) {
+    // libpq 기본값으로 공용 DB에 붙는 일을 막는 안전장치다. 테스트 빌드(strict-db는 dev-dependency만 켠다)에서만 빌드를 막는다.
+    // 제품 바이너리 빌드는 이 crate를 일반 의존성으로 끌어오므로, 개발자 셸의 PGHOST 같은 값이 릴리스 빌드를 막으면 안 된다.
+    // 일반 빌드에서도 테스트 DSN을 꺼내는 database_url()/admin_database_url()이 같은 검사를 런타임에 한다.
+    if strict && let Some((key, _)) = std::env::vars_os().find(|(key, _)| key.to_string_lossy().starts_with("PG")) {
         let key = key.to_string_lossy();
         panic!("{key} must be unset; configure the explicit AIP test DSN instead");
     }

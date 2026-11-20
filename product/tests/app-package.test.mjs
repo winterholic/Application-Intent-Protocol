@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import * as packager from "../tools/app-package.mjs";
+import { npmTarballName, releaseConfig, workspaceVersion } from "../tools/version.mjs";
 
 function fixture(t, overrides = {}) {
   const base = mkdtempSync(join(tmpdir(), "aip-app-package-test-"));
@@ -47,7 +48,7 @@ function fixture(t, overrides = {}) {
     }
     if (stage === "sdk-build") {
       const sdk = args[args.indexOf("--out") + 1];
-      put(join(sdk, "package.json"), '{"name":"@aip/sdk","version":"0.1.0","type":"module"}');
+      put(join(sdk, "package.json"), JSON.stringify({ name: releaseConfig().npmPackage, version: workspaceVersion(), type: "module" }));
       put(join(sdk, "index.js"), 'export const AipClient = class {};\n');
       return '';
     }
@@ -57,7 +58,7 @@ function fixture(t, overrides = {}) {
       return result.stdout;
     }
     if (stage === "bindings") { put(args[args.indexOf("--out") + 1], 'import { AipClient } from "@aip/sdk";\n'); return ''; }
-    if (stage === "engine-version") return 'aip 0.1.0\n';
+    if (stage === "engine-version") return `aip ${workspaceVersion()}\n`;
     if (stage === "definition-check") return '{}\n';
     throw new Error(`unexpected command ${program} ${stage}`);
   };
@@ -88,7 +89,7 @@ test("two distinct applications remain self-contained after removing their input
     assert.equal(metadata.target, "aarch64-apple-darwin");
     assert.equal(metadata.profile, "release");
     assert.deepEqual(metadata.features, overrides.features ?? []);
-    assert.match(metadata.engine_version, /0\.1\.0/);
+    assert.match(metadata.engine_version, new RegExp(workspaceVersion().replaceAll(".", "\\.")));
     assert.ok(f.commands.some(c => c.program === "cargo" && c.args.includes("--locked") && c.args.includes("--release")));
     assert.ok(f.commands.some(c => c.stage === "definition-check"));
     assert.ok(f.commands.some(c => c.stage === "bindings"));

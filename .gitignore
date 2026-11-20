@@ -8,6 +8,10 @@ test/.generated/
 **/.pytest_cache/
 **/.venv/
 **/.generated/
+# python -m build leaves these in the source directory; they are never source
+product/python/*.egg-info/
+product/python/build/
+product/python/dist/
 .DS_Store
 
 # Local environment and credentials

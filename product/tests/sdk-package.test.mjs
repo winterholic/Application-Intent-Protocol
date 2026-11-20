@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
+import { protocolVersion, releaseConfig, sdkPackageManifest, workspaceVersion } from "../tools/version.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const productDir = resolve(testDir, "..");
@@ -57,25 +58,34 @@ before(() => {
 
 after(() => rmSync(suiteRoot, { recursive: true, force: true }));
 
-test("build emits the installable @aip/sdk 0.1.0 JS and declaration closure", () => {
+test("build emits the installable SDK JS and declaration closure with publishable metadata", () => {
   const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
-  assert.equal(manifest.name, "@aip/sdk");
-  assert.equal(manifest.version, "0.1.0");
-  assert.equal(manifest.private, true);
+  const config = releaseConfig();
+  assert.equal(manifest.name, config.npmPackage);
+  assert.equal(manifest.version, workspaceVersion());
+  assert.equal(manifest.private, undefined, "a publishable package must not be private");
+  assert.equal(manifest.license, "MIT");
   assert.equal(manifest.type, "module");
   assert.deepEqual(manifest.exports["."], {
     types: "./product/sdk/index.d.ts",
     import: "./product/sdk/index.js",
   });
-  assert.ok(Array.isArray(manifest.files));
+  assert.deepEqual(manifest.files, ["product/sdk", "README.md", "LICENSE"]);
+  assert.deepEqual(manifest.repository, { type: "git", url: `git+${config.repository}.git` });
+  assert.deepEqual(manifest.aip, { protocol: protocolVersion() });
+  assert.deepEqual(manifest.publishConfig, { access: "public" });
+  assert.deepEqual(manifest, sdkPackageManifest());
 
   const files = walkFiles(packageDir);
   assert.ok(files.includes("product/sdk/index.js"));
   assert.ok(files.includes("product/sdk/index.d.ts"));
-  assert.ok(files.includes("spikes/spike-v6-transport/client/typed.js"));
-  assert.ok(files.includes("spikes/spike-v6-transport/client/transport.js"));
-  assert.ok(files.includes("spikes/spike-v5-sdk/sdk/cache.js"));
-  assert.ok(files.includes("spikes/spike-v5-sdk/sdk/generic.d.ts"));
+  assert.ok(files.includes("product/sdk/transport/typed.js"));
+  assert.ok(files.includes("product/sdk/transport/transport.js"));
+  assert.ok(files.includes("product/sdk/engine/cache.js"));
+  assert.ok(files.includes("product/sdk/engine/generic.d.ts"));
+  assert.ok(files.includes("LICENSE"));
+  assert.ok(files.includes("README.md"));
+  assert.ok(!files.some((name) => name.includes("spike")), "internal spike paths must not be built into the package");
 
   for (const file of files.filter((name) => name.endsWith(".js") || name.endsWith(".d.ts"))) {
     const contents = readFileSync(join(packageDir, file), "utf8");
@@ -97,6 +107,8 @@ test("build emits the installable @aip/sdk 0.1.0 JS and declaration closure", ()
 
   assert.ok(packedFiles.includes("product/sdk/index.js"));
   assert.ok(packedFiles.includes("product/sdk/index.d.ts"));
+  assert.ok(packedFiles.includes("LICENSE") && packedFiles.includes("README.md") && packedFiles.includes("package.json"));
+  assert.deepEqual(packedFiles.filter((name) => name.includes("spike")), [], "the tarball must not expose internal spike paths");
   assert.ok(readFileSync(tarballPath).byteLength > 0);
 });
 
@@ -248,6 +260,7 @@ test("a checkout without the SDK compiler reports the bootstrap command and crea
   const isolatedBuilder = join(checkout, "product", "tools", "build-sdk.mjs");
   mkdirSync(dirname(isolatedBuilder), { recursive: true });
   writeFileSync(isolatedBuilder, readFileSync(buildScript));
+  writeFileSync(join(dirname(isolatedBuilder), "version.mjs"), readFileSync(join(productDir, "tools", "version.mjs")));
   const outputDir = join(checkout, "output-parent", "sdk");
 
   const output = run(process.execPath, [isolatedBuilder, "--out", outputDir], { cwd: checkout });

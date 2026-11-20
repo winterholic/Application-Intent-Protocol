@@ -16,11 +16,26 @@ macro_rules! test_admin_database_url {
     };
 }
 
+/// The first `PG*` variable name found, or None. libpq reads these as connection defaults, so a test that
+/// connects with one of them set could reach a shared database instead of the dedicated test one.
+pub fn libpq_environment_violation<I: IntoIterator<Item = String>>(names: I) -> Option<String> {
+    names.into_iter().find(|name| name.starts_with("PG"))
+}
+
+/// build.rs refuses this at compile time for test builds only. The runtime check keeps the guard when the crate was
+/// built without `strict-db` (a product build in the same workspace) and the test DSN is still being requested.
+fn reject_libpq_environment() {
+    if let Some(key) = libpq_environment_violation(std::env::vars_os().map(|(key, _)| key.to_string_lossy().into_owned())) {
+        panic!("{key} must be unset; configure the explicit AIP test DSN instead");
+    }
+}
+
 /// Return the one explicitly configured, isolated database URL for integration tests.
 /// The URL is never included in a panic message because it can contain credentials.
 pub fn database_url() -> &'static str {
     static URL: OnceLock<String> = OnceLock::new();
     URL.get_or_init(|| {
+        reject_libpq_environment();
         let raw =
             std::env::var("AIP_TEST_DATABASE_URL").unwrap_or_else(|_| panic!("AIP_TEST_DATABASE_URL is required; refusing PostgreSQL defaults"));
         validate_database_url(&raw).unwrap_or_else(|reason| panic!("AIP_TEST_DATABASE_URL is unsafe: {reason}"));
@@ -32,6 +47,7 @@ pub fn database_url() -> &'static str {
 pub fn admin_database_url() -> &'static str {
     static URL: OnceLock<String> = OnceLock::new();
     URL.get_or_init(|| {
+        reject_libpq_environment();
         let raw = std::env::var("AIP_TEST_ADMIN_URL").unwrap_or_else(|_| panic!("AIP_TEST_ADMIN_URL is required; refusing PostgreSQL defaults"));
         validate_admin_url(&raw).unwrap_or_else(|reason| panic!("AIP_TEST_ADMIN_URL is unsafe: {reason}"));
         raw
@@ -329,7 +345,7 @@ fn parse_keywords(raw: &str) -> Result<HashMap<String, String>, &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{database_url_with_option, parse_dsn, validate_admin_url, validate_database_url};
+    use super::{database_url_with_option, libpq_environment_violation, parse_dsn, validate_admin_url, validate_database_url};
 
     #[test]
     fn runtime_role_password_replaces_admin_credentials_for_keyword_and_uri_dsns() {
@@ -398,6 +414,14 @@ mod tests {
     fn parses_quoted_libpq_values_without_logging_them() {
         let fields = parse_dsn("host='127.0.0.1' port=55432 dbname='aip_test_run' user='runner' ").unwrap();
         assert_eq!(fields.get("dbname").map(String::as_str), Some("aip_test_run"));
+    }
+
+    #[test]
+    fn libpq_environment_names_are_rejected() {
+        let names = |list: &[&str]| list.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+        assert_eq!(libpq_environment_violation(names(&["PATH", "PGHOST"])), Some("PGHOST".to_string()));
+        assert_eq!(libpq_environment_violation(names(&["PGSERVICEFILE"])), Some("PGSERVICEFILE".to_string()));
+        assert_eq!(libpq_environment_violation(names(&["PATH", "HOME", "AIP_TEST_DATABASE_URL"])), None);
     }
 
     #[test]
