@@ -2,7 +2,7 @@
 
 이 문서는 AIP 1.0.0의 설치 방법이다. **초안이며 공개 전이다.** 아직 어떤 registry에도 publish하지 않았고 태그와 GitHub Release도 없다. 아래에서 `TBD`는 소유자 결정이나 첫 공개 뒤에야 정해지는 값이다. 패키지 이름은 잠정이며 최종 이름은 **소유자 승인 대상**이다([버전과 이름의 원천](SDK.md#버전과-이름의-원천)).
 
-릴리스 노트는 [RELEASE-NOTES-1.0.0](RELEASE-NOTES-1.0.0.md), 버전 대응 표는 [COMPATIBILITY](../COMPATIBILITY.md)다이고, 무엇이 지원 범위인지는 [1.0 지원 범위](SUPPORT.md)다.
+릴리스 노트는 [RELEASE-NOTES-1.0.0](RELEASE-NOTES-1.0.0.md), 버전 대응 표는 [COMPATIBILITY](../COMPATIBILITY.md)이고, 무엇이 지원 범위인지는 [1.0 지원 범위](SUPPORT.md)다.
 
 ## 무엇을 설치하나
 
