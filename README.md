@@ -1,6 +1,13 @@
 # AIP (Application Intent Protocol)
 
-> 2026-10-28: 기존 미통합 변경을 보존하고 1.0 잔여 작업을 재개했다. 독립 포팅 검사의 실패를 모두 모으는 실행부를 로컬 구현·회귀 검증했다. main push·전체 앱 동등성·1.0 출시는 미완료다. [현재 상태](plan-docs/STATUS.md)와 [검증 기록](product/VERIFICATION.md#2026-10-28-independent-suite-runner)을 따른다.
+> **1.0 상태 (2026-11-21).** 1.0.0 출시 후보를 준비 중이다. 태그와 Release는 아직 없다.
+>
+> - **정식 경로는 `aip service` 제품이다.** 정의는 `.aip`(`resource`·`expose`·`transition`)로 쓰고 `aip service check / gen / init / migrate / serve`로 PostgreSQL 위에서 실행한다. 1.0 문서와 지원 판정은 이 경로 기준이다.
+> - **`.aipoc`(Core)는 PoC다.** `aip check`, `ddl`, `ir` 같은 Core 명령은 남아 있지만 출시 묶음의 지원 대상이 아니고, `run`·`migrate`·`rekey`·`token`은 `--features poc-runtime`으로 따로 빌드해야 동작한다.
+> - **tenant 자동 격리는 1.0에서 제외한다.** Core PoC에만 있고 제품 경로에는 구현이 없다. 조직 경계는 정의의 `rows read when org = actor.org` 같은 조건으로 직접 쓴다.
+> - **데이터베이스는 PostgreSQL 17만 지원한다.** MySQL·MariaDB는 출시 묶음에 없다.
+> - 지원 11, 조건부 7, 제외 1로 판정한 [1.0 지원 범위 표](product/SUPPORT.md)가 기준이다. 선언만으로 안 되는 요구는 [표현력 한계와 확장 우회](product/LIMITS.md), 버전·호환은 [호환 표](COMPATIBILITY.md)와 [CHANGELOG](CHANGELOG.md)를 본다.
+> - 처음 쓴다면 [시작 가이드](product/GETTING-STARTED.md)에서 빈 디렉터리 하나로 정의 배포부터 SDK 호출까지 따라간다.
 
 프론트엔드가 필요한 데이터와 동작을 정형화해 표현하면 서버가 정책과 계약에 따라 실행하는 프레임워크. 애플리케이션별 백엔드 반복 구현과 프론트·백엔드 계약의 이중 유지보수를 최소화한다.
 
@@ -12,12 +19,14 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 
 2026-10-05 사용자 요청으로 운영 인증·일반 마이그레이션·본 `crates/` 제품 조립을 구현 범위에 포함했다. `aip service`가 검증된 caller 정의와 기존 read/apply·worker·SDK 엔진을 사용한다. 앱마다 새 endpoint를 만드는 구조로 바꾸지 않는다.
 
+- [1.0 지원 범위](product/SUPPORT.md): 지원 11, 조건부 7, 제외 1과 PostgreSQL 17 한정, 공개 count, 계약 헤더 오류 코드.
 - [시작 가이드](product/GETTING-STARTED.md): 빈 디렉터리에서 정의 하나를 배포하고 인증된 읽기·쓰기를 실행하기까지. 명령은 실제 실행해 확인했다.
+- [표현력 한계와 확장 우회](product/LIMITS.md): 선언만으로 안 되는 일곱 가지와 확장으로 푸는 예시.
 - [앱 패키지 설치·변경배포](product/APP-DEPLOY.md), [Docker·네이티브 서비스](product/DOCKER.md), [독립 앱 예제 두 개](product/examples/README.md): 앱별 release 산출물에서 기존 제품 엔진을 실행한다.
 - [제품 서비스](crates/aip-service/README.md): check/gen/init/adopt/migrate/serve/principal, 운영 설정과 실행 절차.
 - [운영 인증](crates/aip-auth/README.md): RS256 API access token, 공개 JWKS, 서버의 지속 actor 연결과 폐기.
 - [일반 마이그레이션](crates/aip-migrate/README.md): 변경 계획, 정형 backfill/convert, 실제 DDL 트랜잭션과 배포 저널. [기존 데이터 이관](crates/aip-migrate/ADOPTION.md)은 prototype 구조 marker를 검증한다.
-- [설치 안내](product/INSTALL.md)와 [호환 표](COMPATIBILITY.md), [1.0.0 릴리스 노트 초안](product/RELEASE-NOTES-1.0.0.md): CLI 아카이브, npm, PyPI 설치와 지원 플랫폼, glibc 하한, protocol 대응. 공개 전 초안이며 패키지 이름은 소유자 승인 대상이다.
+- [설치 안내](product/INSTALL.md)와 [호환 표](COMPATIBILITY.md), [1.0.0 릴리스 노트 초안](product/RELEASE-NOTES-1.0.0.md): CLI 아카이브, npm, PyPI 설치와 지원 플랫폼, glibc 하한, protocol 대응. 공개 전 초안이다.
 - [설치 SDK](product/SDK.md): 기존 TypeScript 엔진을 `@aip/sdk`로 offline 설치하고 생성 binding과 함께 사용한다.
 - [검증 절차와 보완 목록](product/VALIDATION.md): 새 checkout 준비, 반복 검증 명령, 자동 검증 범위와 남은 확인 항목.
 - [1.0 릴리스 게이트 증거](product/RELEASE-GATE.md): 새 clone 전체 회귀, 묶음 smoke, 이전 릴리스 업그레이드·롤백 실행 기록과 한계.
@@ -29,7 +38,9 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 
 Core 검증은 GitHub Actions Ubuntu에서 실행한다. Linux worker 격리와 durable job smoke도 Bubblewrap을 적용해 확인했다([검증 결과](product/VERIFICATION.md#linux-격리-workerjob-smoke-2026-10-14)). macOS Seatbelt 동작, 외부 IdP 계정, TLS reverse proxy의 실제 배포 검증은 별도 환경이 필요하다. 로컬 제품 실행 검증은 macOS의 실제 PostgreSQL과 통제된 HTTPS/JWT fixture를 사용한다. 대형 테이블 무중단 변경, 자동 역방향 migration, 최종 Id 표현·쓰기 조합 선택은 범위 밖이다.
 
-## 기존 PoC 구조
+## 기존 PoC 구조 (1.0 정식 경로가 아니다)
+
+아래는 `.aipoc` Core 경로다. 1.0의 지원 대상은 위의 `aip service` 제품 경로다.
 
 ```
 .aipoc (PoC 작성 언어) ─▶ AST ─▶ 의미 분석 ─▶ Core IR (언어 독립, 결정적) ─▶ 실행 계획 (SQL 고정) ─▶ 런타임
@@ -47,7 +58,9 @@ Core 검증은 GitHub Actions Ubuntu에서 실행한다. Linux worker 격리와 
 | `aip-runtime` | HTTP, 트랜잭션, 잠금, outbox, 멱등, 타이머, job, webhook, rule. `aip-cli`의 선택적 feature `poc-runtime`일 때만 포함 |
 | `aip-cli` | `aip check / core / ddl / ir / explain / contract / gen-ts / service …`. `run / migrate / rekey / token`은 `--features poc-runtime` 빌드에서만 동작 |
 
-## 상태
+## 상태 (개발 이력)
+
+아래는 날짜별 개발 이력이며 현재 1.0 상태는 문서 맨 위를 따른다.
 
 2026-10-15 후속: [페이스리뷰 댓글 적용 시험](product/tests/fixtures/facereview-comments/README.md)을 기존 PostgreSQL 채택·설치 TS SDK·Python helper 경로에 추가했다. 시험에서 발견한 생성 입력의 range 누락을 수정하고 생성·patch·expect의 scalar 검증을 통합했다. 페이스리뷰 원본 MySQL/Mongo 서비스 이식과는 구분한다. 이번 실행 결과는 [제품 검증](product/VERIFICATION.md#페이스리뷰-댓글-적용-시험-2026-10-15)에 있다.
 
