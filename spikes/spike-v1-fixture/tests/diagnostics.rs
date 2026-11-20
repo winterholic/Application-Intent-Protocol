@@ -302,3 +302,61 @@ fn the_defaults_the_card_denies_hold() {
     let ds = diagnostics(&sub(A, "sort periodEnd, views, id", "sorts periodEnd, views, id"), Form::A);
     assert_eq!((ds.len(), text(&ds[0], "code")), (1, "DEF.PARSE_UNKNOWN_KEY"));
 }
+
+const TRANSITION_BASE: &str = "actor Member\nresource Member { fields { id: Id; name: Text } }\nresource Note {\n  fields { id: Id; owner: Member; done: Bool; views: Int(0..1000) }\n  rows read when owner = actor\n  transition finish { from done = false; TO; allow owner = actor }\n  expose apply finish { target id; bulk maxRows 5 }\n}\n";
+
+#[test]
+fn a_semicolon_inside_the_to_clause_names_the_separator() {
+    let semicolon = TRANSITION_BASE.replace("TO", "to done = true; views = views + 1");
+    let ds = diagnostics(&semicolon, Form::A);
+    let d = &ds[0];
+    assert_eq!(text(d, "code"), "DEF.PARSE_UNKNOWN_KEY");
+    let message = text(d, "message");
+    assert!(message.contains("`views`") && message.contains("쉼표") && message.contains("to done = true, views = views + 1"), "{message}");
+    assert_eq!((d["line"].as_u64(), d["column"].as_u64()), (Some(6), Some(58)), "위치는 구분자 뒤의 항목: {d}");
+
+    let comma = TRANSITION_BASE.replace("TO", "to done = true, views = views + 1");
+    assert!(load_str(&comma, Form::A).is_ok(), "쉼표로 이은 to는 통과");
+
+    // `to` 없이 알 수 없는 항목은 구분자 안내를 붙이지 않는다.
+    let unknown = TRANSITION_BASE.replace("TO", "to done = true; views");
+    let message = text(&diagnostics(&unknown, Form::A)[0], "message").to_string();
+    assert!(!message.contains("쉼표"), "{message}");
+}
+
+#[test]
+fn the_card_states_the_real_caller_filter_and_to_rules() {
+    let card = spike_v1_fixture::syntax_card::render_markdown();
+    assert!(card.contains("to f = v, g = g + 1"), "to 절 구분자는 쉼표");
+    assert!(!card.contains("to f = v; g = g + 1"));
+    assert!(!card.contains("생략하면 숨긴 행의 존재를 필터로 셀 수 있어"), "callerFilter 생략은 경고가 아니라 오류");
+    assert!(card.contains("생략하면 `DEF.MISSING_ITEM` 오류"));
+    assert!(card.contains("DEF.CALLER_FILTER_POLICY_REQUIRED") && card.contains("DEF.ADVISORY_PUBLIC_COUNT"));
+    assert!(card.contains("## 공개 count 계약"));
+    // 설명이 실제 규칙이라는 근거: 생략은 오류다.
+    let omitted = A.replace("    callerFilter none\n", "");
+    if omitted != A {
+        let ds = diagnostics(&omitted, Form::A);
+        assert!(ds.iter().any(|d| text(d, "code") == "DEF.MISSING_ITEM" && text(d, "message").contains("callerFilter")), "{ds:?}");
+    }
+}
+
+#[test]
+fn user_facing_diagnostics_do_not_mention_spike() {
+    let unsupported_extension = "actor Member\nresource Member {\n  fields { id: Id }\n  extension stream x { input { a: Int }; output { b: Int }; effect none; deadline 2s; implementation \"m.f\" }\n}\n";
+    let unsupported_filter = A.replacen("callerFilter none", "callerFilter bad", 1);
+    let unsupported_row_output = A.replacen("rowOutput none", "rowOutput rows", 1);
+    let two_blocks = format!("{E_TS}\nexport const other = aip`actor Member`\n");
+    for (what, src, form) in [
+        ("callerFilter", unsupported_filter.as_str(), Form::A),
+        ("rowOutput", unsupported_row_output.as_str(), Form::A),
+        ("extension kind", unsupported_extension, Form::A),
+        ("two blocks", two_blocks.as_str(), Form::ETs),
+    ] {
+        let ds = diagnostics(src, form);
+        // help에는 저장소 경로(`spikes/...`)가 있다. crate 이름 변경은 이번 범위가 아니라서 메시지 문장만 본다.
+        let rendered = ds.iter().map(|d| text(d, "message").to_lowercase()).collect::<Vec<_>>().join("; ");
+        assert!(!rendered.contains("spike") && !rendered.contains("스파이크"), "{what}: {rendered}");
+        assert!(rendered.contains("지원하지 않") || rendered.contains("하나만"), "{what}가 거부되지 않았거나 다른 이유로 거부됨: {rendered}");
+    }
+}

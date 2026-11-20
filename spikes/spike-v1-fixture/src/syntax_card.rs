@@ -50,7 +50,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     (
         "resource",
         "transition",
-        "transition name { from cond; to f = v; allow cond }  |  transition name { from cond; delete; allow cond }",
+        "transition name { from cond; to f = v, g = w; allow cond }  |  transition name { from cond; delete; allow cond }",
         "상태 전이. from·allow와 to, patch 또는 delete가 필요하다. 숫자는 f = f + 1처럼만 바꾼다",
     ),
     ("resource", "unique", "unique a, b", "유일 제약"),
@@ -119,12 +119,12 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "원본 행을 읽는 근거가 되는 access. 반드시 쓴다(원본 행 정책을 물려받지 않는다)",
     ),
     ("aggregate", "groupKey", "groupKey ref", "원본에서 이 resource를 가리키는 참조 필드. 있으면 행별 집계"),
-    ("aggregate", "where", "where condition", "집계에 넣을 원본 행 조건"),
+    ("aggregate", "where", "where condition", "집계에 넣을 원본 행 조건. where 없는 count는 공개 count이며 정의 검사가 `DEF.ADVISORY_PUBLIC_COUNT` 경고를 낸다"),
     (
         "aggregate",
         "callerFilter",
         "callerFilter none | read",
-        "호출자의 aggregate filter 허용 여부. none은 거부하고 read는 요청 필터를 허용한다. 단독 집계는 source의 rows read 정책을 물려받지 않으므로, rows read 정책이 있는 source에서 callerFilter read를 쓰면 aggregate where에 같은 행 정책을 직접 적는다. 생략하면 숨긴 행의 존재를 필터로 셀 수 있어 정의 검사에서 경고한다",
+        "호출자의 aggregate filter 허용 여부. 반드시 쓴다(생략하면 `DEF.MISSING_ITEM` 오류). none은 거부하고 read는 요청 필터를 허용한다. count는 source의 rows read 정책을 물려받지 않으므로, rows read 정책이 있는 source에서 callerFilter read를 쓰면 aggregate where가 그 정책을 함의해야 한다(정책 전체 또는 정책의 OR 가지 하나를 where의 AND 항으로 쓴다). 아니면 `DEF.CALLER_FILTER_POLICY_REQUIRED` 오류다(호출자가 읽을 수 없는 행의 필드 값을 필터로 확인할 수 있기 때문)",
     ),
     ("aggregate", "rowOutput", "rowOutput none", "집계가 행을 내보내는지"),
     ("aggregate", "release", "release count  |  sum(f)  |  min(f)  |  max(f)", "내보내는 값"),
@@ -136,7 +136,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     ("extension", "internal", "internal", "write 확장을 서버 전용으로 표시"),
     ("extension", "implementation", "implementation \"module.function\"", "확장 모듈과 함수 이름"),
     ("transition", "from", "from condition", "전이를 시작할 수 있는 행의 조건"),
-    ("transition", "to", "to f = v; g = g + 1", "바뀌는 값"),
+    ("transition", "to", "to f = v, g = g + 1", "바뀌는 값. 대입은 쉼표로 구분한다(세미콜론은 `to`와 `from`·`allow` 같은 다른 항목 사이에만 쓴다)"),
     ("transition", "delete", "delete", "대상 행 물리 삭제. to·patch·expect·repeat unchanged와 함께 쓸 수 없다"),
     ("transition", "allow", "allow condition", "누가 부를 수 있는지"),
     ("transition", "repeat", "repeat unchanged | reject", "이미 to 상태인 행에 다시 부를 때의 처리"),
@@ -187,7 +187,7 @@ pub fn render_markdown() -> String {
          - `budget`이 없는 `expose read`는 루트로 읽을 수 없다. 다른 resource의 `traverse` 대상으로만 쓰인다.\n\
          - `budget`은 rows·depth·deadline·cost 네 값이 모두 있어야 한다.\n\
          - `expose apply`에는 `bulk maxRows`가 필요하다.\n\
-         - `aggregate`에는 `sourceAccess`가 필요하다. 원본 행의 읽기 정책을 물려받지 않는다.\n\
+         - `aggregate`에는 `sourceAccess`가 필요하다. 원본 행의 읽기 정책을 물려받지 않는다. `count`는 공개 count 계약을 따른다(아래 \"공개 count 계약\").\n\
          - 필드 읽기 정책(`field ... read when`)이 있는 필드는 filter·sort·집계에 쓸 수 없다.\n\
          - 필드 읽기 정책이 있는 필드는 전이의 `from`, `to`의 값 식, `repeat unchanged`가 걸린 `to` 대상에도 쓸 수 없다(`DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION`). 결과로 가려진 값이 추론되기 때문이다. `allow`와 `repeat unchanged` 없는 `to` 쓰기는 가능하다.\n\
          - `unique`·`limit`·`invariant` 위반(`WIRE.ALREADY_EXISTS`, `WIRE.INVARIANT_VIOLATED`)은 호출자가 볼 수 없는 행과 충돌해도 같은 코드로 실패한다. 존재는 알려도 오류 본문에 그 행의 id나 값은 싣지 않는다.\n\
@@ -208,6 +208,14 @@ pub fn render_markdown() -> String {
             }
         }
     }
+    out.push_str(
+        "\n## 공개 count 계약\n\n\
+         `release count`는 `sourceAccess`와 `where`가 고른 모집단을 센다. 원본의 `rows read`는 적용하지 않는다. `sum`·`min`·`max`는 값이 드러나므로 `rows read`를 다시 건다. 이 차이는 의도한 계약이며 응답 값은 1.0에서 바뀌지 않는다.\n\n\
+         - 위험: `where`가 없는 count는 호출자가 읽을 수 없는 행도 센다. 숨은 행이 늘면 값이 바뀐다. 정의 검사가 `DEF.ADVISORY_PUBLIC_COUNT` 경고를 낸다(`--dev-checks` 없이도, 오류 아님).\n\
+         - 필터 오라클: 원본에 `rows read`가 있고 `callerFilter read`이면 호출자 filter로 숨은 행의 필드 값을 한 값씩 셀 수 있다. 그래서 `where`가 원본의 `rows read` 정책을 함의해야 하고, 아니면 `DEF.CALLER_FILTER_POLICY_REQUIRED` 오류다. 함의는 정규화된 식의 구조로만 본다. `where`의 AND 항에 정책 전체가 있거나(`where owner = actor and amount > 0`), 정책이 `A or B`일 때 한 가지(`B`)가 있으면 통과한다(`where isAdmin(actor)`는 `... or isAdmin(actor)` 정책을 충족한다). 같은 뜻의 다른 식은 거부한다.\n\
+         - 소유자 결정으로 남긴 대안: C) 공개 count를 `release count public` 같은 명시 키로만 허용하고 기본을 `rows read` 상속으로 바꾼다. D) count에도 `rows read`를 건다. 둘 다 응답 값이 바뀌므로 1.0에 넣지 않았다.\n\
+         - 호환 영향: 이번 변경은 기존 정의의 응답 값을 바꾸지 않는다. 원본에 `rows read`가 있고 `callerFilter read`인 집계에 `where`가 없거나 정책을 함의하지 않는 정의만 새 오류로 거부된다. 자세한 내용은 `product/SDK.md`의 \"공개 count 계약\"에 있다.\n",
+    );
     out.push_str(
         "\n## 타입 범위\n\n\
          `Int(lo..hi)`의 양 끝은 포함되며 음수 경계도 쓸 수 있다(예: `Int(-1000..1000)`, `Int(-1000..-1)`). \

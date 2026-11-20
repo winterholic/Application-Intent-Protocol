@@ -118,6 +118,6 @@ pub fn extract(src: &str, host: Host) -> Result<Block, Diag> {
     match blocks.len() {
         1 => Ok(blocks.pop().unwrap()),
         0 => Err(Diag::new("DEF.NO_BLOCK", "AIP 블록 없음", Span::default())),
-        _ => Err(Diag::new("DEF.MULTIPLE_BLOCKS", "spike는 파일당 블록 하나만 지원", Span::default())),
+        _ => Err(Diag::new("DEF.MULTIPLE_BLOCKS", "파일당 블록 하나만 지원", Span::default())),
     }
 }

@@ -605,6 +605,14 @@ impl Parser {
                                 let to = self.unary()?;
                                 effects.push(Effect::Notify { to, topic: self.string()?, span: ksp });
                             }
+                            // `to a = 1; b = 2`처럼 세미콜론으로 이은 대입은 항목 이름 자리에 필드가 와서 알 수 없는 항목으로 보인다. 원인인 구분자를 알려 준다.
+                            o if !to.is_empty() && self.is_sym("=") => {
+                                return Err(Diag::new(
+                                    "DEF.PARSE_UNKNOWN_KEY",
+                                    format!("transition 안 알 수 없는 항목 `{o}`. `to` 절의 대입은 세미콜론이 아니라 쉼표로 구분함(예: `to done = true, {o} = {o} + 1`). 세미콜론은 `from`·`to`·`allow` 같은 항목 사이에만 씀"),
+                                    ksp,
+                                ))
+                            }
                             o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("transition 안 알 수 없는 항목 `{o}`"), sp)),
                         }
                     }

@@ -26,6 +26,11 @@ fn checked(src: &str, form: Form, options: Value) -> spike_v11_dev_checks::Check
     load_checked(src, form, &options).unwrap_or_else(|ds| panic!("{form:?}: {ds:?}"))
 }
 
+/// 개발 조언만. 공개 count 경고는 devChecks와 무관하게 항상 나오므로 `tests/public_count.rs`가 따로 본다.
+fn dev_advisories(checked: &spike_v11_dev_checks::Checked) -> Vec<&spike_v11_dev_checks::Advisory> {
+    checked.advisories.iter().filter(|a| a.code != "DEF.ADVISORY_PUBLIC_COUNT").collect()
+}
+
 fn diag_codes(result: Result<spike_v11_dev_checks::Checked, Vec<spike_v1_fixture::diag::Diag>>) -> Vec<&'static str> {
     match result {
         Ok(_) => vec![],
@@ -74,9 +79,13 @@ fn all_five_forms_default_to_off_and_preserve_v1_and_v5_outputs() {
         let default = checked(src, form, json!({}));
         let explicit_off = checked(src, form, json!({"devChecks": false}));
         let on = checked(src, form, json!({"devChecks": true}));
-        assert!(default.advisories.is_empty(), "{form:?}: 기본값은 off");
-        assert!(explicit_off.advisories.is_empty(), "{form:?}: off는 조언 없음");
-        assert!(on.advisories.is_empty(), "{form:?}: 기본 fixture에는 미참조 predicate 없음");
+        assert!(dev_advisories(&default).is_empty(), "{form:?}: 기본값은 off");
+        assert!(dev_advisories(&explicit_off).is_empty(), "{form:?}: off는 조언 없음");
+        assert!(dev_advisories(&on).is_empty(), "{form:?}: 기본 fixture에는 미참조 predicate 없음");
+        // fixture의 where 없는 count(bookmarkCount)는 devChecks와 무관하게 공개 count 경고가 하나 나온다.
+        for candidate in [&default, &explicit_off, &on] {
+            assert_eq!(candidate.advisories.iter().map(|a| a.code).collect::<Vec<_>>(), ["DEF.ADVISORY_PUBLIC_COUNT"], "{form:?}");
+        }
         for candidate in [&explicit_off, &on] {
             assert_eq!(digest(&candidate.output.execution), digest(&default.output.execution), "{form:?}: facts 변경");
             assert_eq!(contract_ts(&candidate.output.execution), contract_ts(&default.output.execution), "{form:?}: V5 TS 계약 변경");
@@ -131,11 +140,11 @@ fn only_direct_execution_calls_suppress_unused_predicate_advisories() {
     let with_unused = format!("{A}\npredicate orphan(m: Member) = m.id = m.id\n");
     let off = checked(&with_unused, Form::A, json!({"devChecks": false}));
     let on = checked(&with_unused, Form::A, json!({"devChecks": true}));
-    assert!(checked(&with_unused, Form::A, json!({})).advisories.is_empty());
-    assert!(off.advisories.is_empty());
-    assert_eq!(on.advisories.len(), 1);
-    assert_eq!(on.advisories[0].code, "DEF.ADVISORY_UNUSED_PREDICATE");
-    assert_eq!(on.advisories[0].anchor, "predicate:orphan");
+    assert!(dev_advisories(&checked(&with_unused, Form::A, json!({}))).is_empty());
+    assert!(dev_advisories(&off).is_empty());
+    assert_eq!(dev_advisories(&on).len(), 1);
+    assert_eq!(dev_advisories(&on)[0].code, "DEF.ADVISORY_UNUSED_PREDICATE");
+    assert_eq!(dev_advisories(&on)[0].anchor, "predicate:orphan");
     assert_eq!(digest(&off.output.execution), digest(&on.output.execution));
     assert_eq!(contract_ts(&off.output.execution), contract_ts(&on.output.execution));
     assert!(on.output.spans.get("predicate:orphan").is_none(), "predicate 조언은 별도 source span을 만들지 않음");
@@ -146,15 +155,15 @@ fn only_direct_execution_calls_suppress_unused_predicate_advisories() {
         "docs { summary \"orphan predicate\"; visibility internal }",
     );
     let mentioned = checked(&docs_mention, Form::A, json!({"devChecks": true}));
-    assert_eq!(mentioned.advisories.len(), 1, "docs의 텍스트는 typed execution 호출로 세지 않음");
-    assert_eq!(mentioned.advisories[0].anchor, "predicate:orphan");
+    assert_eq!(dev_advisories(&mentioned).len(), 1, "docs의 텍스트는 typed execution 호출로 세지 않음");
+    assert_eq!(dev_advisories(&mentioned)[0].anchor, "predicate:orphan");
 }
 
 #[test]
 fn direct_call_rule_does_not_claim_transitive_reachability() {
     let source = format!("{A}\npredicate orphan(m: Member) = m.id = m.id\npredicate isolatedCaller(m: Member) = orphan(m)\n");
     let on = checked(&source, Form::A, json!({"devChecks": true}));
-    assert_eq!(on.advisories.iter().map(|a| a.anchor.as_str()).collect::<Vec<_>>(), ["predicate:isolatedCaller"]);
+    assert_eq!(dev_advisories(&on).iter().map(|a| a.anchor.as_str()).collect::<Vec<_>>(), ["predicate:isolatedCaller"]);
 }
 
 #[test]

@@ -633,10 +633,17 @@ pub static REGISTRY: &[Info] = &[
         "",
     ),
     i(
-        "DEF.ADVISORY_CALLER_FILTER_POLICY",
-        "a caller-filtered aggregate omits its source row policy (advisory)",
-        "Not an error: the definition is accepted. A standalone aggregate does not inherit the source resource's `rows read` policy. With `callerFilter read` and no aggregate `where`, the count may reveal whether rows hidden from the caller match a supplied filter.",
-        "Repeat the intended row policy in the aggregate's `where`.",
+        "DEF.CALLER_FILTER_POLICY_REQUIRED",
+        "a caller-filtered aggregate does not require its source row policy",
+        "A `count` does not apply the source resource's `rows read` policy. With `callerFilter read` the caller's filter is added to the aggregate's own `where`, so a caller could count the rows that match a value in a field of rows it cannot read, one value at a time. When the source has a `rows read` policy, the aggregate's `where` must therefore imply that policy: the whole policy, or one branch of a policy written as `A or B`, appears as an AND term of `where`, written the same way. Before 1.0 this was only the advisory `DEF.ADVISORY_CALLER_FILTER_POLICY` under `--dev-checks`, and only when `where` was missing.",
+        "Repeat the source's `rows read` condition in the aggregate's `where`, alone or as an AND term (`where owner = actor and amount > 0`). When the policy is `A or B`, `where B` is enough. Or use `callerFilter none`.",
+        "actor Member\naccess allMembers(a: Member) = true\nresource Member {\n  fields { id: Uuid; owner: Member; name: Text(1..100) }\n  rows read when owner = actor\n  aggregate nameCount: Int {\n    source Member\n    sourceAccess allMembers(actor)\n    where owner = actor\n    callerFilter read\n    rowOutput none\n    release count\n  }\n  expose aggregate nameCount\n}\n",
+    ),
+    i(
+        "DEF.ADVISORY_PUBLIC_COUNT",
+        "a count without `where` is a public count (advisory)",
+        "Not an error: the definition is accepted and the response value is unchanged. `release count` counts the rows that `sourceAccess` and `where` select and does not apply the source's `rows read` policy. Without `where` it also counts rows the caller cannot read, and the value changes when hidden rows are added. `sum`, `min` and `max` do apply `rows read`. This advisory is reported by every `aip service check`, with or without `--dev-checks`.",
+        "If the broad count is intended, keep it and treat the number as public. Otherwise add the intended population to `where` (for example the source's `rows read` condition). See \"공개 count 계약\" in spec/definition-syntax.md and product/SDK.md.",
         "",
     ),
 ];

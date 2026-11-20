@@ -761,9 +761,34 @@ a predicate that nothing uses (advisory)
 - 원인: Not an error: the definition is accepted. An unused predicate is usually a rule that was meant to be applied and is not.
 - 수정: Use the predicate in a `rows read`, `field ... read`, `allow` or `access`, or remove it.
 
-### `DEF.ADVISORY_CALLER_FILTER_POLICY`
+### `DEF.CALLER_FILTER_POLICY_REQUIRED`
 
-a caller-filtered aggregate omits its source row policy (advisory)
+a caller-filtered aggregate does not require its source row policy
 
-- 원인: Not an error: the definition is accepted. A standalone aggregate does not inherit the source resource's `rows read` policy. With `callerFilter read` and no aggregate `where`, the count may reveal whether rows hidden from the caller match a supplied filter.
-- 수정: Repeat the intended row policy in the aggregate's `where`.
+- 원인: A `count` does not apply the source resource's `rows read` policy. With `callerFilter read` the caller's filter is added to the aggregate's own `where`, so a caller could count the rows that match a value in a field of rows it cannot read, one value at a time. When the source has a `rows read` policy, the aggregate's `where` must therefore imply that policy: the whole policy, or one branch of a policy written as `A or B`, appears as an AND term of `where`, written the same way. Before 1.0 this was only the advisory `DEF.ADVISORY_CALLER_FILTER_POLICY` under `--dev-checks`, and only when `where` was missing.
+- 수정: Repeat the source's `rows read` condition in the aggregate's `where`, alone or as an AND term (`where owner = actor and amount > 0`). When the policy is `A or B`, `where B` is enough. Or use `callerFilter none`.
+
+```aip
+actor Member
+access allMembers(a: Member) = true
+resource Member {
+  fields { id: Uuid; owner: Member; name: Text(1..100) }
+  rows read when owner = actor
+  aggregate nameCount: Int {
+    source Member
+    sourceAccess allMembers(actor)
+    where owner = actor
+    callerFilter read
+    rowOutput none
+    release count
+  }
+  expose aggregate nameCount
+}
+```
+
+### `DEF.ADVISORY_PUBLIC_COUNT`
+
+a count without `where` is a public count (advisory)
+
+- 원인: Not an error: the definition is accepted and the response value is unchanged. `release count` counts the rows that `sourceAccess` and `where` select and does not apply the source's `rows read` policy. Without `where` it also counts rows the caller cannot read, and the value changes when hidden rows are added. `sum`, `min` and `max` do apply `rows read`. This advisory is reported by every `aip service check`, with or without `--dev-checks`.
+- 수정: If the broad count is intended, keep it and treat the number as public. Otherwise add the intended population to `where` (for example the source's `rows read` condition). See "공개 count 계약" in spec/definition-syntax.md and product/SDK.md.
