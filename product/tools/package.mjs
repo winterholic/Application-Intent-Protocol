@@ -15,7 +15,7 @@ const releaseVersion = workspaceVersion();
 const sdkTarball = npmTarballName(releaseNames.npmPackage, releaseVersion);
 const artifactNames = [
   "bin/aip", "config.example.json", "example.aip", "extensions/event.mjs", "extensions/event.py",
-  "README.md", `sdk/${sdkTarball}`, "SOURCE_SHA256SUMS",
+  "README.md", `sdk/${sdkTarball}`, "tools/dev-jwt.mjs", "SOURCE_SHA256SUMS",
 ];
 const manifestFiles = [
   "Cargo.toml", "Cargo.lock",
@@ -24,7 +24,7 @@ const manifestFiles = [
   "spikes/spike-v1-fixture", "spikes/spike-v2-read", "spikes/spike-v3-write", "spikes/spike-v4-worker",
   "spikes/spike-v5-sdk", "spikes/spike-v6-transport", "spikes/spike-v11-dev-checks",
   "prototype/src/schema_catalog.sql",
-  "product/sdk/index.ts", "product/sdk/README.md", "product/release.config.json", "LICENSE", "product/tools/version.mjs", "product/tools/build-sdk.mjs", "product/tools/package.mjs", "product/tools/app-manifest.mjs", "product/tools/app-package.mjs", "product/tools/smoke.mjs",
+  "product/sdk/index.ts", "product/sdk/version.ts", "product/sdk/README.md", "product/release.config.json", "LICENSE", "product/tools/version.mjs", "product/tools/dev-jwt.mjs", "product/tools/build-sdk.mjs", "product/tools/package.mjs", "product/tools/app-manifest.mjs", "product/tools/app-package.mjs", "product/tools/smoke.mjs",
   "prototype/example/app.aip", "prototype/example/extensions/event.mjs", "prototype/example/extensions/event.py",
 ];
 
@@ -81,6 +81,7 @@ function packageReadme() {
 
 - \`bin/aip\`: 패키징 시점의 저장소 \`target/<profile>/aip\`(기본 debug, \`--profile release\`는 release 빌드)에서 복사한 로컬 빌드 실행 파일
 - \`sdk/${sdkTarball}\`: 로컬 TypeScript compiler로 만든 설치 가능한 \`${releaseNames.npmPackage}@${releaseVersion}\` tarball
+- \`tools/dev-jwt.mjs\`: 개발용 토큰 도구. 저장소 checkout 없이 \`node tools/dev-jwt.mjs --dir ./dev-idp --subject user-42\`로 개발용 JWKS와 access token을 만든다. **운영에 쓰지 않는다.**
 - \`example.aip\`: 제품 service에서 검증할 수 있는 호출자 정의 예시
 - \`extensions/event.mjs\`, \`extensions/event.py\`: 정본 예제의 Node와 Python Event.confirm 구현
 - \`config.example.json\`: issuer, schema, origin, JWKS 경로가 예시값인 비밀 없는 설정
@@ -171,6 +172,8 @@ async function packageArtifacts({ out, profile }) {
     await copyFile(binary, join(out, "bin", "aip"));
     await chmod(join(out, "bin", "aip"), 0o755);
     await copyFile(join(packDir, packed[0].filename), join(out, "sdk", sdkTarball));
+    await mkdir(join(out, "tools"), { recursive: true });
+    await copyFile(join(productDir, "tools", "dev-jwt.mjs"), join(out, "tools", "dev-jwt.mjs"));
     await copyFile(definition, join(out, "example.aip"));
     await copyFile(nodeExtension, join(out, "extensions", "event.mjs"));
     await copyFile(pythonExtension, join(out, "extensions", "event.py"));
@@ -224,6 +227,7 @@ async function verifyInputs(inputs, out, binaryName) {
     ["prototype/example/app.aip", "example.aip"],
     ["prototype/example/extensions/event.mjs", "extensions/event.mjs"],
     ["prototype/example/extensions/event.py", "extensions/event.py"],
+    ["product/tools/dev-jwt.mjs", "tools/dev-jwt.mjs"],
   ]) {
     if (await fileDigest(join(out, artifact)) !== inputs.get(source)) throw changedInput(source);
   }

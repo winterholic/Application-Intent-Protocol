@@ -8,7 +8,7 @@ import { test } from "node:test";
 import * as packager from "../tools/app-package.mjs";
 import { npmTarballName, releaseConfig, workspaceVersion } from "../tools/version.mjs";
 
-function fixture(t, overrides = {}) {
+function fixture(t, overrides = {}, options = {}) {
   const base = mkdtempSync(join(tmpdir(), "aip-app-package-test-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const root = join(base, "engine");
@@ -59,7 +59,7 @@ function fixture(t, overrides = {}) {
     }
     if (stage === "bindings") { put(args[args.indexOf("--out") + 1], 'import { AipClient } from "@aip/sdk";\n'); return ''; }
     if (stage === "engine-version") return `aip ${workspaceVersion()}\n`;
-    if (stage === "definition-check") return '{}\n';
+    if (stage === "definition-check") return options.checkOutput ?? '{}\n';
     throw new Error(`unexpected command ${program} ${stage}`);
   };
   return { base, root, app, out, put, manifest, commands, run };
@@ -200,4 +200,31 @@ test("a missing app manifest retains its structured validation error", async (t)
   f.app = join(f.base, "missing-input");
   await assert.rejects(build(f), e => e.code === "MANIFEST_MISSING");
   assert.equal(existsSync(f.out), false);
+});
+
+const workersRequired = (module = "main.helper") => JSON.stringify({ ok: true, workers: { required: true, extensions: [{ name: "Order.place", kind: "write", implementation: module }] } });
+
+test("a definition with worker extensions and a manifest without extensions fails at packaging", async (t) => {
+  const f = fixture(t, { extensions: undefined, dependencies: undefined }, { checkOutput: workersRequired() });
+  await assert.rejects(build(f), e => e.code === "EXTENSIONS_MISSING" && e.stage === "definition-check" && e.message.includes("Order.place"));
+  assert.equal(existsSync(f.out), false, "an incomplete package must not be left behind");
+});
+
+test("a worker extension whose module file is not in the manifest extensions directory fails at packaging", async (t) => {
+  const f = fixture(t, {}, { checkOutput: workersRequired("missing.run") });
+  await assert.rejects(build(f), e => e.code === "EXTENSION_FILE_MISSING" && e.message.includes("missing.mjs"));
+  assert.equal(existsSync(f.out), false);
+});
+
+test("worker extensions that match the manifest package, and config.example.json carries a workers block", async (t) => {
+  const f = fixture(t, { extensions: { directory: "workers", language: "node", entrypoints: ["main.mjs"], enable_writes: true } }, { checkOutput: workersRequired("main.run") });
+  assert.equal((await build(f)).ok, true);
+  const config = JSON.parse(readFileSync(join(f.out, "config.example.json"), "utf8"));
+  assert.deepEqual(config.workers, { directory: "./app/workers", language: "node", enable_writes: true, isolation: "auto" });
+});
+
+test("an app without extensions gets no workers block", async (t) => {
+  const f = fixture(t, { extensions: undefined, dependencies: undefined }, { checkOutput: JSON.stringify({ ok: true, workers: { required: false, extensions: [] } }) });
+  assert.equal((await build(f)).ok, true);
+  assert.equal(JSON.parse(readFileSync(join(f.out, "config.example.json"), "utf8")).workers, undefined);
 });

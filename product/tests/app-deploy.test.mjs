@@ -106,3 +106,50 @@ test("readiness requires successful status and refuses redirects", async t => {
   status = 302; await assert.rejects(module.probe(url), e => e.code === "NOT_READY");
   status = 200; assert.equal((await module.probe(url)).ok, true);
 });
+
+// The engine prints a structured failure on stderr. app-deploy keeps only its `code`, mapped to a cause, and never relays the
+// engine's message or stdout: a message can contain a database address or credentials.
+for (const [engineCode, cause] of [
+  ["DB_CONNECT", "DB_UNREACHABLE"], ["DB_CONFIG", "DB_UNREACHABLE"], ["SCHEMA_EXISTS", "SCHEMA_EXISTS"], ["DB_PRIVILEGE", "DB_PRIVILEGE"],
+  ["PLAN_CHANGED", "PLAN_DIGEST_MISMATCH"], ["SCHEMA_NOT_READY", "SCHEMA_NOT_INITIALIZED"], ["WIRE.SCHEMA_MISMATCH", "DEPLOYMENT_DIGEST_MISMATCH"],
+  ["BAD_CONFIG", "CONFIG_INVALID"], ["SOMETHING_NEW", "UNCLASSIFIED"],
+]) {
+  test(`a failing engine command is reported as ${cause} (${engineCode}) without its message`, async t => {
+    const f = await fixture(t);
+    const secret = "postgres://operator:s3cr3t-pw@db.internal:5432/prod";
+    const lines = JSON.stringify({ ok: false, code: engineCode, message: `connection to ${secret} failed` });
+    await writeFile(join(f.root, "bin/aip"), `#!/bin/sh\necho 'leaked stdout ${secret}'\nprintf '%s\\n' '${lines}' >&2\nexit 1\n`);
+    await f.seal();
+    const saved = { ...process.env };
+    Object.assign(process.env, f.environment);
+    try {
+      const failure = await module.runDeployment({ root: f.root, action: "init", config: f.configPath }).then(() => assert.fail("must fail"), e => e);
+      assert.equal(failure.code, "SERVICE_FAILED");
+      assert.equal(failure.cause, cause);
+      assert.equal(failure.engineCode, engineCode);
+      assert.ok(failure.message.includes(`[${cause}]`), failure.message);
+      assert.ok(!failure.message.includes("s3cr3t") && !failure.message.includes("db.internal") && !failure.message.includes("leaked"), failure.message);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
+  });
+}
+
+test("an engine failure without structured output is UNCLASSIFIED and carries no engine code", async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.root, "bin/aip"), "#!/bin/sh\necho 'panic: password=hunter2' >&2\nexit 3\n");
+  await f.seal();
+  const saved = { ...process.env };
+  Object.assign(process.env, f.environment);
+  try {
+    const failure = await module.runDeployment({ root: f.root, action: "init", config: f.configPath }).then(() => assert.fail("must fail"), e => e);
+    assert.equal(failure.code, "SERVICE_FAILED");
+    assert.equal(failure.cause, "UNCLASSIFIED");
+    assert.equal(failure.engineCode, undefined);
+    assert.ok(!failure.message.includes("hunter2"));
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+});

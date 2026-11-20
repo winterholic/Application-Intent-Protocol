@@ -995,6 +995,22 @@ fn write_binding(file: &Path, out: &Path, content: &str) -> Result<(), Value> {
     result.map_err(|_| error("OUTPUT_IO", "생성 계약 교체 실패"))
 }
 
+/// The extensions and operations the definition implements in a Node or Python worker. A packager reads this to refuse an app
+/// whose manifest has no `extensions` section; it holds contract names and module names only, never paths or values.
+fn worker_extensions(facts: &Value) -> Vec<Value> {
+    let resource_extensions = facts["resources"].as_object().into_iter().flatten().flat_map(|(resource, body)| {
+        body["extensions"].as_object().into_iter().flatten().map(move |(name, extension)| (format!("{resource}.{name}"), extension))
+    });
+    let operations = facts["operations"].as_object().into_iter().flatten().map(|(name, operation)| (name.clone(), operation));
+    resource_extensions
+        .chain(operations)
+        .filter_map(|(name, extension)| {
+            let implementation = extension["implementation"].as_str()?;
+            Some(json!({"name": name, "kind": extension["kind"], "implementation": implementation}))
+        })
+        .collect()
+}
+
 fn generate_binding(facts: &Value, sdk_import: &str, wire: Wire, lang: BindingLanguage, read_only: bool) -> Result<(String, String), Value> {
     let id_wire = wire.id_wire();
     match (lang, read_only) {
@@ -1034,8 +1050,10 @@ pub async fn run(command: Command) -> Result<Value, Value> {
         }
         Command::Check { file, dev_checks } => {
             let checked = load(&file, dev_checks)?;
+            let worker_extensions = worker_extensions(&checked.output.execution);
             Ok(
-                json!({"ok":true,"executionDigest":spike_v1_fixture::digest(&checked.output.execution),"advisories":checked.advisories.iter().map(|a|json!({"code":a.code,"anchor":a.anchor,"message":a.msg})).collect::<Vec<_>>()}),
+                json!({"ok":true,"executionDigest":spike_v1_fixture::digest(&checked.output.execution),"advisories":checked.advisories.iter().map(|a|json!({"code":a.code,"anchor":a.anchor,"message":a.msg})).collect::<Vec<_>>(),
+                    "workers":{"required":!worker_extensions.is_empty(),"extensions":worker_extensions}}),
             )
         }
         Command::Gen { file, wire, out, sdk_import, lang, read_only } => {
@@ -2718,6 +2736,19 @@ mod binding_generation_tests {
         assert!(module.contains("ExtensionContract"));
         assert!(!module.contains("WriteExtensionContract"));
         assert!(!module.contains("writeExtensionDescriptors"));
+    }
+
+    #[test]
+    fn worker_extensions_lists_resource_extensions_and_operations_with_an_implementation() {
+        let facts = json!({
+            "resources": {"Event": {"extensions": {"confirm": {"kind": "write", "implementation": "event.confirm"}, "none": {"kind": "read"}}}},
+            "operations": {"textLength": {"kind": "read", "implementation": "event.textLength"}, "pure": {"kind": "read"}}
+        });
+        let listed = worker_extensions(&facts);
+        let names: Vec<_> = listed.iter().map(|item| item["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["Event.confirm", "textLength"]);
+        assert_eq!(listed[0]["implementation"], "event.confirm");
+        assert!(worker_extensions(&json!({"resources": {}, "operations": {}})).is_empty());
     }
 
     #[test]

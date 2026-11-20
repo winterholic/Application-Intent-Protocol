@@ -22,6 +22,7 @@ redis = { version = "1.7.1", default-features = false, features = ["tokio-comp",
 spike-v3-write = { path = "../spike-v3-write" }
 
 [dev-dependencies]
+spike-v2-read = { path = "../spike-v2-read", features = ["test-db"] }
 aip-test-support = { path = "../../crates/aip-test-support", features = ["strict-db"] }
 aip-test-fault-proxy = { path = "../../crates/aip-test-fault-proxy" }
 

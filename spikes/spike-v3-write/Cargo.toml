@@ -17,6 +17,7 @@ tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "macros", "ti
 tokio-postgres = "0.7.18"
 
 [dev-dependencies]
+spike-v2-read = { path = "../spike-v2-read", features = ["test-db"] }
 aip-crypto = { path = "../../crates/aip-crypto" }
 aip-test-support = { path = "../../crates/aip-test-support", features = ["strict-db"] }
 aip-test-fault-proxy = { path = "../../crates/aip-test-fault-proxy" }

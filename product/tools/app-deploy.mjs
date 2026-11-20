@@ -6,9 +6,34 @@ import { fileURLToPath } from "node:url";
 
 // This module is shipped verbatim in app packages. No source checkout or npm dependency is required.
 class DeployFailure extends Error {
-  constructor(code, message) { super(message); this.code = code; }
+  constructor(code, message, details = {}) { super(message); this.code = code; Object.assign(this, details); }
 }
-const fail = (code, message) => { throw new DeployFailure(code, message); };
+const fail = (code, message, details) => { throw new DeployFailure(code, message, details); };
+
+// 엔진이 stderr에 내는 실패 JSON의 `code`만 읽어 원인 분류로 바꾼다. 엔진의 message와 stdout은 전달하지 않는다
+// (DB 주소·자격 증명이 섞일 수 있다). 분류에 없는 code는 모양만 맞으면 engineCode로 남기고 cause는 UNCLASSIFIED다.
+const CAUSES = {
+  DB_CONNECT: ["DB_UNREACHABLE", "DB 연결 실패: 주소, 포트, 자격 증명, TLS 설정을 확인하십시오"],
+  DB_CONFIG: ["DB_UNREACHABLE", "DB 연결 설정이 올바르지 않습니다: database_url_env가 가리키는 환경 변수를 확인하십시오"],
+  DB_CA_CONFIG: ["DB_UNREACHABLE", "DB 인증서(CA) 설정을 확인하십시오"],
+  SCHEMA_EXISTS: ["SCHEMA_EXISTS", "schema가 이미 있습니다: init은 새 schema에만 씁니다. 다른 schema 이름을 쓰거나 migrate를 사용하십시오"],
+  DB_PRIVILEGE: ["DB_PRIVILEGE", "DB 권한이 부족합니다: migration 역할의 CREATE 권한을 확인하십시오"],
+  PLAN_CHANGED: ["PLAN_DIGEST_MISMATCH", "승인한 계획 digest와 현재 DB 또는 정의가 다릅니다: plan을 다시 실행해 새 digest를 검토하십시오"],
+  SCHEMA_NOT_READY: ["SCHEMA_NOT_INITIALIZED", "migration metadata가 없는 schema입니다: init을 먼저 실행하거나 config의 schema 이름을 확인하십시오"],
+  "WIRE.SCHEMA_MISMATCH": ["DEPLOYMENT_DIGEST_MISMATCH", "배포된 schema와 정의의 digest가 다릅니다: 패키지의 정의로 plan과 migrate를 먼저 실행하십시오"],
+  BAD_CONFIG: ["CONFIG_INVALID", "서비스 설정이 올바르지 않습니다: config 파일을 확인하십시오"],
+  BAD_MIGRATION: ["MIGRATION_INVALID", "migration 선언이 올바르지 않습니다"],
+};
+function classifyFailure(result) {
+  if (result.error?.code === "ETIMEDOUT") return { cause: "ENGINE_TIMEOUT", reason: "제품 명령이 제한 시간 안에 끝나지 않았습니다" };
+  if (result.error) return { cause: "ENGINE_NOT_RUNNABLE", reason: "엔진 실행 파일을 시작할 수 없습니다" };
+  if (result.signal) return { cause: "ENGINE_SIGNALED", reason: `엔진이 ${result.signal} 신호로 종료됐습니다` };
+  let engineCode;
+  try { engineCode = JSON.parse(String(result.stderr ?? "").trim().split("\n").pop() ?? "").code; } catch { /* no structured failure */ }
+  if (typeof engineCode !== "string" || !/^[A-Z][A-Z0-9_.]{1,63}$/u.test(engineCode)) return { cause: "UNCLASSIFIED", reason: "원인을 분류하지 못했습니다" };
+  const known = CAUSES[engineCode];
+  return known ? { cause: known[0], reason: known[1], engineCode } : { cause: "UNCLASSIFIED", reason: "분류에 없는 엔진 오류입니다", engineCode };
+}
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const within = (root, path) => { const rel = relative(root, path); return rel === "" || (!rel.startsWith("../") && rel !== ".." && !isAbsolute(rel)); };
 function safePath(root, name) {
@@ -170,7 +195,10 @@ export async function runDeployment(options) {
   if (["health", "ready"].includes(options.action)) return probe(prepared.endpoint);
   if (options.action !== "serve") {
     const result = spawnSync(prepared.binary, prepared.args, { cwd: prepared.root, encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
-    if (result.error || result.signal || result.status !== 0) fail("SERVICE_FAILED", "제품 명령 실패: DB 권한·정의·migration fence를 확인하십시오 (원문 오류는 비밀 보호를 위해 생략)");
+    if (result.error || result.signal || result.status !== 0) {
+      const { cause, reason, engineCode } = classifyFailure(result);
+      fail("SERVICE_FAILED", `제품 명령 실패 [${cause}]: ${reason} (원문 오류는 비밀 보호를 위해 생략)`, { cause, ...(engineCode ? { engineCode } : {}) });
+    }
     // Successful plan output includes the engine's own digest; never synthesize or auto-acknowledge it.
     return { ok: true, action: options.action, output: result.stdout };
   }
@@ -199,5 +227,5 @@ if (process.argv[1] && await realpath(resolve(process.argv[1])).catch(() => "") 
   try {
     const options = argumentsFor(process.argv.slice(2));
     console.log(JSON.stringify(options.action === "install" ? await installPackage(options.root, options.out) : await runDeployment(options)));
-  } catch (error) { console.error(JSON.stringify({ ok: false, code: error instanceof DeployFailure ? error.code : "DEPLOY_IO", message: error instanceof DeployFailure ? error.message : "배포 입출력 실패 (민감한 값은 출력하지 않음)" })); process.exitCode = 1; }
+  } catch (error) { console.error(JSON.stringify({ ok: false, code: error instanceof DeployFailure ? error.code : "DEPLOY_IO", ...(error instanceof DeployFailure && error.cause ? { cause: error.cause, ...(error.engineCode ? { engineCode: error.engineCode } : {}) } : {}), message: error instanceof DeployFailure ? error.message : "배포 입출력 실패 (민감한 값은 출력하지 않음)" })); process.exitCode = 1; }
 }

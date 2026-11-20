@@ -58,7 +58,7 @@ test("the installed SDK completes authenticated reads, cache, writes and operati
     assert.match(readme, /enable_writes/u);
 
     const entries = readFileSync(sumsPath, "utf8").trim().split("\n");
-    assert.equal(entries.length, 8);
+    assert.equal(entries.length, 9);
     for (const entry of entries) {
       const match = /^([a-f0-9]{64})  (.+)$/u.exec(entry);
       assert.ok(match, `valid SHA256 line: ${entry}`);
