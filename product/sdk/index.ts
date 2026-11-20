@@ -1,5 +1,5 @@
 import { connectTypedExtensions } from "../../spikes/spike-v6-transport/client/typed.ts";
-import { SDK_IDENTITY } from "./version.ts";
+import { SDK_IDENTITY, SDK_PROTOCOL } from "./version.ts";
 
 export { SDK_IDENTITY, SDK_PROTOCOL, SDK_VERSION } from "./version.ts";
 
@@ -11,6 +11,20 @@ function declareSdk(fetchImpl: typeof fetch): typeof fetch {
     headers.set("x-aip-sdk", SDK_IDENTITY);
     return fetchImpl(input, { ...init, headers: Object.fromEntries(headers.entries()) });
   };
+}
+
+/**
+ * Compares the `protocol` a server reports (the `protocol` field of `/capabilities` or of the contract document) with the
+ * protocol this SDK speaks. Returns a warning text when the majors differ and `undefined` otherwise, including when the server
+ * reports nothing (older engines omit it). It never throws: the contract fingerprint remains the compatibility check. The typed
+ * client does not call `/capabilities` itself, so a caller that reads it passes the value here.
+ */
+export function protocolWarning(serverProtocol: unknown, sdkProtocol: string = SDK_PROTOCOL): string | undefined {
+  if (serverProtocol === undefined || serverProtocol === null) return undefined;
+  const major = (value: unknown) => (typeof value === "string" ? /^aip-protocol\/(\d+)\.\d+$/u.exec(value)?.[1] : undefined);
+  if (major(serverProtocol) !== undefined && major(serverProtocol) === major(sdkProtocol)) return undefined;
+  const shown = typeof serverProtocol === "string" ? serverProtocol.slice(0, 40) : typeof serverProtocol;
+  return `server protocol ${JSON.stringify(shown)} has a different major than this SDK (${sdkProtocol}); use the SDK and binding of the server's release`;
 }
 
 export const connect: typeof connectTypedExtensions = (base, token, binding, fetchImpl = fetch) =>

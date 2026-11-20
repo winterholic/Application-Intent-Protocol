@@ -28,7 +28,7 @@
 | 패키지 형식 `format` | `1` 유지 | 형식이 바뀌지 않았다. 패키지 안의 SDK 파일 이름만 버전·이름 설정에서 파생된다 |
 | 메시지 protocol(subscribe) | 유지 | 계약 문서 버전과 별개다(`crates/aip-runtime/src/subscribe.rs`) |
 
-SDK가 서버 protocol을 비교하는 검사(`/capabilities`에 `protocol`을 싣고 클라이언트가 지원 major와 대조해 `CLIENT.PROTOCOL_ERROR`를 내는 방식)는 이번 릴리스에 넣지 않았다. 현재 SDK는 계약 지문 불일치만 검사한다. npm `package.json`의 `aip.protocol`과 Python `aip_sdk.PROTOCOL`은 이 SDK가 말하는 protocol을 표시하며, 빌드 때 `PROTOCOL_VERSION`과 일치하는지 검사한다. 런타임 비교는 `TBD`다.
+SDK의 protocol 비교는 **경고 수준**으로 넣었다. 엔진은 `/capabilities`에 선택 필드 `protocol`(`aip-protocol/1.0`)을 싣는다(같은 major 안에서는 선택 필드만 더한다는 규칙에 맞다. 값을 모르는 호스트는 필드를 싣지 않는다). Python `Client.discover()`는 이 값의 major가 `aip_sdk.PROTOCOL`과 다르거나 형식이 올바르지 않으면 `AipProtocolWarning`을 낸다. 필드가 없는 옛 엔진은 경고 대상이 아니다. 예외를 던지지 않고 호출을 막지 않으며, 호환 판단은 계속 계약 지문이다. TypeScript 클라이언트는 `/capabilities`를 스스로 부르지 않으므로 자동 경고가 없고, 그 값을 읽는 호출자를 위해 순수 함수 `protocolWarning(serverProtocol)`을 공개한다(major가 다르면 경고 문구, 아니면 `undefined`). `package.json`의 `aip.protocol`과 `aip_sdk.PROTOCOL`은 이 SDK가 말하는 protocol을 표시하며 빌드 때 `PROTOCOL_VERSION`과 일치하는지 검사한다.
 
 ## SDK 버전 식별
 
