@@ -1376,6 +1376,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spike-v1-fixture",
+ "spike-v2-read",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",

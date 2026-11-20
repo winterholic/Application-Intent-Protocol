@@ -62,7 +62,7 @@ tar -xzf "aip-$version-$target.tar.gz"
 
 `SHA256SUMS`는 파일 무결성을, `gh attestation verify`는 이 저장소의 `release.yml`이 만든 산출물임을 확인한다(GitHub artifact attestation, 키 없는 OIDC 서명). 둘은 같은 일이 아니다. 해시만으로는 만든 주체를 알 수 없다.
 
-아카이브에는 `bin/aip`, `config.example.json`, `example.aip`, `extensions/`, `LICENSE`, `COMPATIBILITY.md`, 이 문서가 들어 있다. 첫 실행은 [시작 가이드](GETTING-STARTED.md)를 따른다. PostgreSQL 17에서 검증했고 다른 버전은 확인하지 않았다.
+아카이브에는 `bin/aip`, `config.example.json`, `example.aip`, `extensions/`, `tools/dev-jwt.mjs`(개발용 토큰 도구, 운영 금지), `LICENSE`, `COMPATIBILITY.md`, 이 문서가 들어 있다. 첫 실행은 [시작 가이드](GETTING-STARTED.md)를 따르며, 개발 토큰은 압축을 푼 디렉터리에서 `node tools/dev-jwt.mjs --dir ./dev-idp --subject user-42`로 만든다(저장소 checkout 불필요, Node.js 필요). PostgreSQL 17에서 검증했고 다른 버전은 확인하지 않았다.
 
 ## TypeScript SDK
 
@@ -92,6 +92,18 @@ pip install ./application_intent_protocol_sdk-1.0.0-py3-none-any.whl
 ```
 
 소스에서는 `pip install ./product/python`이다. Python 3.9 이상, 외부 의존성은 없다.
+
+### Python wheel을 직접 빌드할 때(네트워크 요구사항)
+
+`python -m build`는 기본으로 격리 환경을 만들고 `setuptools>=77`을 인덱스에서 내려받으므로 **네트워크가 필요하다.** 네트워크 없이 빌드하려면 `scripts/build-python.sh`를 쓴다. 소스 디렉터리를 더럽히지 않도록 복사본에서 빌드한다.
+
+| 경로 | 필요한 것 | 명령 |
+| --- | --- | --- |
+| 로컬 wheelhouse | 빌드하는 Python에 `build` 패키지, wheelhouse에 `setuptools>=77` wheel | `scripts/build-python.sh --out <새 디렉터리> --wheelhouse <dir>` |
+| 격리 없음 | 빌드하는 Python에 `build`와 `setuptools>=77`이 이미 설치됨 | `scripts/build-python.sh --out <새 디렉터리> --no-isolation` |
+| 기본 | 인덱스 접근 | `scripts/build-python.sh --out <새 디렉터리>` |
+
+`wheel` 패키지는 필요 없다(setuptools 77이 wheel을 직접 만든다). wheelhouse는 네트워크가 되는 곳에서 `pip download "setuptools>=77" -d <dir>`로 한 번 준비한다. 두 오프라인 경로 모두 프록시를 죽인 상태에서 wheel과 sdist가 만들어지는 것을 확인했고, 격리 없음 경로의 산출물은 `check-versions.mjs --wheel --sdist`도 통과했다.
 
 ## 이름 확정 전에 남은 것
 

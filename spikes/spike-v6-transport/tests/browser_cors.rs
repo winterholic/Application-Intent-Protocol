@@ -92,11 +92,12 @@ async fn explicit_preflight_is_route_and_header_bounded_before_authentication() 
     .await
     .unwrap();
     for path in ["/session", "/read", "/apply", "/status", "/extension"] {
-        for requested in ["Content-Type", "authorization, content-type, x-aip-contract"] {
+        for requested in ["Content-Type", "authorization, content-type, x-aip-contract", "authorization, content-type, x-aip-contract, x-aip-sdk"] {
             let (headers, body) = request(server.address, &format!("OPTIONS {path} HTTP/1.1\r\nHost: {}\r\nOrigin: {origin}\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: {requested}\r\n", server.address), "").await;
             assert_eq!(body["ok"], true, "{path}: {body}");
             assert!(headers.contains(&format!("access-control-allow-origin: {origin}")));
             assert!(headers.contains("access-control-allow-methods: POST"));
+            assert!(headers.contains("access-control-allow-headers: authorization, content-type, x-aip-contract, x-aip-sdk"), "{headers}");
             assert!(headers.contains("vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers"));
             assert!(!headers.contains("allow-credentials"));
         }

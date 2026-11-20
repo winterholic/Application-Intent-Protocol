@@ -433,6 +433,20 @@ pub(crate) async fn validate_existing_wire(db: &impl GenericClient, schema: &str
     Ok(())
 }
 
+/// A failed `init` statement. Only the SQLSTATE class decides the code, never the server's message (it can name objects or
+/// values): an object that already exists means the schema was initialized before, which the operator fixes differently from
+/// a missing privilege or a broken statement.
+fn init_sql_error(error: tokio_postgres::Error) -> Value {
+    use tokio_postgres::error::SqlState;
+    match error.code() {
+        Some(code) if [&SqlState::DUPLICATE_SCHEMA, &SqlState::DUPLICATE_TABLE, &SqlState::DUPLICATE_OBJECT].contains(&code) => {
+            err("SCHEMA_EXISTS", "schema 또는 객체가 이미 있음; 새 schema 이름을 쓰거나 migrate를 사용")
+        }
+        Some(code) if code == &SqlState::INSUFFICIENT_PRIVILEGE => err("DB_PRIVILEGE", "초기화 권한 부족; migration 역할의 CREATE 권한을 확인"),
+        _ => err("DB_INIT", "초기화 SQL 실패; 트랜잭션 취소"),
+    }
+}
+
 async fn init_inner(db_url: &str, schema: &str, facts: &Value, wire: Option<&str>) -> Result<Value, Value> {
     if let Some(wire) = wire {
         wire_label(wire)?;
@@ -448,9 +462,9 @@ async fn init_inner(db_url: &str, schema: &str, facts: &Value, wire: Option<&str
     let tx = db.transaction().await.map_err(|_| err("DB_INIT", "초기화 트랜잭션 시작 실패"))?;
     tx.batch_execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='20s'").await.map_err(|_| err("DB_INIT", "초기화 기한 설정 실패"))?;
     for s in &ddl {
-        tx.batch_execute(s).await.map_err(|_| err("DB_INIT", "초기화 SQL 실패; 트랜잭션 취소"))?;
+        tx.batch_execute(s).await.map_err(init_sql_error)?;
     }
-    tx.batch_execute(&metadata_sql(schema, facts)?).await.map_err(|_| err("DB_INIT", "metadata 생성 실패"))?;
+    tx.batch_execute(&metadata_sql(schema, facts)?).await.map_err(init_sql_error)?;
     let structure_digest = structure(&tx, schema).await?;
     let facts_digest = digest(facts);
     tx.execute(

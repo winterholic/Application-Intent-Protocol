@@ -18,10 +18,12 @@ import urllib.request
 import uuid
 from typing import Any, Callable, Iterator, Optional
 
-__all__ = ["connect", "Client", "AipError", "WriteUnsettled", "ScopeConflict", "validate_operation_output", "PROTOCOL"]
+__all__ = ["connect", "Client", "AipError", "WriteUnsettled", "ScopeConflict", "validate_operation_output", "PROTOCOL", "SDK_IDENTITY"]
 __version__ = "1.0.0"
 # 이 SDK가 말하는 wire protocol. 호환 경계는 major다. scripts/sync-version.mjs가 crates/aip-contract의 PROTOCOL_VERSION에서 쓴다.
 PROTOCOL = "aip-protocol/1.0"
+# 요청마다 `x-aip-sdk`로 보내는 자기 선언. 서버는 로그와 진단에만 쓰고 거부하지 않는다.
+SDK_IDENTITY = f"python/{__version__}"
 
 _FINGERPRINT = re.compile(r"^[a-f0-9]{64}$")
 _ACTOR_ID = re.compile(r"^(0|[1-9][0-9]*|-[1-9][0-9]*|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
@@ -245,7 +247,7 @@ class Client:
     # -- wire ---------------------------------------------------------------------------------
     def _post(self, path: str, body: Any, token: Any = ..., contract: bool = True) -> Any:
         credential = self._token if token is ... else token
-        headers = {"content-type": "application/json"}
+        headers = {"content-type": "application/json", "x-aip-sdk": SDK_IDENTITY}
         if credential:
             headers["authorization"] = f"Bearer {credential}"
         if contract and self.contract_fingerprint and (path in _CONTRACT_PATHS or path.startswith(_MANAGED_PREFIXES)):

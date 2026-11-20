@@ -3,7 +3,9 @@
 //! failure gives that id; the operator finds the line, and the line says which route, what outcome and how long.
 //!
 //! The line never carries a token, a principal, a query string or a body: only the route name (a fixed set),
-//! the HTTP method, the status the reply was sent with, the AIP error code of a failed reply and the duration.
+//! the HTTP method, the status the reply was sent with, the AIP error code of a failed reply, the duration and the
+//! caller's self-declared `x-aip-sdk` identity (`typescript/1.0.0`). That header is diagnostics only: it is never validated
+//! against a version list and never changes a reply, so an old or unknown SDK is served exactly as before.
 //! Set `AIP_REQUEST_LOG=off` to silence the lines; the header stays.
 //!
 //! The line is handed to a writer thread through a bounded queue and is dropped, with a count, when the queue
@@ -77,6 +79,8 @@ pub struct Trace {
     route: &'static str,
     status: Option<u16>,
     code: Option<String>,
+    /// The caller's `x-aip-sdk` value when it was a short token of safe characters. Used for the log line only.
+    sdk: Option<String>,
     otlp_exporter: Option<Arc<crate::otlp::OtlpExporter>>,
 }
 
@@ -93,6 +97,7 @@ impl Default for Trace {
             route: "other",
             status: None,
             code: None,
+            sdk: None,
             otlp_exporter: None,
         }
     }
@@ -113,6 +118,17 @@ impl Trace {
     pub fn accept_inbound(&mut self, value: &str) {
         if (8..=64).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')) {
             self.id = value.to_string();
+        }
+    }
+
+    /// Takes the `x-aip-sdk` identity (`typescript/1.0.0`) for the log line. Anything that is not a short safe token, and any
+    /// second header, is ignored: this never rejects a request, because the value is a hint the caller chose.
+    pub fn accept_sdk(&mut self, value: &str) {
+        if self.sdk.is_none()
+            && (1..=48).contains(&value.len())
+            && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/' | b'+'))
+        {
+            self.sdk = Some(value.to_string());
         }
     }
 
@@ -166,6 +182,9 @@ impl Trace {
             line.insert("code".into(), code.clone().into());
         }
         line.insert("ms".into(), (self.started.elapsed().as_millis() as u64).into());
+        if let Some(sdk) = &self.sdk {
+            line.insert("sdk".into(), sdk.clone().into());
+        }
         serde_json::Value::Object(line).to_string()
     }
 }
@@ -192,6 +211,9 @@ impl Drop for Trace {
             }
             if let Some(c) = &self.code {
                 attributes.push(("aip.code".to_string(), serde_json::Value::String(c.clone())));
+            }
+            if let Some(sdk) = &self.sdk {
+                attributes.push(("aip.sdk".to_string(), serde_json::Value::String(sdk.clone())));
             }
             let span = crate::otlp::SpanData {
                 trace_id: self.context.trace_id().to_string(),
@@ -351,6 +373,23 @@ mod tests {
         let (a, b) = (generate_id(), generate_id());
         assert_ne!(a, b);
         assert!(a.starts_with("req_") && a.len() == 4 + 24 && a[4..].bytes().all(|c| c.is_ascii_hexdigit()), "{a}");
+    }
+
+    #[test]
+    fn the_sdk_identity_is_logged_only_as_a_short_safe_token_and_never_decides_anything() {
+        let mut t = Trace::default();
+        t.accept_sdk("typescript/1.0.0");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&t.line()).unwrap()["sdk"], "typescript/1.0.0");
+        // a second header does not replace the first
+        t.accept_sdk("python/9.9.9");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&t.line()).unwrap()["sdk"], "typescript/1.0.0");
+        for hostile in ["", "has space", "line\nbreak", "quote\"", "x".repeat(49).as_str(), "{\"a\":1}", "tok\u{e9}n"] {
+            let mut t = Trace::default();
+            t.accept_sdk(hostile);
+            assert!(serde_json::from_str::<serde_json::Value>(&t.line()).unwrap().get("sdk").is_none(), "{hostile:?} was logged");
+        }
+        // a caller that sends nothing (an older SDK) produces the same line shape as before
+        assert!(serde_json::from_str::<serde_json::Value>(&Trace::default().line()).unwrap().get("sdk").is_none());
     }
 
     #[test]

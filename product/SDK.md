@@ -43,6 +43,7 @@ node product/tools/package.mjs
 
 - **버전**: 루트 `Cargo.toml`의 `[workspace.package] version` 하나가 원천이다. Core(`aip --version`), TypeScript SDK, Python SDK가 같은 숫자를 쓴다(lockstep). `product/tools/version.mjs`가 이 값을 읽고, TypeScript 빌드, 패키징, smoke, 시험이 모두 여기서 파생한다. Python은 `pyproject.toml`과 `aip_sdk.__version__`에 값을 써야 하므로 `node scripts/sync-version.mjs`가 복사하고, `node scripts/check-versions.mjs [--tag vX.Y.Z]`가 어긋나면 실패한다. 사전 릴리스는 `1.0.0-rc.N`이며 Python에서는 PEP 440 `1.0.0rcN`으로 변환한다.
 - **이름**: `product/release.config.json` 한 곳에서만 정한다. 기본값은 npm `@aip/sdk`, PyPI `application-intent-protocol-sdk`, Python import `aip_sdk`다. 환경 변수 `AIP_NPM_PACKAGE`, `AIP_PYPI_PACKAGE`가 시험용으로 덮어쓴다. 이름을 바꾸면 `node scripts/sync-version.mjs`로 Python 파일에 반영한다. **최종 이름은 소유자 승인 대상이며 현재 값은 잠정이다**(npm `@aip` scope의 소유는 확인되지 않았고, PyPI 이름은 미등록 상태일 뿐 선점하지 않았다). 생성 binding의 `--sdk-import` 기본값(`@aip/sdk`)을 바꾸려면 호출 때 `--sdk-import <새 이름>`을 준다. 패키징 도구와 smoke는 설정 이름을 넘긴다.
+- **SDK 자기 버전**: `SDK_VERSION`, `SDK_IDENTITY`(TypeScript), `aip_sdk.SDK_IDENTITY`(Python)가 노출되고 모든 요청의 `x-aip-sdk` 헤더로 간다. 서버는 로그와 진단에만 쓰며 거부하지 않는다([COMPATIBILITY](../COMPATIBILITY.md#sdk-버전-식별)). TypeScript의 `product/sdk/version.ts`는 `scripts/sync-version.mjs`가 쓴다.
 - **protocol 표지**: npm `package.json`의 `aip.protocol`, Python `aip_sdk.PROTOCOL`이 이 SDK의 protocol(`aip-protocol/1.0`)을 표시한다. 대응 표는 [COMPATIBILITY](../COMPATIBILITY.md)다.
 
 ## resource 독립 operation

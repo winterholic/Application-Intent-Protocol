@@ -11,6 +11,8 @@ license = "MIT"
 [features]
 default = []
 external-brokers = ["aip-execution/external-brokers"]
+# 시험용 서버 기동 helper(start*)와 테스트 DB 안전장치. 제품 그래프에는 들어가지 않는다.
+test-db = ["spike-v2-read/test-db"]
 
 [dependencies]
 aip-crypto = { path = "../../crates/aip-crypto" }
@@ -40,6 +42,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 aip-migrate = { path = "../../crates/aip-migrate" }
 aip-test-support = { path = "../../crates/aip-test-support", features = ["strict-db"] }
 aip-test-fault-proxy = { path = "../../crates/aip-test-fault-proxy" }
+spike-v6-transport = { path = ".", features = ["test-db"] }
 
 # 전체 DWARF 대신 줄 정보만 남겨 target 용량을 줄인다.
 [profile.dev]

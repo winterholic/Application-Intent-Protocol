@@ -3129,6 +3129,7 @@ dependencies = [
  "spike-v3-write",
  "spike-v4-worker",
  "spike-v5-sdk",
+ "spike-v6-transport",
  "tokio",
  "tokio-postgres",
  "tokio-tungstenite",
