@@ -11,7 +11,7 @@ use crate::codes::BLOCK_KEYS;
 /// `(block, key, shape, meaning)`.
 pub const NOTES: &[(&str, &str, &str, &str)] = &[
     ("선언", "enum", "enum Name { A, B }", "닫힌 값 집합. 값은 따옴표 없이 쓰고 DB에는 text CHECK로 저장된다"),
-    ("선언", "actor", "actor Resource", "호출자 행을 가리키는 resource. 조건식의 actor는 그 행이다. 정확히 하나"),
+    ("선언", "actor", "actor Resource", "호출자 행을 가리키는 resource. 조건식의 actor는 그 행이다. 정확히 하나이며 둘 이상이면 `DEF.MULTIPLE_ACTORS`"),
     ("선언", "predicate", "predicate name(p: Type, ...) = condition", "이름 붙인 재사용 조건. name(args)로 부르고 서로 순환 호출할 수 없다. 같은 resource의 native 정수 Id 참조끼리는 크기를 비교할 수 있으며 UUID·다른 identity namespace는 거부한다"),
     (
         "선언",
@@ -51,7 +51,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "resource",
         "transition",
         "transition name { from cond; to f = v, g = w; allow cond }  |  transition name { from cond; delete; allow cond }",
-        "상태 전이. from·allow와 to, patch 또는 delete가 필요하다. 숫자는 f = f + 1처럼만 바꾼다",
+        "상태 전이. from·allow는 항상 필수이고 to, patch, delete 중 하나가 필요하다. 숫자는 f = f + 1처럼만 바꾼다",
     ),
     ("resource", "unique", "unique a, b", "유일 제약"),
     (
@@ -97,8 +97,8 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     (
         "expose read",
         "traverse",
-        "traverse rel { select a }  |  traverse Child via field { select a; limit N }",
-        "참조를 따라 포함한다. 대상 resource의 expose select 안에서만",
+        "traverse rel { select a }  |  traverse name via Child.field { select a; limit N }",
+        "참조를 따라 포함한다. 대상 resource의 expose select 안에서만. 1:N은 `via Child.field`로 자식 resource와 그 안의 참조 필드를 함께 쓴다(`via field`만 쓰면 `DEF.TRAVERSE_VIA_FORM`)",
     ),
     ("expose read", "budget", "budget { rows N; depth N; deadline 2s; cost N }", "이 읽기를 루트로 부를 수 있게 하는 한도. 네 값이 모두 필요하다"),
     ("budget", "rows", "rows N", "한 번에 돌려줄 최대 행 수"),
@@ -135,7 +135,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     ("extension", "deadline", "deadline 2s", "실행 시간 한도"),
     ("extension", "internal", "internal", "write 확장을 서버 전용으로 표시"),
     ("extension", "implementation", "implementation \"module.function\"", "확장 모듈과 함수 이름"),
-    ("transition", "from", "from condition", "전이를 시작할 수 있는 행의 조건"),
+    ("transition", "from", "from condition", "전이를 시작할 수 있는 행의 조건. 필수다(patch만 있는 전이도 마찬가지이며 `DEF.MISSING_ITEM`). 어느 행에나 허용하려면 `from true`"),
     ("transition", "to", "to f = v, g = g + 1", "바뀌는 값. 대입은 쉼표로 구분한다(세미콜론은 `to`와 `from`·`allow` 같은 다른 항목 사이에만 쓴다)"),
     ("transition", "delete", "delete", "대상 행 물리 삭제. to·patch·expect·repeat unchanged와 함께 쓸 수 없다"),
     ("transition", "allow", "allow condition", "누가 부를 수 있는지"),
@@ -221,7 +221,8 @@ pub fn render_markdown() -> String {
          `Int(lo..hi)`의 양 끝은 포함되며 음수 경계도 쓸 수 있다(예: `Int(-1000..1000)`, `Int(-1000..-1)`). \
          범위는 `lo <= hi`여야 한다. 부호는 Int 범위에서만 허용하며 Text 길이·budget·Decimal 자릿수에는 허용하지 않는다. \
          기존 정수 토큰의 크기 한도는 유지한다. operation 입출력 범위는 음수도 JavaScript 안전 정수 영역 안이어야 한다. \
-         이 구문은 범위 선언이며 식의 음수 리터럴 문법을 추가하지 않는다.\n",
+         이 구문은 범위 선언이며 식의 음수 리터럴 문법을 추가하지 않는다.\n\n\
+         `Decimal(p,s)` 값은 따옴표 문자열 리터럴로 쓴다: `to total = \"0.00\"`, `price >= \"1.50\"`. 소수 자릿수는 `s` 이하, 정수부는 `p-s`자리 이하이고 앞자리 0(`01`)과 `+` 부호는 없다. 숫자 그대로 쓴 `0`이나 `0.00`은 Decimal 리터럴이 아니며 `DEF.BAD_VALUE`로 거부된다.\n",
     );
     out.push_str("\n## 작성 예 1: 읽기, 정책, 집계, 관계\n\n```aip\n");
     out.push_str(include_str!("../fixture/recruitment.aip"));

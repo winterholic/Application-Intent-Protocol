@@ -360,3 +360,89 @@ fn user_facing_diagnostics_do_not_mention_spike() {
         assert!(rendered.contains("지원하지 않") || rendered.contains("하나만"), "{what}가 거부되지 않았거나 다른 이유로 거부됨: {rendered}");
     }
 }
+
+const DECIMAL_BASE: &str = "actor Member\nresource Member { fields { id: Id; name: Text } }\nresource Invoice {\n  fields { id: Id; owner: Member; total: Decimal(10,2); paid: Bool }\n  rows read when owner = actor\n  transition reset { from FROM; to TO; allow owner = actor }\n  expose apply reset { target id; bulk maxRows 1 }\n}\n";
+
+fn decimal_sample(from: &str, to: &str) -> String {
+    DECIMAL_BASE.replace("FROM", from).replace("TO", to)
+}
+
+#[test]
+fn a_traverse_via_without_child_dot_field_shows_the_right_form() {
+    let registry = codes::lookup("DEF.TRAVERSE_VIA_FORM").expect("registered").example;
+    assert!(load_str(registry, Form::A).is_ok(), "정답 형태 `via Vote.record`는 통과");
+    for wrong in ["via record {", "via Vote {"] {
+        let src = sub(registry, "via Vote.record {", wrong);
+        let ds = diagnostics(&src, Form::A);
+        assert_eq!(ds.len(), 1, "{ds:?}");
+        assert_eq!(text(&ds[0], "code"), "DEF.TRAVERSE_VIA_FORM", "{wrong}: {ds:?}");
+        let message = text(&ds[0], "message");
+        assert!(message.contains("`Child.field`") && message.contains("traverse votes via Child."), "{message}");
+    }
+}
+
+#[test]
+fn the_card_writes_the_real_traverse_form() {
+    let card = spike_v1_fixture::syntax_card::render_markdown();
+    assert!(card.contains("traverse name via Child.field"), "문서는 via Child.field");
+    assert!(!card.contains("traverse Child via field"));
+}
+
+#[test]
+fn a_bare_number_for_a_decimal_names_the_quoted_literal() {
+    assert!(load_str(&decimal_sample("paid = false", "total = \"0.00\""), Form::A).is_ok(), "따옴표 문자열은 통과");
+    for (what, from, to) in [
+        ("정수", "paid = false", "total = 0"),
+        ("소수점 숫자", "paid = false", "total = 0.00"),
+        ("조건의 정수", "total > 0", "total = \"1.00\""),
+        ("조건의 소수점 숫자", "total > 0.50", "total = \"1.00\""),
+    ] {
+        let ds = diagnostics(&decimal_sample(from, to), Form::A);
+        assert_eq!(ds.len(), 1, "{what}: {ds:?}");
+        assert_eq!(text(&ds[0], "code"), "DEF.BAD_VALUE", "{what}: {ds:?}");
+        let message = text(&ds[0], "message");
+        assert!(message.contains("따옴표 문자열") && (message.contains("\"0.00\"") || message.contains("\"1.50\"")), "{what}: {message}");
+    }
+    let message = text(&diagnostics(&decimal_sample("paid = false", "total = 0"), Form::A)[0], "message").to_string();
+    assert!(message.contains("Decimal<10,2>") && message.contains("\"0.00\""), "자릿수에 맞는 예시: {message}");
+    let card = spike_v1_fixture::syntax_card::render_markdown();
+    assert!(card.contains("`Decimal(p,s)` 값은 따옴표 문자열 리터럴로 쓴다"));
+}
+
+#[test]
+fn a_transition_without_from_says_that_from_is_required() {
+    let patch_only = "actor Member\nresource Member { fields { id: Id } }\nresource Note {\n  fields { id: Id; owner: Member; title: Text }\n  rows read when owner = actor\n  transition edit { FROM allow owner = actor; patch title }\n  expose apply edit { target id; bulk maxRows 1 }\n}\n";
+    let with_from = patch_only.replace("FROM", "from true;");
+    assert!(load_str(&with_from, Form::A).is_ok(), "`from true`는 무조건 허용");
+    let ds = diagnostics(&patch_only.replace("FROM", ""), Form::A);
+    assert_eq!((ds.len(), text(&ds[0], "code")), (1, "DEF.MISSING_ITEM"), "{ds:?}");
+    let message = text(&ds[0], "message");
+    assert!(message.contains("`from`") && message.contains("필수") && message.contains("from true") && message.contains("`edit`"), "{message}");
+    assert!(!message.contains("`allow`("), "allow는 빠지지 않았다: {message}");
+    // allow와 본문이 빠진 경우도 무엇이 빠졌는지 가른다.
+    let ds = diagnostics("actor Member\nresource Member { fields { id: Id } }\nresource Note {\n  fields { id: Id; owner: Member }\n  rows read when owner = actor\n  transition edit { from true }\n}\n", Form::A);
+    let message = text(&ds[0], "message");
+    assert!(message.contains("`allow`") && message.contains("`to`, `patch`, `delete` 중 하나") && !message.contains("`from`("), "{message}");
+    // host 리터럴 형식도 같은 안내를 준다.
+    let ds = diagnostics(&sub(H_TS, "close: { from: \"status = PUBLISHED\", to:", "close: { to:"), Form::HTs);
+    let message = text(&ds[0], "message");
+    assert_eq!(text(&ds[0], "code"), "DEF.MISSING_ITEM");
+    assert!(message.contains("`from`") && message.contains("필수") && message.contains("`close`"), "{message}");
+    let card = spike_v1_fixture::syntax_card::render_markdown();
+    assert!(card.contains("필수다(patch만 있는 전이도 마찬가지이며") && card.contains("`from true`"));
+}
+
+#[test]
+fn a_second_actor_is_reported_alone_before_any_follow_on_error() {
+    let two = format!("actor Club\n{A}");
+    let ds = diagnostics(&two, Form::A);
+    assert_eq!(ds.len(), 1, "연쇄 오류 없이 하나: {ds:?}");
+    assert_eq!(text(&ds[0], "code"), "DEF.MULTIPLE_ACTORS");
+    let message = text(&ds[0], "message");
+    assert!(message.contains("정확히 하나") && message.contains("`Club`"), "{message}");
+    // 마지막 선언이 이기던 때는 첫 actor를 쓰는 정책이 줄줄이 실패했다. 한 개면 정상이다.
+    assert!(load_str(A, Form::A).is_ok());
+    let embedded = sub(E_TS, "aip`", "aip`\n  actor Club\n");
+    let ds = diagnostics(&embedded, Form::ETs);
+    assert_eq!((ds.len(), text(&ds[0], "code")), (1, "DEF.MULTIPLE_ACTORS"), "{ds:?}");
+}

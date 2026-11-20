@@ -297,8 +297,8 @@ pub static REGISTRY: &[Info] = &[
     i(
         "DEF.MISSING_ITEM",
         "a required part is missing",
-        "Some declarations have no safe default, so the definition must say the value: there is no unlimited bulk size, no implicit aggregate source access, no implicit actor. The message names the missing part.",
-        "Add the part the message names.",
+        "Some declarations have no safe default, so the definition must say the value: there is no unlimited bulk size, no implicit aggregate source access, no implicit actor. A `transition` always needs `from` and `allow` (even a patch-only one) and at least one of `to`, `patch`, `delete`; `from` never defaults to \"any row\". The message names the missing part.",
+        "Add the part the message names. For a transition that should be allowed on every row write `from true`.",
         concat!(
             base!(),
             "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  rows read when owner = actor\n  transition archive {\n    from body != \"\"\n    to body = \"\"\n    allow owner = actor\n  }\n  expose apply archive { target id; bulk maxRows 1 }\n}\n"
@@ -395,9 +395,12 @@ pub static REGISTRY: &[Info] = &[
     i(
         "DEF.BAD_VALUE",
         "a literal does not have the form of its type",
-        "A Url, Email, Time, Date or Decimal literal must be written in its canonical form.",
-        "Write the literal as the message says, for example an absolute https URL or an RFC 3339 time.",
-        "",
+        "A Url, Email, Time, Date or Decimal literal must be written in its canonical form. A Decimal literal is a quoted string with exactly the declared scale or fewer digits (`\"0.00\"`, `\"-12.5\"`); a bare number (`0`, `0.00`) is not a Decimal literal and is rejected with this code.",
+        "Write the literal as the message says, for example an absolute https URL, an RFC 3339 time or a quoted Decimal such as `\"0.00\"`.",
+        concat!(
+            base!(),
+            "resource Invoice {\n  fields { id: Id; owner: Member; total: Decimal(10,2); paid: Bool }\n  rows read when owner = actor\n  transition reset { from paid = false; to total = \"0.00\"; allow owner = actor }\n  expose apply reset { target id; bulk maxRows 1 }\n}\n"
+        ),
     ),
     i(
         "DEF.BAD_DECIMAL_TYPE",
@@ -591,6 +594,24 @@ pub static REGISTRY: &[Info] = &[
         "An invariant is a unique index; it can use the fields of the row and literals, not time, the actor or sub-queries.",
         "Make the condition use only fields of the row and literals.",
         "",
+    ),
+    i(
+        "DEF.MULTIPLE_ACTORS",
+        "more than one `actor` declaration",
+        "A definition names exactly one actor resource: the row of the caller that `actor` means in every condition. A second declaration used to replace the first silently, and every condition written for the first one then failed with unrelated field and type errors. The second declaration is now reported on its own, before those follow-on errors can arise.",
+        "Keep one `actor Resource` line. If two kinds of callers exist, model them as one resource (for example with a role field) and write the difference in the conditions.",
+        concat!(
+            "actor Member\nresource Member { fields { id: Id; admin: Bool } rows read when id = actor }\n"
+        ),
+    ),
+    i(
+        "DEF.TRAVERSE_VIA_FORM",
+        "`traverse ... via` is not written as `Child.field`",
+        "A one-to-many `traverse` names the child resource and the reference field in it that points back: `traverse votes via Vote.record { select id; limit 10 }`. `via record` (the field alone) and `via Vote` (the resource alone) are not accepted.",
+        "Write `via Child.field`, where `field` is the reference field of `Child` that points to this resource.",
+        concat!(
+            "actor Member\nresource Member { fields { id: Id } rows read when true }\nresource Record {\n  fields { id: Id; owner: Member }\n  rows read when owner = actor\n  expose read {\n    select id, owner\n    traverse votes via Vote.record { select id; limit 10 }\n    sort id\n    budget { rows 10; depth 2; deadline 2s; cost 100 }\n  }\n}\nresource Vote {\n  fields { id: Id; record: Record }\n  rows read when true\n  expose read { select id, record; sort id; budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"
+        ),
     ),
     i(
         "DEF.UNSUPPORTED",

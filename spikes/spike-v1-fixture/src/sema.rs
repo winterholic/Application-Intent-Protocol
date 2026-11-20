@@ -491,6 +491,14 @@ impl<'a> Ctx<'a> {
                 _ => {}
             }
         }
+        if let (Expr::Int(_), Some(TT { ty: Ty::Decimal(_, scale), .. })) = (e, want) {
+            let sample = if *scale == 0 { "0".to_string() } else { format!("0.{}", "0".repeat(usize::from(*scale))) };
+            return Err(Diag::new(
+                "DEF.BAD_VALUE",
+                format!("`{}` 값은 정수 리터럴이 아니라 따옴표 문자열로 씀(예: `\"{sample}\"`)", want.expect("matched").show()),
+                span_of(e),
+            ));
+        }
         if let (Expr::Path(segs, sp), Some(TT { ty: Ty::Enum(en), .. })) = (e, want) {
             if segs.len() == 1 {
                 match self.path(segs, *sp, sc) {

@@ -190,7 +190,18 @@ impl Parser {
                             self.expect_sym("}")?;
                             spec.enums.push(EnumDecl { name, variants, span: sp });
                         }
-                        "actor" => spec.actor = Some((self.ident()?, sp)),
+                        "actor" => {
+                            let name = self.ident()?;
+                            // 마지막 선언이 조용히 이기면 첫 actor를 쓴 정책들이 연쇄 오류가 된다. 원인인 중복을 먼저 알린다.
+                            if let Some((first, _)) = &spec.actor {
+                                return Err(Diag::new(
+                                    "DEF.MULTIPLE_ACTORS",
+                                    format!("actor는 정확히 하나만 선언함: `{first}`가 이미 actor인데 `actor {name}`이 또 있음. 호출자 행을 가리키는 resource 하나만 남긴다"),
+                                    sp,
+                                ));
+                            }
+                            spec.actor = Some((name, sp));
+                        }
                         "predicate" => {
                             let name = self.ident()?;
                             let params = self.params_paren()?;
@@ -620,7 +631,19 @@ impl Parser {
                         (Some(from), Some(allow)) if delete || !to.is_empty() || !patch.is_empty() => {
                             r.transitions.push(Transition { name, patch, expect, from, to, delete, allow, repeat, effects, span: sp })
                         }
-                        _ => return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 from/allow와 to, patch 또는 delete가 필요", sp)),
+                        (from, allow) => {
+                            let mut missing = vec![];
+                            if from.is_none() {
+                                missing.push("`from`(필수. 조건 없이 허용하려면 `from true`)");
+                            }
+                            if allow.is_none() {
+                                missing.push("`allow`(필수)");
+                            }
+                            if !(delete || !to.is_empty() || !patch.is_empty()) {
+                                missing.push("`to`, `patch`, `delete` 중 하나");
+                            }
+                            return Err(Diag::new("DEF.MISSING_ITEM", format!("transition `{name}`에 빠진 항목: {}. transition에는 from과 allow가 항상 필요하고 to, patch, delete 중 하나가 있어야 함", missing.join(", ")), sp));
+                        }
                     }
                 }
                 "unique" => r.uniques.push((self.ident_list()?, sp)),
@@ -740,6 +763,13 @@ impl Parser {
     /// `traverse <name> via <Child>.<field> { select ..; sort <f> [asc|desc]; limit <n> }` (via 이후부터).
     fn traverse_many(&mut self, name: String, span: Span) -> R<TraverseMany> {
         let child = self.ident()?;
+        if !self.is_sym(".") {
+            return Err(Diag::new(
+                "DEF.TRAVERSE_VIA_FORM",
+                format!("`traverse {name} via {child}`: via 뒤에는 자식 resource와 그 안의 참조 필드를 `Child.field`로 씀(예: `traverse {name} via Child.{child} {{ select a; limit 10 }}`). `via field`만 쓸 수 없음"),
+                self.span(),
+            ));
+        }
         self.expect_sym(".")?;
         let via = self.ident()?;
         let mut m = TraverseMany { name, child, via, select: vec![], sort: None, limit: None, span };
@@ -1055,6 +1085,11 @@ impl Parser {
                 self.expect_sym(")")?;
                 Ok(e)
             }
+            Tok::Int(_) if matches!(self.toks.get(self.pos + 1), Some(Token { tok: Tok::Sym("."), .. })) => Err(Diag::new(
+                "DEF.BAD_VALUE",
+                "소수점이 있는 숫자 리터럴은 없음. Decimal 값은 따옴표 문자열로 씀(예: `total = \"0.00\"`, `price >= \"1.50\"`)",
+                sp,
+            )),
             Tok::Int(n) => {
                 self.next();
                 self.note_expression_node()?;
