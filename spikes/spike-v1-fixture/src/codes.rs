@@ -600,18 +600,14 @@ pub static REGISTRY: &[Info] = &[
         "more than one `actor` declaration",
         "A definition names exactly one actor resource: the row of the caller that `actor` means in every condition. A second declaration used to replace the first silently, and every condition written for the first one then failed with unrelated field and type errors. The second declaration is now reported on its own, before those follow-on errors can arise.",
         "Keep one `actor Resource` line. If two kinds of callers exist, model them as one resource (for example with a role field) and write the difference in the conditions.",
-        concat!(
-            "actor Member\nresource Member { fields { id: Id; admin: Bool } rows read when id = actor }\n"
-        ),
+        "actor Member\nresource Member { fields { id: Id; admin: Bool } rows read when id = actor }\n",
     ),
     i(
         "DEF.TRAVERSE_VIA_FORM",
         "`traverse ... via` is not written as `Child.field`",
         "A one-to-many `traverse` names the child resource and the reference field in it that points back: `traverse votes via Vote.record { select id; limit 10 }`. `via record` (the field alone) and `via Vote` (the resource alone) are not accepted.",
         "Write `via Child.field`, where `field` is the reference field of `Child` that points to this resource.",
-        concat!(
-            "actor Member\nresource Member { fields { id: Id } rows read when true }\nresource Record {\n  fields { id: Id; owner: Member }\n  rows read when owner = actor\n  expose read {\n    select id, owner\n    traverse votes via Vote.record { select id; limit 10 }\n    sort id\n    budget { rows 10; depth 2; deadline 2s; cost 100 }\n  }\n}\nresource Vote {\n  fields { id: Id; record: Record }\n  rows read when true\n  expose read { select id, record; sort id; budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"
-        ),
+        "actor Member\nresource Member { fields { id: Id } rows read when true }\nresource Record {\n  fields { id: Id; owner: Member }\n  rows read when owner = actor\n  expose read {\n    select id, owner\n    traverse votes via Vote.record { select id; limit 10 }\n    sort id\n    budget { rows 10; depth 2; deadline 2s; cost 100 }\n  }\n}\nresource Vote {\n  fields { id: Id; record: Record }\n  rows read when true\n  expose read { select id, record; sort id; budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n",
     ),
     i(
         "DEF.UNSUPPORTED",
