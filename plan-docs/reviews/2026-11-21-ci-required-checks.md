@@ -11,10 +11,11 @@
 | Database contracts | main | [44763951372](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44763951372) | 성공 | postgres-runtime-role, mysql-and-mariadb-fences |
 | Linux worker jobs | main | [44763956990](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44763956990) | 성공 | `isolation::tests` 21 passed (§5) |
 | Deployment checks | main | [44763964359](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44763964359) | 성공 | |
-| Dependencies | main | [44763971217](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44763971217) | **실패** | chrono, chrono-tz unmaintained 권고(§4). 이 PR이 처리 |
-| AIP 1.0 release gate | main | [44763977523](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44763977523) | RELEASE_GATE_RESULT | |
+| Dependencies | main | [44763971217](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44763971217) | **실패** | chrono, chrono-tz unmaintained 권고(§4) |
+| Dependencies (수정 후) | 브랜치 | [44766846751](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44766846751) | 성공 | `Dependency check passed`, `No known vulnerabilities found`(pip-audit). main에서는 이 PR 병합 뒤 재실행 필요 |
+| AIP 1.0 release gate | main | [44763977523](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44763977523) | 성공 | `ALL STEPS PASSED for 723fb474ca7891180c87edfb08ed7a689e1b2001` |
 | FlaskBB remaining contracts | 브랜치 `ci/1.0-required-checks-20261121` | [44764251211](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44764251211) | 성공 | main에는 `workflow_dispatch`가 없어 이 PR에서 추가했고, 추가한 브랜치 ref에서 실행했다. 브랜치 트리는 main 723fb474에 CI·문서 변경만 얹은 것이다 |
-| FlaskBB PostOrder | 브랜치 `ci/1.0-required-checks-20261121` | [44764257315](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44764257315) | 성공 | 같은 이유 |
+| FlaskBB PostOrder | 브랜치 `ci/1.0-required-checks-20261121` | [44764257315](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44764257315) | 성공 | 같은 이유. joserfc pin 변경 뒤 `eeac61e8`에서 [44766850008](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/44766850008)로 다시 실행해 성공 |
 
 main에서 직접 돌리지 못한 두 개는 이 PR이 병합된 뒤 main에서 한 번 더 dispatch해야 "main에서" 확인된 것이 된다.
 
