@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { npmTarballName } from "./version.mjs";
 
 export class ManifestFailure extends Error {
   constructor(code, message, stage = "manifest") {
@@ -599,7 +600,7 @@ export async function loadAndValidateAppManifest(targetPath) {
       config: normalizedConfigTemplate || "config.example.json",
       extensions: normalizedExtensions ? "extensions/" : undefined,
       static: normalizedStaticAssets ? "static/" : undefined,
-      sdk: "sdk/aip-sdk-0.1.0.tgz",
+      sdk: `sdk/${npmTarballName()}`,
       checksums: "SHA256SUMS",
       appChecksums: "APP_SHA256SUMS",
     },

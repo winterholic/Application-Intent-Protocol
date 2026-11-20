@@ -102,7 +102,7 @@ HTTP를 직접 쓸 필요는 없다. TypeScript SDK는 생성한 binding으로 �
 ```sh
 node ../product/tools/package.mjs --out ./artifact --profile release    # SDK tarball과 실행 파일 묶음
 mkdir app && cd app && npm init -y >/dev/null && npm pkg set type=module >/dev/null
-npm install --offline --ignore-scripts ../artifact/sdk/aip-sdk-0.1.0.tgz
+npm install --offline --ignore-scripts ../artifact/sdk/aip-sdk-1.0.0.tgz
 cp ../binding.ts .
 ```
 

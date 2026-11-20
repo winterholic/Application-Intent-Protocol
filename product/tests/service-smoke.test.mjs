@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { npmTarballName, releaseConfig, workspaceVersion } from "../tools/version.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const productDir = resolve(testDir, "..");
@@ -31,7 +32,7 @@ test("the installed SDK completes authenticated reads, cache, writes and operati
     assert.equal(resolve(packageResult.out), outputDir);
 
     const binaryPath = join(outputDir, "bin", "aip");
-    const sdkPath = join(outputDir, "sdk", "aip-sdk-0.1.0.tgz");
+    const sdkPath = join(outputDir, "sdk", npmTarballName());
     const configPath = join(outputDir, "config.example.json");
     const definitionPath = join(outputDir, "example.aip");
     const nodeExtension = join(outputDir, "extensions", "event.mjs");
@@ -103,7 +104,7 @@ test("the installed SDK completes authenticated reads, cache, writes and operati
     assert.equal(smoke.status, 0, `relocated artifact smoke failed:\n${smoke.stdout}\n${smoke.stderr}`);
     const report = JSON.parse(smoke.stdout);
     assert.equal(report.ok, true);
-    assert.deepEqual(report.package, { name: "@aip/sdk", version: "0.1.0", packed: true, installed: true });
+    assert.deepEqual(report.package, { name: releaseConfig().npmPackage, version: workspaceVersion(), packed: true, installed: true });
     assert.deepEqual(report.wires.map((item) => item.wire), ["decimal", "safe"]);
     for (const item of report.wires) {
       assert.deepEqual(item.results, {

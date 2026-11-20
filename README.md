@@ -17,6 +17,7 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 - [제품 서비스](crates/aip-service/README.md): check/gen/init/adopt/migrate/serve/principal, 운영 설정과 실행 절차.
 - [운영 인증](crates/aip-auth/README.md): RS256 API access token, 공개 JWKS, 서버의 지속 actor 연결과 폐기.
 - [일반 마이그레이션](crates/aip-migrate/README.md): 변경 계획, 정형 backfill/convert, 실제 DDL 트랜잭션과 배포 저널. [기존 데이터 이관](crates/aip-migrate/ADOPTION.md)은 prototype 구조 marker를 검증한다.
+- [설치 안내](product/INSTALL.md)와 [호환 표](COMPATIBILITY.md), [1.0.0 릴리스 노트 초안](product/RELEASE-NOTES-1.0.0.md): CLI 아카이브, npm, PyPI 설치와 지원 플랫폼, glibc 하한, protocol 대응. 공개 전 초안이며 패키지 이름은 소유자 승인 대상이다.
 - [설치 SDK](product/SDK.md): 기존 TypeScript 엔진을 `@aip/sdk`로 offline 설치하고 생성 binding과 함께 사용한다.
 - [검증 절차와 보완 목록](product/VALIDATION.md): 새 checkout 준비, 반복 검증 명령, 자동 검증 범위와 남은 확인 항목.
 - [1.0 릴리스 게이트 증거](product/RELEASE-GATE.md): 새 clone 전체 회귀, 묶음 smoke, 이전 릴리스 업그레이드·롤백 실행 기록과 한계.

@@ -165,7 +165,7 @@ AIP는 Spring의 Gradle/JAR/WAR 배포 모델처럼 임의의 AIP 앱을 선언 
     "config": "config.example.json",
     "extensions": "extensions/",
     "static": "static/",
-    "sdk": "sdk/aip-sdk-0.1.0.tgz",
+    "sdk": "sdk/aip-sdk-1.0.0.tgz",
     "checksums": "SHA256SUMS",
     "appChecksums": "APP_SHA256SUMS"
   }
@@ -212,7 +212,7 @@ node product/tools/package.mjs --manifest /path/to/my-app/aip.app.json --out /tm
 cd /path/to/moved-bundle
 shasum -a 256 -c SHA256SUMS
 ./bin/aip service check app/path/to/definition.aip
-npm install ./sdk/aip-sdk-0.1.0.tgz
+npm install ./sdk/aip-sdk-1.0.0.tgz
 ```
 
 패키징은 `cargo build --locked -p aip-cli --bin aip --release`(debug는 `--release` 생략)를 실행하고, 요구 feature를 추가한다. 현재 Rust host target만 빌드하며 `targets`가 지정되면 host가 그 목록에 있어야 한다. 다른 OS/CPU를 나열하는 것만으로 교차 컴파일하지 않는다. 지원하지 않는 feature는 `UNSUPPORTED_FEATURE`, 대상 불일치는 `TARGET_MISMATCH`로 빌드 전에 거부한다.
@@ -223,7 +223,7 @@ npm install ./sdk/aip-sdk-0.1.0.tgz
 | --- | --- |
 | `bin/aip` | 해당 profile/feature로 다시 빌드한 엔진 |
 | `app/` | 앱 루트 상대 경로를 유지한 manifest·정의·확장 디렉터리 전체·허용 정적 파일·설정 템플릿·의존성 명세 |
-| `sdk/aip-sdk-0.1.0.tgz`, `bindings.ts` | 공식 SDK tarball과 앱 정의에서 생성한 decimal wire TypeScript binding |
+| `sdk/aip-sdk-1.0.0.tgz`, `bindings.ts` | 공식 SDK tarball과 앱 정의에서 생성한 decimal wire TypeScript binding |
 | `APP_CONTRACT.json` | 입력 계약 및 실제 배포 파일 위치를 나타내는 `packageLayout` |
 | `BUILD.json` | 앱/엔진 버전, profile, Rust host/toolchain, 선택 feature, source revision/dirty 여부, binary·계약 digest |
 | `SHA256SUMS`, `APP_SHA256SUMS` | 각각 전체 배포 파일과 `app/` 파일의 SHA-256 |

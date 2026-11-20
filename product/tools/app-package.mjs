@@ -5,8 +5,12 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAndValidateAppManifest, ManifestFailure } from "./app-manifest.mjs";
+import { npmTarballName, releaseConfig, workspaceVersion } from "./version.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const releaseNames = releaseConfig();
+const releaseVersion = workspaceVersion();
+const sdkTarball = npmTarballName(releaseNames.npmPackage, releaseVersion);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const fail = (code, message, stage = "app-package") => { throw new ManifestFailure(code, message, stage); };
 const portable = path => path.split(sep).join("/");
@@ -148,14 +152,14 @@ export async function packageApplication({ manifest, out, profile = "release" },
     await mkdir(tarDir);
     run(process.execPath, [join(root, "product/tools/build-sdk.mjs"), "--out", sdk], "sdk-build", root);
     const packs = JSON.parse(run("npm", ["pack", "--offline", "--ignore-scripts", "--json", "--cache", join(scratch, "npm-cache"), "--pack-destination", tarDir, sdk], "sdk-pack", root));
-    if (packs.length !== 1 || packs[0].name !== "@aip/sdk" || packs[0].version !== "0.1.0" || basename(packs[0].filename) !== packs[0].filename) fail("PACKAGE_IDENTITY", "SDK tarball 식별자가 다릅니다", "sdk-pack");
-    await write("sdk/aip-sdk-0.1.0.tgz", await readFile(join(tarDir, packs[0].filename)));
+    if (packs.length !== 1 || packs[0].name !== releaseNames.npmPackage || packs[0].version !== releaseVersion || basename(packs[0].filename) !== packs[0].filename) fail("PACKAGE_IDENTITY", "SDK tarball 식별자가 다릅니다", "sdk-pack");
+    await write(`sdk/${sdkTarball}`, await readFile(join(tarDir, packs[0].filename)));
     await write("bin/aip", await readFile(binary));
     await chmod(join(out, "bin/aip"), 0o755);
     await write("tools/app-deploy.mjs", await readFile(join(root, "product/tools/app-deploy.mjs")));
     for (const name of ["Dockerfile", "compose.yaml", "aip-app.service"]) await write(`deploy/${name}`, await readFile(join(root, "product/deploy", name)));
     await write(".dockerignore", await readFile(join(root, "product/deploy/dockerignore")));
-    run(join(out, "bin/aip"), ["service", "gen", join(out, "app", contract.app.definition), "--wire", "decimal", "--out", join(out, "bindings.ts"), "--sdk-import", "@aip/sdk"], "bindings", out);
+    run(join(out, "bin/aip"), ["service", "gen", join(out, "app", contract.app.definition), "--wire", "decimal", "--out", join(out, "bindings.ts"), "--sdk-import", releaseNames.npmPackage], "bindings", out);
     if (!(await stat(join(out, "bindings.ts"))).isFile()) fail("BINDINGS_MISSING", "binding 산출물이 없습니다", "bindings");
     packagedFiles.add("bindings.ts");
     const finalContract = await loadAndValidateAppManifest(input);
@@ -168,17 +172,17 @@ export async function packageApplication({ manifest, out, profile = "release" },
       config: contract.app.config_template ? `app/${contract.app.config_template}` : "config.example.json",
       extensions: contract.app.extensions ? `app/${contract.app.extensions.directory}` : undefined,
       static: contract.app.static_assets ? "app/" : undefined,
-      sdk: "sdk/aip-sdk-0.1.0.tgz", bindings: "bindings.ts", deploy: "tools/app-deploy.mjs", checksums: "SHA256SUMS", appChecksums: "APP_SHA256SUMS",
+      sdk: `sdk/${sdkTarball}`, bindings: "bindings.ts", deploy: "tools/app-deploy.mjs", checksums: "SHA256SUMS", appChecksums: "APP_SHA256SUMS",
     };
     if (!contract.app.config_template) await write("config.example.json", JSON.stringify(safeConfig(contract.app.name), null, 2) + "\n");
     const json = value => JSON.stringify(value, null, 2) + "\n";
     await write("APP_CONTRACT.json", json(contract));
     let revision = null, dirty = null;
     try { revision = run("git", ["rev-parse", "HEAD"], "source-revision", root).trim(); dirty = run("git", ["status", "--porcelain"], "source-status", root).trim().length > 0; } catch { /* Git metadata is optional; source hashes remain authoritative. */ }
-    await write("BUILD.json", json({ format: 1, app: { name: contract.app.name, version: contract.app.version }, target, profile, features, engine_version: engineVersion, rustc: rustc.trim(), source_revision: revision, source_dirty: dirty, contract_digest: contract.contractDigest, binary_sha256: binaryDigest, sdk: "@aip/sdk@0.1.0", dependency_mode: "locked-manifests" }));
+    await write("BUILD.json", json({ format: 1, app: { name: contract.app.name, version: contract.app.version }, target, profile, features, engine_version: engineVersion, rustc: rustc.trim(), source_revision: revision, source_dirty: dirty, contract_digest: contract.contractDigest, binary_sha256: binaryDigest, sdk: `${releaseNames.npmPackage}@${releaseVersion}`, dependency_mode: "locked-manifests" }));
     await write("SOURCE_SHA256SUMS", [...sources].map(([name, digest]) => `${digest}  ${name}`).join("\n") + "\n");
     await write("APP_SHA256SUMS", contract.files.map(file => `${file.sha256}  app/${file.path}`).join("\n") + "\n");
-    await write("README.md", `# ${contract.app.name} ${contract.app.version}\n\n대상: ${target}, ${profile}, ${engineVersion}.\n\n원본 checkout 없이 이 디렉터리 전체를 이동하십시오.\n\n\`shasum -a 256 -c SHA256SUMS\`\n\`./bin/aip service check ${contract.packageLayout.definition}\`\n\`npm install /absolute/path/to/bundle/sdk/aip-sdk-0.1.0.tgz\`\n\nSDK는 별도 client 프로젝트 디렉터리에서 설치하십시오. 이 패키지는 불변으로 유지하며 내부에 node_modules·운영 설정·로그를 추가하지 않습니다.\n\n설정 예제: ${contract.packageLayout.config}. 비밀·JWKS는 배포 환경에서 주입합니다.\n확장 의존성은 고정 명세만 포함합니다. Node는 해당 package.json 디렉터리에서 npm ci --ignore-scripts, Python은 고정 requirements를 별도 환경에 설치하십시오. Node/Python runtime과 OS 격리 도구는 대상 서버에 필요합니다. 정적 파일은 포함만 하며 HTTP 서빙 설정은 별도입니다.\n\nSOURCE_SHA256SUMS는 source 입력 해시이며 원본 checkout에서만 검사할 수 있습니다. BUILD.json의 commit은 참고이며 서명된 provenance나 바이트 단위 재현성 보증이 아닙니다. 설치·기동·변경배포 도구: node tools/app-deploy.mjs install --out <새경로>. check/preflight/init/plan/migrate/serve/health/ready를 제공합니다. 운영 설정은 패키지 밖에 두고 --config로 지정하십시오. serve는 foreground이며 SIGTERM으로 종료합니다. migrate는 검토한 --digest를 요구합니다. 사용법: https://github.com/winterholic/Application-Intent-Protocol/blob/main/product/APP-DEPLOY.md\n`);
+    await write("README.md", `# ${contract.app.name} ${contract.app.version}\n\n대상: ${target}, ${profile}, ${engineVersion}.\n\n원본 checkout 없이 이 디렉터리 전체를 이동하십시오.\n\n\`shasum -a 256 -c SHA256SUMS\`\n\`./bin/aip service check ${contract.packageLayout.definition}\`\n\`npm install /absolute/path/to/bundle/sdk/${sdkTarball}\`\n\nSDK는 별도 client 프로젝트 디렉터리에서 설치하십시오. 이 패키지는 불변으로 유지하며 내부에 node_modules·운영 설정·로그를 추가하지 않습니다.\n\n설정 예제: ${contract.packageLayout.config}. 비밀·JWKS는 배포 환경에서 주입합니다.\n확장 의존성은 고정 명세만 포함합니다. Node는 해당 package.json 디렉터리에서 npm ci --ignore-scripts, Python은 고정 requirements를 별도 환경에 설치하십시오. Node/Python runtime과 OS 격리 도구는 대상 서버에 필요합니다. 정적 파일은 포함만 하며 HTTP 서빙 설정은 별도입니다.\n\nSOURCE_SHA256SUMS는 source 입력 해시이며 원본 checkout에서만 검사할 수 있습니다. BUILD.json의 commit은 참고이며 서명된 provenance나 바이트 단위 재현성 보증이 아닙니다. 설치·기동·변경배포 도구: node tools/app-deploy.mjs install --out <새경로>. check/preflight/init/plan/migrate/serve/health/ready를 제공합니다. 운영 설정은 패키지 밖에 두고 --config로 지정하십시오. serve는 foreground이며 SIGTERM으로 종료합니다. migrate는 검토한 --digest를 요구합니다. 사용법: https://github.com/winterholic/Application-Intent-Protocol/blob/main/product/APP-DEPLOY.md\n`);
     const sums = [];
     for (const name of [...packagedFiles].sort()) sums.push(`${hash(await readFile(join(out, name)))}  ${name}`);
     await writeFile(join(out, "SHA256SUMS"), sums.join("\n") + "\n", { flag: "wx" });

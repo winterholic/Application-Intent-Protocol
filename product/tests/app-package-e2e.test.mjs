@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { npmTarballName, releaseConfig, workspaceVersion } from "../tools/version.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const packager = join(root, "product/tools/package.mjs");
@@ -57,7 +58,7 @@ test("release CLI packages two apps; moved packages check, regenerate and instal
       const consumer = join(moved, "consumer");
       mkdirSync(consumer);
       writeFileSync(join(consumer, "package.json"), '{"type":"module","private":true}\n');
-      execute("npm", ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--cache", join(base, "npm-cache"), "--prefix", consumer, resolve(moved, "sdk/aip-sdk-0.1.0.tgz")], moved);
+      execute("npm", ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--cache", join(base, "npm-cache"), "--prefix", consumer, resolve(moved, "sdk", npmTarballName())], moved);
       writeFileSync(join(consumer, "binding.ts"), readFileSync(join(moved, "bindings.ts")));
       execute(join(root, "spikes/spike-0-ts/node_modules/.bin/tsc"), ["--noEmit", "--strict", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--target", "ES2022", join(consumer, "binding.ts")], consumer);
       execute(process.execPath, ["--input-type=module", "-e", 'await import("@aip/sdk");'], consumer);

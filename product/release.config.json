@@ -1,0 +1,8 @@
+{
+  "npmPackage": "@aip/sdk",
+  "pypiDistribution": "application-intent-protocol-sdk",
+  "pythonImport": "aip_sdk",
+  "repository": "https://github.com/winterholic/Application-Intent-Protocol",
+  "namesApprovedByOwner": false,
+  "note": "패키지 이름의 단일 설정 지점이다. 기본값은 잠정이며 npm scope와 PyPI 이름의 최종 확정은 소유자 승인 대상이다(plan-docs/reviews/2026-11-21-1.0-distribution-plan.md §1, §2). 환경 변수 AIP_NPM_PACKAGE, AIP_PYPI_PACKAGE가 이 값을 덮어쓴다."
+}
