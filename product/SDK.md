@@ -1,13 +1,13 @@
 # `@aip/sdk` 배포 빌드 계약
 
-이 문서는 운영 앱이 TypeScript SDK를 로컬 tarball로 설치할 수 있게 하는 빌더의 검수 기준이다. 공개 registry publish는 범위에 포함하지 않는다. 패키지 API는 기존 typed transport와 cache를 그대로 재사용하며 새 API 복제본이나 spike 소스 이동을 만들지 않는다.
+이 문서는 운영 앱이 TypeScript SDK를 tarball로 설치할 수 있게 하는 빌더의 검수 기준이다. 빌더는 `npm publish`를 실행하지 않는다. 공개 registry publish는 태그가 push됐을 때 `release.yml`만 하며 소유자 승인(environment `release`)을 거친다([INSTALL](INSTALL.md)). 패키지 이름과 버전의 원천은 아래 "버전과 이름의 원천"에 있다. 패키지 API는 기존 typed transport와 cache를 그대로 재사용하며 새 API 복제본이나 spike 소스 이동을 만들지 않는다.
 
 ## 8개 검수 관문
 
 1. **공개 API**: `product/sdk/index.ts`는 `connect`, `WriteUnsettled`, generic SDK 타입과 durable contract 타입을 공개한다. `connect`는 base URL, 운영 JWT access token, 생성된 binding, 선택적 fetch 구현을 공통 typed transport에 전달한다. Durable descriptor가 있을 때 `jobs`, `files`, `events` client를 붙인다.
 2. **동일 구현 재사용**: 빌드 입력은 제품 entry와 기존 spike의 TypeScript 의존 closure다. SDK 로직을 복사하거나 spike 원본을 이동·수정하지 않는다.
 3. **완전한 산출물**: 로컬 TypeScript compiler로 JavaScript와 declaration을 함께 만들고, package에 필요한 runtime/type 의존 closure를 모두 담는다. 산출물의 상대 import가 package 밖으로 나가지 않는다.
-4. **설치 가능한 패키지 메타데이터**: tarball은 이름 `@aip/sdk`, 버전 `0.1.0`, ESM 형식이며 root `exports`가 JavaScript와 TypeScript declaration을 가리킨다. 빌드는 `npm publish`를 실행하지 않는다.
+4. **설치 가능한 패키지 메타데이터**: tarball은 이름 `@aip/sdk`(기본값, 설정으로 바뀜), 버전은 Cargo workspace 버전(1.0.0), ESM 형식이며 root `exports`가 JavaScript와 TypeScript declaration을 가리킨다. `private`이 아니고 `license`, `repository`, `files`, `README.md`, `LICENSE`를 갖춰 publish할 수 있다. tarball에 spike 내부 경로(`spikes/...`)는 없다: 빌더가 컴파일 산출물을 `product/sdk/`(진입점), `product/sdk/engine/`, `product/sdk/transport/`로 재배치하고 상대 import를 다시 쓴다. 빌드는 `npm publish`를 실행하지 않는다.
 5. **오프라인 소비자**: `npm pack --offline` 후 별도 소비자 디렉터리에서 `npm install --offline`이 가능하고, 설치된 root export를 Node가 import할 수 있다.
 6. **운영 인증과 전송 통합**: ephemeral RSA key로 만든 JWT access token을 설치 SDK가 전달하고 서비스가 검증한다. 테스트는 세션 확인, typed read, 두 번째 read의 공통 cache hit, typed write, write 뒤 cache 무효화, 멱등 키 재생을 실제 service endpoint로 확인한다.
 7. **엄격한 타입 공개**: 설치된 package declaration으로 NodeNext strict consumer가 통과하고, 계약에 없는 field/enum value를 사용하면 음성 대조 typecheck가 실패한다.
@@ -21,7 +21,7 @@
 
 ```sh
 npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
-node product/tools/build-sdk.mjs --out /tmp/aip-sdk-0.1.0
+node product/tools/build-sdk.mjs --out /tmp/aip-sdk-pkg
 node --test product/tests/sdk-package.test.mjs
 node --test product/tests/package-boundaries.test.mjs
 cargo build -p aip-cli --locked
@@ -38,6 +38,12 @@ node product/tools/package.mjs
 패키징은 시작 시 소스 목록과 해시, 기존 실행 파일의 해시를 기록한다. SDK 빌드와 파일 복사 뒤 입력을 다시 확인하고, 복사한 실행 파일·예시의 해시도 비교한다. 입력 추가·삭제·수정이나 실행 파일 교체를 감지하면 변경 경로와 `SOURCE_CHANGED`를 반환하고 이번 실행의 출력을 정리한다. 필수 소스나 Cargo manifest가 없으면 SDK 빌드 전에 `SOURCE_MISSING`을 반환한다. `package-boundaries.test.mjs`는 독립 임시 저장소에서 이 경계를 재현하며 공용 DB와 `target/`를 사용하지 않는다.
 
 이 검사는 workspace 잠금이나 빌드 provenance를 제공하지 않는다. 검사 사이에서 변경됐다가 원복된 소스는 감지하지 못할 수 있으며, 기존 실행 파일이 현재 소스에서 빌드됐다는 보증은 별도 검증이 필요하다.
+
+## 버전과 이름의 원천
+
+- **버전**: 루트 `Cargo.toml`의 `[workspace.package] version` 하나가 원천이다. Core(`aip --version`), TypeScript SDK, Python SDK가 같은 숫자를 쓴다(lockstep). `product/tools/version.mjs`가 이 값을 읽고, TypeScript 빌드, 패키징, smoke, 시험이 모두 여기서 파생한다. Python은 `pyproject.toml`과 `aip_sdk.__version__`에 값을 써야 하므로 `node scripts/sync-version.mjs`가 복사하고, `node scripts/check-versions.mjs [--tag vX.Y.Z]`가 어긋나면 실패한다. 사전 릴리스는 `1.0.0-rc.N`이며 Python에서는 PEP 440 `1.0.0rcN`으로 변환한다.
+- **이름**: `product/release.config.json` 한 곳에서만 정한다. 기본값은 npm `@aip/sdk`, PyPI `application-intent-protocol-sdk`, Python import `aip_sdk`다. 환경 변수 `AIP_NPM_PACKAGE`, `AIP_PYPI_PACKAGE`가 시험용으로 덮어쓴다. 이름을 바꾸면 `node scripts/sync-version.mjs`로 Python 파일에 반영한다. **최종 이름은 소유자 승인 대상이며 현재 값은 잠정이다**(npm `@aip` scope의 소유는 확인되지 않았고, PyPI 이름은 미등록 상태일 뿐 선점하지 않았다). 생성 binding의 `--sdk-import` 기본값(`@aip/sdk`)을 바꾸려면 호출 때 `--sdk-import <새 이름>`을 준다. 패키징 도구와 smoke는 설정 이름을 넘긴다.
+- **protocol 표지**: npm `package.json`의 `aip.protocol`, Python `aip_sdk.PROTOCOL`이 이 SDK의 protocol(`aip-protocol/1.0`)을 표시한다. 대응 표는 [COMPATIBILITY](../COMPATIBILITY.md)다.
 
 ## resource 독립 operation
 
@@ -234,7 +240,7 @@ The official TypeScript SDK exposes the same `client.session()` check and return
 | 타입 | `service gen --lang python`은 read Row/ReadResult, apply 입력·helper, create 값·helper, 쓰기 확장 입력·출력·helper, operation 입력·출력·helper 및 JobState/JobRun 타입을 생성한다. read query와 일반 `Client.operation()`은 동적 API다. 생성된 `call_*`와 capability를 발견한 동적 `Client.operation()`은 공통 scalar descriptor로 반환 객체의 키·타입·범위를 검사한 뒤 TypedDict 또는 dict로 돌려준다. nullable 출력도 키가 있고 값이 None이다. 계약 불일치는 `CLIENT.PROTOCOL_ERROR`이며 값 자체는 오류에 싣지 않는다 |
 | 캐시 | read 캐시가 없다 |
 
-설치는 `pip install ./product/python`이다(PyPI 게시는 아직 없음). 새 binding과 같은 revision의 SDK를 함께 설치한다. 클린 wheel 빌드·설치와 타입 검사는 `python3 -W error::ResourceWarning -m unittest product.tests.python_sdk_test`, 실제 서비스 검증은 `node --test product/tests/service-smoke.test.mjs`다. 타입 검사는 mypy 2.4.0 또는 uv가 필요하며 도구가 없으면 실패한다. smoke는 TypeScript 소비자가 커밋한 쓰기를 Python 소비자가 같은 key로 재생하는지까지 확인한다.
+배포 이름은 `application-intent-protocol-sdk`, import 이름은 `aip_sdk`다(둘은 다르다). 소스에서는 `pip install ./product/python`으로 설치하고, 공개 후에는 `pip install application-intent-protocol-sdk`다([INSTALL](INSTALL.md)). PyPI의 `aip-sdk`는 이 프로젝트와 무관한 제3자 패키지이므로 쓰지 않는다. 최종 배포 이름은 소유자 승인 대상이다. wheel에는 `LICENSE`와 README(long description)가 들어간다. 새 binding과 같은 revision의 SDK를 함께 설치한다. 클린 wheel 빌드·설치와 타입 검사는 `python3 -W error::ResourceWarning -m unittest product.tests.python_sdk_test`, 실제 서비스 검증은 `node --test product/tests/service-smoke.test.mjs`다. 타입 검사는 mypy 2.4.0 또는 uv가 필요하며 도구가 없으면 실패한다. smoke는 TypeScript 소비자가 커밋한 쓰기를 Python 소비자가 같은 key로 재생하는지까지 확인한다.
 
 
 ## UUID Id

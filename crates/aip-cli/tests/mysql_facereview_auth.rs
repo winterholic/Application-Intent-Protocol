@@ -774,7 +774,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     assert!(packed.status.success(), "SDK pack failed: {}", String::from_utf8_lossy(&packed.stderr));
     let install = StdCommand::new("npm")
         .args(["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund"])
-        .arg(sdk_dir.join("aip-sdk-0.1.0.tgz"))
+        .arg(sdk_dir.join(format!("aip-sdk-{}.tgz", env!("CARGO_PKG_VERSION"))))
         .current_dir(&consumer)
         .output()
         .expect("start the offline @aip/sdk install");

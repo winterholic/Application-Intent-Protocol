@@ -18,8 +18,12 @@ import urllib.request
 import uuid
 from typing import Any, Callable, Iterator, Optional
 
-__all__ = ["connect", "Client", "AipError", "ExtensionRejected", "WriteUnsettled", "ScopeConflict", "extension_rejection", "validate_operation_output"]
-__version__ = "0.1.0"
+__all__ = [
+    "connect", "Client", "AipError", "ExtensionRejected", "WriteUnsettled", "ScopeConflict", "extension_rejection", "validate_operation_output", "PROTOCOL",
+]
+__version__ = "1.0.0"
+# 이 SDK가 말하는 wire protocol. 호환 경계는 major다. scripts/sync-version.mjs가 crates/aip-contract의 PROTOCOL_VERSION에서 쓴다.
+PROTOCOL = "aip-protocol/1.0"
 
 _FINGERPRINT = re.compile(r"^[a-f0-9]{64}$")
 _ACTOR_ID = re.compile(r"^(0|[1-9][0-9]*|-[1-9][0-9]*|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")

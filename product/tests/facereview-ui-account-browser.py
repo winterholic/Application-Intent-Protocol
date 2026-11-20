@@ -20,9 +20,12 @@ from playwright.sync_api import expect, sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
+    FIRST_MAIN_EXTENSIONS,
     body_failure_reason,
     api_completion_diagnostics,
+    extension_request_evidence,
     wait_for_api_completion,
+    wait_for_expected_extensions,
     member_signup_evidence,
     member_tutorial_evidence,
     safe_browser_failure_type,
@@ -57,6 +60,7 @@ def main() -> int:
     pending = {}
     started = set()
     request_phases = {}
+    first_main_extensions = set()
     finished = set()
     failures = []
     errors = []
@@ -75,6 +79,14 @@ def main() -> int:
         if urlsplit(request.url).port == api_port:
             started.add(request)
             request_phases[request] = stage
+            if stage == "tutorial_action" and urlsplit(request.url).path == "/extension":
+                try:
+                    payload = request.post_data_json
+                except Exception:
+                    payload = None
+                name = extension_request_evidence(payload).get("extension")
+                if name:
+                    first_main_extensions.add(name)
 
     def capture(response):
         if urlsplit(response.url).port != api_port:
@@ -234,8 +246,11 @@ def main() -> int:
                     expect(page.get_by_role("button", name="마이페이지로 이동", exact=True)).to_be_visible()
                     ui["main_visible"] = True
                     page.wait_for_load_state("networkidle")
-                    # SPA navigation can retain cached networkidle. Drain the first
-                    # main page before reload can discard its response events.
+                    # SPA navigation retains the previous document's networkidle, and an
+                    # empty started == finished also holds before the main queries run.
+                    # Wait until the page has issued them, then drain, so the reload
+                    # cannot discard their response events.
+                    wait_for_expected_extensions(page, first_main_extensions, FIRST_MAIN_EXTENSIONS, failures)
                     wait_for_api_completion(page, started, finished, pending, failures)
                     stage = "reload_main"
                     page.reload(wait_until="domcontentloaded")

@@ -2,6 +2,7 @@
 import http.server
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import threading
@@ -694,11 +695,15 @@ class PackageSmokeTest(unittest.TestCase):
         import shutil, subprocess, sys, tempfile, zipfile
         repo_root = Path(__file__).resolve().parent.parent.parent
         pkg_dir = repo_root / "product" / "python"
+        # `python -m build product/python` leaves egg-info/build/dist in the source directory (they are git-ignored).
+        # That residue is not what this test is about: copy the sources without it, and only fail on leaks the test itself causes.
+        residue_names = ("*.egg-info", "build", "dist", "__pycache__")
+        residue_before = sorted(path.name for pattern in residue_names for path in pkg_dir.glob(pattern))
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Build wheel from an isolated source copy so source tree remains untouched
             isolated_src = Path(tmpdir) / "pkg_src"
-            shutil.copytree(pkg_dir, isolated_src)
+            shutil.copytree(pkg_dir, isolated_src, ignore=shutil.ignore_patterns(*residue_names))
 
             venv_dir = Path(tmpdir) / "venv"
             subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, capture_output=True)
@@ -738,6 +743,18 @@ class PackageSmokeTest(unittest.TestCase):
                 f"py.typed marker must be present in wheel contents: {wheel_members}",
             )
 
+            # The published wheel carries the license and the README as long description
+            license_members = [m for m in wheel_members if m.endswith(".dist-info/licenses/LICENSE")]
+            self.assertEqual(len(license_members), 1, f"LICENSE must be packaged in the wheel: {wheel_members}")
+            metadata_member = next(m for m in wheel_members if m.endswith(".dist-info/METADATA"))
+            with zipfile.ZipFile(wheel_file) as zf:
+                metadata = zf.read(metadata_member).decode("utf-8")
+            self.assertIn("License-Expression: MIT", metadata)
+            self.assertIn("Description-Content-Type: text/markdown", metadata)
+            self.assertIn("# AIP Python SDK", metadata, "README must be the long description")
+            distribution = re.search(r'^name = "([^"]+)"', (pkg_dir / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
+            self.assertIn(f"Name: {distribution}", metadata)
+
             # Install wheel into clean venv without index access
             subprocess.run(
                 [str(venv_pip), "install", "--no-index", str(wheel_file)],
@@ -748,7 +765,13 @@ class PackageSmokeTest(unittest.TestCase):
             # Test import from outside repository directory
             outside_dir = Path(tmpdir) / "outside"
             outside_dir.mkdir()
-            script = "import aip_sdk\nassert hasattr(aip_sdk, 'connect')\nassert hasattr(aip_sdk, 'Client')\nprint('smoke_ok', aip_sdk.__file__)"
+            script = (
+                "import aip_sdk, importlib.metadata as metadata\n"
+                "assert hasattr(aip_sdk, 'connect')\nassert hasattr(aip_sdk, 'Client')\n"
+                f"assert metadata.version({distribution!r}) == aip_sdk.__version__, (metadata.version({distribution!r}), aip_sdk.__version__)\n"
+                "assert aip_sdk.PROTOCOL.startswith('aip-protocol/'), aip_sdk.PROTOCOL\n"
+                "print('smoke_ok', aip_sdk.__file__)"
+            )
             result = subprocess.run(
                 [str(venv_python), "-c", script],
                 cwd=str(outside_dir),
@@ -759,7 +782,6 @@ class PackageSmokeTest(unittest.TestCase):
             self.assertIn("smoke_ok", result.stdout)
             self.assertNotIn(str(repo_root / "product" / "python"), result.stdout)
 
-        # Verify no build or egg-info directories leaked into source tree
-        self.assertFalse((pkg_dir / "build").exists(), "build directory should not leak into product/python")
-        self.assertFalse((pkg_dir / "dist").exists(), "dist directory should not leak into product/python")
-        self.assertEqual(list(pkg_dir.glob("*.egg-info")), [], "egg-info should not leak into product/python")
+        # Verify the test itself leaked no build or egg-info directories into the source tree
+        residue_after = sorted(path.name for pattern in residue_names for path in pkg_dir.glob(pattern))
+        self.assertEqual(residue_after, residue_before, "the package build must not add build, dist or egg-info to product/python")

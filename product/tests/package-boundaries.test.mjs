@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { npmTarballName, releaseConfig, workspaceVersion } from "../tools/version.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const sourceDirectories = [
@@ -27,7 +28,7 @@ function fixture(t, mutation = "none", realBuilder = false) {
       if (existsSync(join(repo, directory, part))) copy(join(directory, part));
     }
   }
-  for (const name of ["Cargo.toml", "Cargo.lock", "prototype/src/schema_catalog.sql", "prototype/example", "product/sdk", "product/tools"]) copy(name);
+  for (const name of ["Cargo.toml", "Cargo.lock", "prototype/src/schema_catalog.sql", "prototype/example", "product/sdk", "product/tools", "product/release.config.json", "LICENSE"]) copy(name);
   mkdirSync(join(root, "target/debug"), { recursive: true });
   writeFileSync(join(root, "target/debug/aip"), "fixture executable\n");
   chmodSync(join(root, "target/debug/aip"), 0o755);
@@ -41,7 +42,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const out = process.argv[3];
 mkdirSync(out);
-writeFileSync(join(out, "package.json"), JSON.stringify({ name: "@aip/sdk", version: "0.1.0", files: ["index.js"] }));
+writeFileSync(join(out, "package.json"), JSON.stringify({ name: ${JSON.stringify(releaseConfig().npmPackage)}, version: ${JSON.stringify(workspaceVersion())}, files: ["index.js"] }));
 writeFileSync(join(out, "index.js"), "export const source = " + JSON.stringify(readFileSync("product/sdk/index.ts", "utf8")) + ";\\n");
 const mutation = ${JSON.stringify(mutation)};
 if (mutation === "edit") writeFileSync("product/sdk/index.ts", "export const changed = true;\\n");
@@ -78,7 +79,7 @@ test("unchanged inputs produce a real SDK tarball and verifiable bundle manifest
   assertManifest(root, "SOURCE_SHA256SUMS", root);
   assert.ok(readFileSync(join(root, "bundle/SOURCE_SHA256SUMS"), "utf8").includes("  crates/aip-execution/src/jobs.rs\n"));
   assertManifest(root, "SHA256SUMS", join(root, "bundle"));
-  const tar = spawnSync("tar", ["-tzf", join(root, "bundle/sdk/aip-sdk-0.1.0.tgz")], { encoding: "utf8" });
+  const tar = spawnSync("tar", ["-tzf", join(root, "bundle/sdk", npmTarballName())], { encoding: "utf8" });
   assert.equal(tar.status, 0, tar.stderr);
   assert.ok(tar.stdout.includes("package/product/sdk/index.js"));
   assert.ok(tar.stdout.includes("package/product/sdk/index.d.ts"));

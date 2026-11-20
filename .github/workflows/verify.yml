@@ -231,8 +231,9 @@ jobs:
           test "$(git -C "$ui" rev-parse HEAD)" = "2e7c021fa5abebd72278d841b8066a33d45cfbb3"
           node product/tools/build-sdk.mjs --out "$sdk"
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"
+          sdk_tarball="$(node product/tools/version.mjs npm-tarball)"
           AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-ui-overlay.sh "$ui" "$definition"
-          (cd "$ui" && node .yarn/releases/yarn-4.12.0.cjs add "@aip/sdk@file:$RUNNER_TEMP/aip-sdk-0.1.0.tgz")
+          (cd "$ui" && node .yarn/releases/yarn-4.12.0.cjs add "@aip/sdk@file:$RUNNER_TEMP/$sdk_tarball")
           python3 -m venv "$RUNNER_TEMP/aip-browser"
           "$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0
           "$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium
@@ -255,6 +256,7 @@ jobs:
           pinned=ab0386c878a5ba5c7c079a262b987c10d211d22d
           node product/tools/build-sdk.mjs --out "$sdk"
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"
+          sdk_tarball="$(node product/tools/version.mjs npm-tarball)"
           git clone --quiet --filter=blob:none --no-checkout --depth=1 \
             https://github.com/winterholic/new-facereview-admin-front.git "$admin"
           git -C "$admin" fetch --quiet --depth=1 origin "$pinned"
@@ -263,13 +265,23 @@ jobs:
           AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-admin-ui-overlay.sh "$admin" "$definition"
           cd "$admin"
           npm ci --ignore-scripts --no-audit --no-fund
-          npm install --ignore-scripts --no-audit --no-fund "$RUNNER_TEMP/aip-sdk-0.1.0.tgz"
+          npm install --ignore-scripts --no-audit --no-fund "$RUNNER_TEMP/$sdk_tarball"
           # The pinned admin UI's own build (tsc -b && vite build) against the generated binding and the installed SDK.
           npx tsc -b
           VITE_AIP_URL=http://127.0.0.1:1 npx vite build
           python3 -m venv "$RUNNER_TEMP/aip-browser"
           "$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0
           "$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium
+      - name: Verify FaceReview browser harness regressions
+        if: ${{ !inputs.admin_metrics_diagnostic }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "FaceReview browser harness regressions"
+          "$RUNNER_TEMP/aip-browser/bin/python" -m unittest \
+            product.tests.test_facereview_ui_browser_evidence \
+            product.tests.test_facereview_first_main_browser
       - name: Verify real HTTP to Node and Python workers to MySQL
         env:
           AIP_E2E_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}

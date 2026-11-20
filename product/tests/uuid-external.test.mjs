@@ -8,6 +8,7 @@ import {createInterface} from 'node:readline';
 import {once} from 'node:events';
 import {generateKeyPairSync,sign,randomUUID,createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
+import {npmTarballName} from '../tools/version.mjs';
 import {requireTestDatabase,withDatabase,withUser} from '../test-support/postgres-guard.mjs';
 const root=resolve(import.meta.dirname,'../..');
 const cli=join(root,'target/debug/aip');
@@ -46,7 +47,7 @@ GRANT USAGE ON SCHEMA ${source} TO ${role},${adopter}; GRANT SELECT ON ALL TABLE
   const sdkDir=join(temp,'sdk');run(process.execPath,['product/tools/build-sdk.mjs','--out',sdkDir]);
   const consumer=join(temp,'consumer');mkdirSync(consumer);writeFileSync(join(consumer,'package.json'),'{"type":"module"}');
   run('npm',['pack','--offline','--pack-destination',consumer,sdkDir],{npm_config_cache:join(temp,'npm-cache')},consumer);
-  run('npm',['install','--offline','--ignore-scripts','--no-audit','--no-fund',join(consumer,'aip-sdk-0.1.0.tgz')],{npm_config_cache:join(temp,'npm-cache')},consumer);
+  run('npm',['install','--offline','--ignore-scripts','--no-audit','--no-fund',join(consumer,npmTarballName())],{npm_config_cache:join(temp,'npm-cache')},consumer);
   const {connect}=await import(pathToFileURL(join(consumer,'node_modules/@aip/sdk/product/sdk/index.js')).href);
   for (const wire of ['decimal','safe']) {
    const schema=`aip_uuid_external_${wire}`;

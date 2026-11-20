@@ -6,12 +6,16 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAndValidateAppManifest, ManifestFailure } from "./app-manifest.mjs";
 import { packageApplication } from "./app-package.mjs";
+import { npmTarballName, releaseConfig, workspaceVersion } from "./version.mjs";
 
 const productDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoDir = resolve(productDir, "..");
+const releaseNames = releaseConfig();
+const releaseVersion = workspaceVersion();
+const sdkTarball = npmTarballName(releaseNames.npmPackage, releaseVersion);
 const artifactNames = [
   "bin/aip", "config.example.json", "example.aip", "extensions/event.mjs", "extensions/event.py",
-  "README.md", "sdk/aip-sdk-0.1.0.tgz", "SOURCE_SHA256SUMS",
+  "README.md", `sdk/${sdkTarball}`, "SOURCE_SHA256SUMS",
 ];
 const manifestFiles = [
   "Cargo.toml", "Cargo.lock",
@@ -20,7 +24,7 @@ const manifestFiles = [
   "spikes/spike-v1-fixture", "spikes/spike-v2-read", "spikes/spike-v3-write", "spikes/spike-v4-worker",
   "spikes/spike-v5-sdk", "spikes/spike-v6-transport", "spikes/spike-v11-dev-checks",
   "prototype/src/schema_catalog.sql",
-  "product/sdk/index.ts", "product/tools/build-sdk.mjs", "product/tools/package.mjs", "product/tools/app-manifest.mjs", "product/tools/app-package.mjs", "product/tools/smoke.mjs",
+  "product/sdk/index.ts", "product/sdk/README.md", "product/release.config.json", "LICENSE", "product/tools/version.mjs", "product/tools/build-sdk.mjs", "product/tools/package.mjs", "product/tools/app-manifest.mjs", "product/tools/app-package.mjs", "product/tools/smoke.mjs",
   "prototype/example/app.aip", "prototype/example/extensions/event.mjs", "prototype/example/extensions/event.py",
 ];
 
@@ -76,7 +80,7 @@ function packageReadme() {
 ## 파일
 
 - \`bin/aip\`: 패키징 시점의 저장소 \`target/<profile>/aip\`(기본 debug, \`--profile release\`는 release 빌드)에서 복사한 로컬 빌드 실행 파일
-- \`sdk/aip-sdk-0.1.0.tgz\`: 로컬 TypeScript compiler로 만든 설치 가능한 \`@aip/sdk@0.1.0\` tarball
+- \`sdk/${sdkTarball}\`: 로컬 TypeScript compiler로 만든 설치 가능한 \`${releaseNames.npmPackage}@${releaseVersion}\` tarball
 - \`example.aip\`: 제품 service에서 검증할 수 있는 호출자 정의 예시
 - \`extensions/event.mjs\`, \`extensions/event.py\`: 정본 예제의 Node와 Python Event.confirm 구현
 - \`config.example.json\`: issuer, schema, origin, JWKS 경로가 예시값인 비밀 없는 설정
@@ -85,9 +89,9 @@ function packageReadme() {
 
 ## 확인과 사용
 
-\`shasum -a 256 -c SHA256SUMS\`로 파일을 확인하고, 앱 프로젝트에서 \`npm install <이 디렉터리>/sdk/aip-sdk-0.1.0.tgz\`로 SDK를 설치합니다.
+\`shasum -a 256 -c SHA256SUMS\`로 파일을 확인하고, 앱 프로젝트에서 \`npm install <이 디렉터리>/sdk/${sdkTarball}\`로 SDK를 설치합니다.
 
-\`./bin/aip service check example.aip\`로 정의를 확인하고, \`./bin/aip service gen example.aip --wire decimal --out bindings.ts --sdk-import @aip/sdk\`로 TypeScript binding을 생성할 수 있습니다. 배포 전에는 예시 설정의 schema, DB 환경 변수, issuer, audience, JWKS와 허용 origin을 운영 값으로 채우십시오.
+\`./bin/aip service check example.aip\`로 정의를 확인하고, \`./bin/aip service gen example.aip --wire decimal --out bindings.ts --sdk-import ${releaseNames.npmPackage}\`로 TypeScript binding을 생성할 수 있습니다. 배포 전에는 예시 설정의 schema, DB 환경 변수, issuer, audience, JWKS와 허용 origin을 운영 값으로 채우십시오.
 
 기본 설정은 worker를 사용하지 않습니다. \`Event.confirm\`을 활성화하려면 \`workers.directory\`를 \`./extensions\`로, \`workers.language\`를 \`node\` 또는 \`python\`으로, \`workers.enable_writes\`를 \`true\`로 설정합니다. Node에는 Node.js, Python에는 Python 3가 필요합니다. extension 기본 격리는 \`auto\`입니다. macOS는 \`sandbox-exec\` 기반 \`MacSandbox\`로 네트워크·파일 쓰기·사용자 디렉터리 읽기·프로세스 생성을 차단하며(네트워크만 차단하는 \`MacNetDeny\`도 선택 가능), Linux는 Bubblewrap으로 지정한 runtime/extension/dependency 경로를 읽기 전용으로 노출합니다. 필요한 격리 도구가 없으면 실행을 거부합니다. 신뢰한 extension source와 고정된 dependency를 사용하십시오.
 
@@ -157,8 +161,8 @@ async function packageArtifacts({ out, profile }) {
     } catch {
       throw new PackageFailure("BAD_PACK_OUTPUT", "npm pack 결과 JSON을 읽지 못했습니다", "sdk-pack");
     }
-    if (packed.length !== 1 || packed[0].name !== "@aip/sdk" || packed[0].version !== "0.1.0") {
-      throw new PackageFailure("PACKAGE_IDENTITY", "SDK tarball이 @aip/sdk@0.1.0이 아닙니다", "sdk-pack");
+    if (packed.length !== 1 || packed[0].name !== releaseNames.npmPackage || packed[0].version !== releaseVersion) {
+      throw new PackageFailure("PACKAGE_IDENTITY", `SDK tarball이 ${releaseNames.npmPackage}@${releaseVersion}이 아닙니다`, "sdk-pack");
     }
 
     await mkdir(join(out, "bin"), { recursive: true });
@@ -166,7 +170,7 @@ async function packageArtifacts({ out, profile }) {
     await mkdir(join(out, "extensions"), { recursive: true });
     await copyFile(binary, join(out, "bin", "aip"));
     await chmod(join(out, "bin", "aip"), 0o755);
-    await copyFile(join(packDir, packed[0].filename), join(out, "sdk", "aip-sdk-0.1.0.tgz"));
+    await copyFile(join(packDir, packed[0].filename), join(out, "sdk", sdkTarball));
     await copyFile(definition, join(out, "example.aip"));
     await copyFile(nodeExtension, join(out, "extensions", "event.mjs"));
     await copyFile(pythonExtension, join(out, "extensions", "event.py"));
@@ -227,7 +231,8 @@ async function verifyInputs(inputs, out, binaryName) {
 
 async function collectManifestSources() {
   const files = new Set(["Cargo.toml", "Cargo.lock", "prototype/src/schema_catalog.sql"]);
-  const directories = manifestFiles.filter((name) => !name.endsWith(".toml") && !name.endsWith(".lock") && !name.endsWith(".sql"));
+  const plainFile = (name) => /\.(?:toml|lock|sql|json|md)$/u.test(name) || name === "LICENSE";
+  const directories = manifestFiles.filter((name) => !plainFile(name));
   for (const entry of directories) {
     const path = join(repoDir, entry);
     const info = await stat(path).catch(() => undefined);
@@ -246,7 +251,7 @@ async function collectManifestSources() {
     }
     files.add(cargoName);
   }
-  for (const entry of manifestFiles.filter((name) => name.endsWith(".aip") || name.endsWith(".mjs") || name.endsWith(".py") || name.endsWith(".ts"))) {
+  for (const entry of manifestFiles.filter((name) => plainFile(name) || name.endsWith(".aip") || name.endsWith(".mjs") || name.endsWith(".py") || name.endsWith(".ts"))) {
     files.add(entry);
   }
   return [...files].sort();
