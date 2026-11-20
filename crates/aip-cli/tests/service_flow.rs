@@ -819,6 +819,50 @@ async fn service_policy_aggregate_noninterference_http_postgres() {
     }
 }
 
+/// 감사 2026-11-21 §6.2: 원본 Vote에 `rows read`가 있고 where 없는 `callerFilter read` count를 두면, 수정 전에는 기본 check가 통과했고
+/// 다른 사용자의 숨은 행 값을 `filter amount eq`로 한 값씩 셀 수 있었다. 지금은 정의 검사가 거부한다. DB는 쓰지 않는다.
+#[tokio::test]
+async fn service_check_rejects_the_caller_filter_count_oracle_of_the_audit_repro() {
+    const ORACLE: &str = "  aggregate oracleCount: Int { source Vote; sourceAccess publicVotes(actor); groupKey record; callerFilter read; rowOutput none; release count }\n  expose aggregate oracleCount\n";
+    let dir = std::env::temp_dir().join(format!("aip-oracle-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let check = |name: &str, source: String| {
+        let file = dir.join(name);
+        std::fs::write(&file, source).unwrap();
+        let file = file.to_string_lossy().into_owned();
+        async move {
+            let output = Command::new(env!("CARGO_BIN_EXE_aip")).args(["service", "check", &file]).output().await.unwrap();
+            let body = if output.status.success() { &output.stdout } else { &output.stderr };
+            (output.status.success(), serde_json::from_slice::<Value>(body).unwrap())
+        }
+    };
+    let with_line =
+        |line: &str| SERVICE_AGGREGATE_APP.replacen("  expose aggregate ownVoteCount\n", &format!("{line}  expose aggregate ownVoteCount\n"), 1);
+
+    // 변경 전 정의: 오류 없이 통과하고 where 없는 공개 count 경고는 publicVoteCount 하나뿐이다(--dev-checks 없이).
+    let (ok, base) = check("base.aip", SERVICE_AGGREGATE_APP.to_string()).await;
+    assert!(ok, "{base}");
+    let advisories: Vec<_> =
+        base["advisories"].as_array().unwrap().iter().map(|a| (a["code"].as_str().unwrap(), a["message"].as_str().unwrap())).collect();
+    assert_eq!(advisories.len(), 1, "{base}");
+    assert_eq!(advisories[0].0, "DEF.ADVISORY_PUBLIC_COUNT");
+    assert!(advisories[0].1.contains("publicVoteCount"), "{base}");
+
+    let (ok, rejected) = check("oracle.aip", with_line(ORACLE)).await;
+    assert!(!ok, "오라클 정의는 기본 check에서 거부되어야 함: {rejected}");
+    let diagnostics = rejected["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{rejected}");
+    assert_eq!(diagnostics[0]["code"], "DEF.CALLER_FILTER_POLICY_REQUIRED", "{rejected}");
+    assert!(diagnostics[0]["message"].as_str().unwrap().contains("oracleCount"), "{rejected}");
+
+    // Vote의 정책(`owner = actor`)을 where에 적으면 같은 정의가 통과하고 경고도 없다.
+    let guarded = ORACLE.replace("groupKey record;", "groupKey record; where owner = actor;");
+    let (ok, accepted) = check("guarded.aip", with_line(&guarded)).await;
+    assert!(ok, "{accepted}");
+    assert_eq!(accepted["advisories"].as_array().unwrap().len(), 1, "oracleCount는 where가 있어 경고 대상이 아님: {accepted}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 async fn read_policy_pages(fixture: &PolicyHttpFixture) -> (Vec<Value>, Vec<Value>) {
     let mut offsets = Vec::new();
     for offset in 0..=3 {

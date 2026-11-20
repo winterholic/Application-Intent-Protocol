@@ -58,7 +58,9 @@ async fn optional_advice_and_authority_claims_in_docs_cannot_widen_access() {
                     continue;
                 }
             };
-            if artifact.advisories.len() != usize::from(enabled) {
+            // 공개 count 경고는 옵션과 무관하게 항상 하나 나온다(fixture의 bookmarkCount). 개발 조언만 옵션을 따른다.
+            let dev_advisories = artifact.advisories.iter().filter(|a| a.code != "DEF.ADVISORY_PUBLIC_COUNT").count();
+            if dev_advisories != usize::from(enabled) {
                 failures.push(format!("검사 옵션이 적용되지 않음 enabled={enabled}"));
             }
             if digest(&artifact.output.execution) != digest(&baseline.execution) {

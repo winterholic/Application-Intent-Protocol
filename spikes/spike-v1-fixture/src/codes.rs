@@ -297,8 +297,8 @@ pub static REGISTRY: &[Info] = &[
     i(
         "DEF.MISSING_ITEM",
         "a required part is missing",
-        "Some declarations have no safe default, so the definition must say the value: there is no unlimited bulk size, no implicit aggregate source access, no implicit actor. The message names the missing part.",
-        "Add the part the message names.",
+        "Some declarations have no safe default, so the definition must say the value: there is no unlimited bulk size, no implicit aggregate source access, no implicit actor. A `transition` always needs `from` and `allow` (even a patch-only one) and at least one of `to`, `patch`, `delete`; `from` never defaults to \"any row\". The message names the missing part.",
+        "Add the part the message names. For a transition that should be allowed on every row write `from true`.",
         concat!(
             base!(),
             "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  rows read when owner = actor\n  transition archive {\n    from body != \"\"\n    to body = \"\"\n    allow owner = actor\n  }\n  expose apply archive { target id; bulk maxRows 1 }\n}\n"
@@ -395,9 +395,12 @@ pub static REGISTRY: &[Info] = &[
     i(
         "DEF.BAD_VALUE",
         "a literal does not have the form of its type",
-        "A Url, Email, Time, Date or Decimal literal must be written in its canonical form.",
-        "Write the literal as the message says, for example an absolute https URL or an RFC 3339 time.",
-        "",
+        "A Url, Email, Time, Date or Decimal literal must be written in its canonical form. A Decimal literal is a quoted string with exactly the declared scale or fewer digits (`\"0.00\"`, `\"-12.5\"`); a bare number (`0`, `0.00`) is not a Decimal literal and is rejected with this code.",
+        "Write the literal as the message says, for example an absolute https URL, an RFC 3339 time or a quoted Decimal such as `\"0.00\"`.",
+        concat!(
+            base!(),
+            "resource Invoice {\n  fields { id: Id; owner: Member; total: Decimal(10,2); paid: Bool }\n  rows read when owner = actor\n  transition reset { from paid = false; to total = \"0.00\"; allow owner = actor }\n  expose apply reset { target id; bulk maxRows 1 }\n}\n"
+        ),
     ),
     i(
         "DEF.BAD_DECIMAL_TYPE",
@@ -593,6 +596,20 @@ pub static REGISTRY: &[Info] = &[
         "",
     ),
     i(
+        "DEF.MULTIPLE_ACTORS",
+        "more than one `actor` declaration",
+        "A definition names exactly one actor resource: the row of the caller that `actor` means in every condition. A second declaration used to replace the first silently, and every condition written for the first one then failed with unrelated field and type errors. The second declaration is now reported on its own, before those follow-on errors can arise.",
+        "Keep one `actor Resource` line. If two kinds of callers exist, model them as one resource (for example with a role field) and write the difference in the conditions.",
+        "actor Member\nresource Member { fields { id: Id; admin: Bool } rows read when id = actor }\n",
+    ),
+    i(
+        "DEF.TRAVERSE_VIA_FORM",
+        "`traverse ... via` is not written as `Child.field`",
+        "A one-to-many `traverse` names the child resource and the reference field in it that points back: `traverse votes via Vote.record { select id; limit 10 }`. `via record` (the field alone) and `via Vote` (the resource alone) are not accepted.",
+        "Write `via Child.field`, where `field` is the reference field of `Child` that points to this resource.",
+        "actor Member\nresource Member { fields { id: Id } rows read when true }\nresource Record {\n  fields { id: Id; owner: Member }\n  rows read when owner = actor\n  expose read {\n    select id, owner\n    traverse votes via Vote.record { select id; limit 10 }\n    sort id\n    budget { rows 10; depth 2; deadline 2s; cost 100 }\n  }\n}\nresource Vote {\n  fields { id: Id; record: Record }\n  rows read when true\n  expose read { select id, record; sort id; budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n",
+    ),
+    i(
         "DEF.UNSUPPORTED",
         "a form that the product does not support yet",
         "The construct is recognised but not executable. The message says which part and what is supported instead.",
@@ -633,10 +650,17 @@ pub static REGISTRY: &[Info] = &[
         "",
     ),
     i(
-        "DEF.ADVISORY_CALLER_FILTER_POLICY",
-        "a caller-filtered aggregate omits its source row policy (advisory)",
-        "Not an error: the definition is accepted. A standalone aggregate does not inherit the source resource's `rows read` policy. With `callerFilter read` and no aggregate `where`, the count may reveal whether rows hidden from the caller match a supplied filter.",
-        "Repeat the intended row policy in the aggregate's `where`.",
+        "DEF.CALLER_FILTER_POLICY_REQUIRED",
+        "a caller-filtered aggregate does not require its source row policy",
+        "A `count` does not apply the source resource's `rows read` policy. With `callerFilter read` the caller's filter is added to the aggregate's own `where`, so a caller could count the rows that match a value in a field of rows it cannot read, one value at a time. When the source has a `rows read` policy, the aggregate's `where` must therefore imply that policy: the whole policy, or one branch of a policy written as `A or B`, appears as an AND term of `where`, written the same way. Before 1.0 this was only the advisory `DEF.ADVISORY_CALLER_FILTER_POLICY` under `--dev-checks`, and only when `where` was missing.",
+        "Repeat the source's `rows read` condition in the aggregate's `where`, alone or as an AND term (`where owner = actor and amount > 0`). When the policy is `A or B`, `where B` is enough. Or use `callerFilter none`.",
+        "actor Member\naccess allMembers(a: Member) = true\nresource Member {\n  fields { id: Uuid; owner: Member; name: Text(1..100) }\n  rows read when owner = actor\n  aggregate nameCount: Int {\n    source Member\n    sourceAccess allMembers(actor)\n    where owner = actor\n    callerFilter read\n    rowOutput none\n    release count\n  }\n  expose aggregate nameCount\n}\n",
+    ),
+    i(
+        "DEF.ADVISORY_PUBLIC_COUNT",
+        "a count without `where` is a public count (advisory)",
+        "Not an error: the definition is accepted and the response value is unchanged. `release count` counts the rows that `sourceAccess` and `where` select and does not apply the source's `rows read` policy. Without `where` it also counts rows the caller cannot read, and the value changes when hidden rows are added. `sum`, `min` and `max` do apply `rows read`. This advisory is reported by every `aip service check`, with or without `--dev-checks`.",
+        "If the broad count is intended, keep it and treat the number as public. Otherwise add the intended population to `where` (for example the source's `rows read` condition). See \"공개 count 계약\" in spec/definition-syntax.md and product/SDK.md.",
         "",
     ),
 ];

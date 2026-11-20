@@ -8,7 +8,8 @@ const A: &str = include_str!("../../spike-v1-fixture/fixture/recruitment.aip");
 
 fn advisories(src: &str, dev_checks: bool) -> Vec<(String, String)> {
     let checked = load_checked(src, Form::A, &json!({"devChecks": dev_checks})).expect("the definition is valid");
-    checked.advisories.iter().map(|a| (a.code.to_string(), a.anchor.clone())).collect()
+    // 공개 count 경고는 옵션과 무관하게 항상 나오므로(tests/public_count.rs) 개발 조언만 센다.
+    checked.advisories.iter().filter(|a| a.code != "DEF.ADVISORY_PUBLIC_COUNT").map(|a| (a.code.to_string(), a.anchor.clone())).collect()
 }
 
 #[test]

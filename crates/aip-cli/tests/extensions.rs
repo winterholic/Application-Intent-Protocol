@@ -77,32 +77,74 @@ fn service_commands_name_the_poc_extension() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
-#[test]
-fn service_check_surfaces_the_caller_filter_policy_advisory() {
-    let source = r#"
-        actor Member
-        access allMembers(a: Member) = true
-        resource Member {
-          fields { id: Uuid; owner: Member; name: Text(1..100) }
-          rows read when owner = actor
-          aggregate nameCount: Int {
-            source Member
-            sourceAccess allMembers(actor)
-            callerFilter read
-            rowOutput none
-            release count
-          }
-          expose aggregate nameCount
-        }
-    "#;
-    let file = temp_file("caller-filter.aip", source);
-    let out = aip(&["service", "check", &file.to_string_lossy(), "--dev-checks"]);
+const COUNT_DEFINITION: &str = r#"
+    actor Member
+    access allMembers(a: Member) = true
+    resource Member {
+      fields { id: Uuid; owner: Member; name: Text(1..100) }
+      rows read when owner = actor
+      aggregate nameCount: Int {
+        source Member
+        sourceAccess allMembers(actor)
+        callerFilter read
+        rowOutput none
+        release count
+      }
+      expose aggregate nameCount
+    }
+"#;
+
+fn check_definition(name: &str, source: &str, args: &[&str]) -> (bool, Value) {
+    let file = temp_file(name, source);
+    let mut command = vec!["service", "check"];
+    let path = file.to_string_lossy().into_owned();
+    command.push(&path);
+    command.extend_from_slice(args);
+    let out = aip(&command);
     std::fs::remove_dir_all(file.parent().expect("dir")).ok();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let result: Value = serde_json::from_slice(&out.stdout).expect("service check JSON result");
-    let has_caller_filter_advisory =
-        result["advisories"].as_array().into_iter().flatten().any(|advisory| advisory["code"] == "DEF.ADVISORY_CALLER_FILTER_POLICY");
-    assert!(has_caller_filter_advisory, "{result}");
+    let body = if out.status.success() { &out.stdout } else { &out.stderr };
+    (out.status.success(), serde_json::from_slice(body).unwrap_or_else(|e| panic!("service check JSON: {e}: {}", String::from_utf8_lossy(body))))
+}
+
+fn diagnostic_codes(result: &Value) -> Vec<&str> {
+    result["diagnostics"].as_array().into_iter().flatten().filter_map(|d| d["code"].as_str()).collect()
+}
+
+fn advisory_codes(result: &Value) -> Vec<&str> {
+    result["advisories"].as_array().into_iter().flatten().filter_map(|a| a["code"].as_str()).collect()
+}
+
+#[test]
+fn service_check_rejects_the_caller_filter_count_oracle_with_or_without_dev_checks() {
+    for args in [&[][..], &["--dev-checks"][..]] {
+        let (ok, result) = check_definition("oracle.aip", COUNT_DEFINITION, args);
+        assert!(!ok, "{args:?}: {result}");
+        assert_eq!(diagnostic_codes(&result), ["DEF.CALLER_FILTER_POLICY_REQUIRED"], "{result}");
+    }
+    let closed = COUNT_DEFINITION.replace("callerFilter read", "where owner = actor\n        callerFilter read");
+    let (ok, result) = check_definition("closed.aip", &closed, &[]);
+    assert!(ok && advisory_codes(&result).is_empty(), "{result}");
+}
+
+#[test]
+fn service_check_reports_the_public_count_without_dev_checks_and_keeps_it_a_warning() {
+    let public = COUNT_DEFINITION.replace("callerFilter read", "callerFilter none");
+    for args in [&[][..], &["--dev-checks"][..]] {
+        let (ok, result) = check_definition("public.aip", &public, args);
+        assert!(ok, "공개 count는 오류가 아니다: {result}");
+        assert_eq!(advisory_codes(&result), ["DEF.ADVISORY_PUBLIC_COUNT"], "{args:?}: {result}");
+        assert!(result["advisories"][0]["message"].as_str().is_some_and(|m| m.contains("nameCount")), "{result}");
+    }
+}
+
+#[test]
+fn service_check_does_not_mention_spike_for_an_unsupported_caller_filter() {
+    let bad = COUNT_DEFINITION.replace("callerFilter read", "callerFilter bad");
+    let (ok, result) = check_definition("bad-filter.aip", &bad, &[]);
+    assert!(!ok);
+    let message = result["diagnostics"][0]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("callerFilter bad") && message.contains("허용: none, read"), "{result}");
+    assert!(!message.to_lowercase().contains("spike"), "{message}");
 }
 
 fn files(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) {

@@ -20,6 +20,8 @@ resource Note {
 }
 ```
 
+`transition`에는 `patch`만 있어도 `from`과 `allow`가 항상 필수이며 빠지면 `DEF.MISSING_ITEM`이다. `from`을 생략해 모든 행을 허용하는 기본값은 없다. 조건 없이 허용하려면 `from true`를 쓴다.
+
 `patch`에 없는 필드는 호출자가 수정할 수 없다. 필드별 타입·Text 길이(Unicode 코드 포인트)·Int 범위·Email·Date·Time·Url·Enum·정밀 Decimal은 기존 `fields` 선언에서 얻는다. Ref 수정은 생성과 같은 대상 행 가시성을 확인한다. Id·Ref 입력은 설정된 Id wire를 사용하며 JSON 값은 SQL 매개변수로 전달한다.
 
 ```ts
