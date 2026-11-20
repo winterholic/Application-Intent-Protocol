@@ -1,0 +1,81 @@
+name: Release candidate
+
+# Runs every required workflow on one SHA, ignoring path filters. Path-filtered push workflows skip commits that
+# touch only unlisted paths (a0fa2729, 723fb474) and a merge can start no runs at all (d327b264), so a 1.0 tag must
+# not rely on them. Tag only after the `required` job below is green for the exact tagged SHA.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['release/**']
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
+  release-gate:
+    uses: ./.github/workflows/aip-release-gate.yml
+  database-contracts:
+    uses: ./.github/workflows/database-contracts.yml
+  worker-jobs-linux:
+    uses: ./.github/workflows/worker-jobs-linux.yml
+  cgroup:
+    uses: ./.github/workflows/cgroup.yml
+  flaskbb-parity:
+    uses: ./.github/workflows/flaskbb-parity.yml
+  flaskbb-post-order:
+    uses: ./.github/workflows/flaskbb-post-order.yml
+  deploy-checks:
+    uses: ./.github/workflows/deploy-checks.yml
+  dependencies:
+    uses: ./.github/workflows/dependencies.yml
+  app-packages:
+    uses: ./.github/workflows/app-packages.yml
+  brokers:
+    uses: ./.github/workflows/brokers.yml
+  object-storage:
+    uses: ./.github/workflows/object-storage.yml
+  sdk-semantic-e2e:
+    uses: ./.github/workflows/sdk-semantic-e2e.yml
+  semantic-conformance:
+    uses: ./.github/workflows/semantic-conformance.yml
+
+  required:
+    name: required (all workflows green on this SHA)
+    if: ${{ always() }}
+    needs:
+      - verify
+      - release-gate
+      - database-contracts
+      - worker-jobs-linux
+      - cgroup
+      - flaskbb-parity
+      - flaskbb-post-order
+      - deploy-checks
+      - dependencies
+      - app-packages
+      - brokers
+      - object-storage
+      - sdk-semantic-e2e
+      - semantic-conformance
+    runs-on: ubuntu-24.04
+    steps:
+      # A skipped or cancelled workflow is not a pass: only `success` counts.
+      - name: Require every workflow to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "release candidate SHA: ${GITHUB_SHA}"
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key)\t\(.value.result)"'
+          if echo "$RESULTS" | jq -e 'to_entries | all(.value.result == "success")' >/dev/null; then
+            echo "ALL REQUIRED WORKFLOWS PASSED for ${GITHUB_SHA}"
+          else
+            echo "not every required workflow succeeded for ${GITHUB_SHA}" >&2
+            exit 1
+          fi

@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 ENGINES = [f"spike-v{number}-{name}" for number, name in
-           [(1, "fixture"), (2, "read"), (3, "write"), (4, "worker"), (5, "sdk"), (6, "transport")]]
+           [(1, "fixture"), (2, "read"), (3, "write"), (4, "worker"), (5, "sdk"), (6, "transport"), (11, "dev-checks")]]
 
 
 class RustLintGateTest(unittest.TestCase):
@@ -87,7 +87,7 @@ with open(os.environ["SDK_RECEIPT"], "a") as receipt:
 
     def assert_all_lints_ran(self, calls):
         lints = [args for args in calls if args[0] == "clippy"]
-        self.assertEqual(len(lints), 11, lints)
+        self.assertEqual(len(lints), 12, lints)
         self.assertEqual([args[args.index("--manifest-path") + 1].split("/")[1]
                           for args in lints if "--manifest-path" in args], ENGINES)
         self.assertTrue(all(args[-3:] == ["--", "-D", "warnings"] for args in lints))
@@ -132,7 +132,7 @@ with open(os.environ["SDK_RECEIPT"], "a") as receipt:
 
     def assert_all_runtime_suites_ran(self, calls):
         runtime = [args for args in calls if args[0] == "test" and "aip-test-support" not in args]
-        self.assertEqual(len(runtime), 9, runtime)
+        self.assertEqual(len(runtime), 10, runtime)
         self.assertTrue(all("--no-fail-fast" in args for args in runtime), runtime)
         self.assertTrue(all("--locked" in args for args in runtime), runtime)
         self.assertEqual([args[args.index("--manifest-path") + 1].split("/")[1]

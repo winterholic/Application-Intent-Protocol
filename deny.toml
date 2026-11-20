@@ -16,6 +16,14 @@ ignore = [
     # no private-key operation runs in the service. The dev-dependency in aip-auth signs test tokens with throwaway keys.
     # Revisit when jsonwebtoken offers a verify-only RSA backend, or when `rsa` ships the constant-time fix.
     { id = "RUSTSEC-2023-0071", reason = "rsa is used only to verify RS256 signatures with public keys; the attack needs private-key operations" },
+    # chrono and chrono-tz: "unmaintained" (informational) advisories assigned 2026-11-17 to every version, announcement
+    # https://github.com/chronotope/chrono/issues/1768 (soft-deprecation; the issue was opened 2026-01-22). They are not vulnerabilities and
+    # no fixed version exists, so the Dependencies workflow turned red on an unchanged lock file. chrono sits under tokio-postgres
+    # (`with-chrono-0_4`), aip-runtime (RFC 3339 parsing and token expiry clocks), spike-v2-read and spike-v6-transport. Replacing it
+    # (jiff or time) touches timestamp/timezone handling in several engines and is a 1.1 item, not a 1.0 dependency bump.
+    # Revisit when the advisory is withdrawn, a maintained successor lands in tokio-postgres, or by 2027-03-01, whichever is first.
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, not vulnerable; no fixed version; replacement scheduled for 1.1" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz is unmaintained, not vulnerable; no fixed version; replacement scheduled for 1.1" },
 ]
 
 [licenses]

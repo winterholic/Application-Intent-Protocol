@@ -59,7 +59,9 @@ verify_independent "PoC runtime all-target clippy" cargo clippy -p aip-cli --fea
 # The MySQL adapter is an optional package too: its code and live tests (ignored without a container) must stay lint-clean and compile.
 verify_independent "MySQL migrate service CLI all-target clippy" cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets --locked -- -D warnings
 # The excluded engine crates were not linted before; a clippy regression in one (spike-v6 server.rs) reached main unnoticed.
-for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
+# spike-v11-dev-checks is a product engine too: aip-service calls it on the `load` path. spike-v7-migrate is deliberately absent:
+# nothing in the product depends on it (aip-migrate is a separate implementation), see product/VALIDATION.md.
+for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport spike-v11-dev-checks; do
   verify_independent "rust engine clippy: $engine" cargo clippy --manifest-path "spikes/$engine/Cargo.toml" --all-targets --locked --target-dir target -- -D warnings
 done
 # Legacy import is isolated from runtime builds but remains part of the migration gate.
@@ -76,7 +78,7 @@ verify_independent "crypto all-feature tests" cargo test -p aip-crypto --all-fea
 verify_independent "PoC runtime tests" cargo test -p aip-cli --features poc-runtime --locked --no-fail-fast
 # These product engines are path dependencies excluded from the root workspace.
 # v4 (worker) and v6 (transport) are included because their regressions (S-24) were otherwise caught only by CI.
-for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
+for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport spike-v11-dev-checks; do
   verify_independent "rust engine tests: $engine" cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target --no-fail-fast
 done
 if (( first_check_status != 0 )); then

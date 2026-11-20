@@ -1,6 +1,9 @@
 name: FlaskBB PostOrder
 
 on:
+  # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
+  workflow_call:
+  workflow_dispatch:
   push:
     branches: [main, cycle/p1-flaskbb-g6-20261117, verify/topic-move-flaskbb-20261117, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106, verify/flaskbb-orm-oracle-20261107, verify/post-unhide-flaskbb-20261117]
     paths:
