@@ -33,6 +33,8 @@ from product.tests.facereview_ui_browser_evidence import (
     compare_bookmark_read_capture,
     timeline_phase,
     wait_for_api_completion,
+    wait_for_expected_extensions,
+    FIRST_MAIN_EXTENSIONS,
 )
 
 
@@ -293,7 +295,8 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertEqual(pending, {})
         self.assertEqual(page.ticks, 2)
 
-    def test_account_drains_first_main_requests_before_reload_even_with_cached_networkidle(self):
+    def _run_first_main_reload_sequence(self, page, state):
+        """Execute the account script's real calls between main_visible and reload."""
         source = Path(__file__).with_name('facereview-ui-account-browser.py')
         tree = ast.parse(source.read_text())
         tutorial = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
@@ -308,8 +311,14 @@ class BrowserEvidenceTests(unittest.TestCase):
                    if isinstance(statements[index], ast.Expr) and isinstance(statements[index].value, ast.Call)
                    and isinstance(statements[index].value.func, ast.Attribute)
                    and statements[index].value.func.attr == 'reload')
-        # Execute the actual synchronization and reload calls. The server has
-        # accepted the three requests, but their response events are still queued.
+        calls = [statement for statement in statements[start+1:end+1] if isinstance(statement, ast.Expr)]
+        code = compile(ast.fix_missing_locations(ast.Module(body=calls,type_ignores=[])),str(source),'exec')
+        exec(code, {'page': page, 'FIRST_MAIN_EXTENSIONS': FIRST_MAIN_EXTENSIONS,
+                    'wait_for_api_completion': wait_for_api_completion,
+                    'wait_for_expected_extensions': wait_for_expected_extensions, **state})
+
+    def test_account_drains_first_main_requests_before_reload_even_with_cached_networkidle(self):
+        # The server has accepted the three requests, but their response events are still queued.
         started, finished = {'extension-1','extension-2','extension-3'}, set()
         pending, failures = {}, []
         class Page:
@@ -319,11 +328,57 @@ class BrowserEvidenceTests(unittest.TestCase):
                 finished.update(started)
             def reload(self, **kwargs):
                 assert started == finished, 'reload discarded outstanding first-main responses'
-        calls = [statement for statement in statements[start+1:end+1] if isinstance(statement, ast.Expr)]
-        code = compile(ast.fix_missing_locations(ast.Module(body=calls,type_ignores=[])),str(source),'exec')
-        exec(code, {'page':Page(), 'started':started,'finished':finished,'pending':pending,'failures':failures,
-                    'wait_for_api_completion':wait_for_api_completion})
+        self._run_first_main_reload_sequence(Page(), {
+            'started': started, 'finished': finished, 'pending': pending, 'failures': failures,
+            'first_main_extensions': set(FIRST_MAIN_EXTENSIONS)})
         self.assertEqual(started, finished)
+
+    def test_account_reload_waits_for_first_main_requests_the_browser_has_not_delivered_yet(self):
+        # Verify 44117223558: the main queries are scheduled after render and Playwright's
+        # sync API delivers `request` events only when pumped, so at the first drain check
+        # started == finished == empty. Reloading then orphaned three /extension requests.
+        started, finished, pending, failures, names = set(), set(), {}, [], set()
+        class Page:
+            pumps = 0
+            reloaded = None
+            def wait_for_load_state(self, state):
+                pass  # cached SPA networkidle: delivers nothing
+            def wait_for_timeout(self, milliseconds):
+                self.pumps += 1
+                if self.pumps == 2:
+                    started.update({'extension-1', 'extension-2', 'extension-3'})
+                    names.update(FIRST_MAIN_EXTENSIONS)
+                elif self.pumps == 3:
+                    finished.update(started)
+            def reload(self, **kwargs):
+                self.reloaded = (set(started), set(finished), set(names))
+        page = Page()
+        self._run_first_main_reload_sequence(page, {
+            'started': started, 'finished': finished, 'pending': pending, 'failures': failures,
+            'first_main_extensions': names})
+        self.assertEqual(page.reloaded, ({'extension-1', 'extension-2', 'extension-3'},
+                                         {'extension-1', 'extension-2', 'extension-3'}, set(FIRST_MAIN_EXTENSIONS)))
+
+    def test_expected_extensions_wait_pumps_until_every_name_is_seen(self):
+        observed = set()
+        class Page:
+            ticks = 0
+            def wait_for_timeout(self, milliseconds):
+                self.ticks += 1
+                observed.add(sorted(FIRST_MAIN_EXTENSIONS)[self.ticks - 1])
+        page = Page()
+        wait_for_expected_extensions(page, observed, FIRST_MAIN_EXTENSIONS, [])
+        self.assertEqual((observed, page.ticks), (set(FIRST_MAIN_EXTENSIONS), 3))
+
+    def test_expected_extensions_wait_fails_on_missing_names_or_failed_requests(self):
+        class Page:
+            def wait_for_timeout(self, milliseconds):
+                pass
+        for observed, failures in [(set(), []), ({'Video.homeCategory'}, []),
+                                   (set(FIRST_MAIN_EXTENSIONS), [{'path': '/extension'}])]:
+            with self.subTest(observed=observed, failures=failures):
+                with self.assertRaises(AssertionError):
+                    wait_for_expected_extensions(Page(), observed, FIRST_MAIN_EXTENSIONS, failures, timeout_ms=0)
 
     def test_api_completion_never_accepts_a_failed_or_unfinished_request(self):
         class Page:
