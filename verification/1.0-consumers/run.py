@@ -63,7 +63,7 @@ def seed_sql(app, schema):
           (1,'Alice','alice@example.test'),(2,'Bob','bob@example.test'),(3,'Carol','carol@example.test');"""
     return f"""INSERT INTO {schema}.tenant(id,name) VALUES (1,'Gangnam Store'),(2,'Another Store');
         INSERT INTO {schema}.staff(id,tenant_id,name,role) VALUES
-          (1,1,'Manager','MANAGER'),(2,1,'Clerk','CLERK'),(3,2,'Other Manager','MANAGER');"""
+          (1,1,'Manager','MANAGER'),(2,1,'Joo','CLERK'),(3,2,'Other Manager','MANAGER');"""
 
 def package(source, root, version):
     incoming = root / ("incoming-" + version)
@@ -184,7 +184,7 @@ try:
             server = None
             backup = root / "before-migration.dump"
             with backup.open("wb") as stream:
-                sp.run(["docker", "exec", container, "pg_dump", "--no-owner", "--format=custom", "--schema", schema,
+                sp.run(["docker", "exec", container, "pg_dump", "--username=postgres", "--no-owner", "--format=custom", "--schema", schema,
                         "aip_test_consumer_rc"], stdout=stream, check=True)
             updated = root / "source-update"
             shutil.copytree(source, updated)
@@ -216,10 +216,10 @@ try:
             stop(server)
             server = None
             db = "aip_test_rollback_" + app
-            call(["docker", "exec", container, "createdb", db])
+            call(["docker", "exec", container, "createdb", "--username=postgres", db])
             restored_dsn = "postgres://postgres@" + host + "/" + db
             with backup.open("rb") as stream:
-                sp.run(["docker", "exec", "-i", container, "pg_restore", "--no-owner", "--exit-on-error",
+                sp.run(["docker", "exec", "-i", container, "pg_restore", "--username=postgres", "--no-owner", "--exit-on-error",
                         "--dbname", db], stdin=stream, check=True)
             reinstalled = root / "reinstalled"
             call(["node", incoming / "tools/app-deploy.mjs", "install", "--out", reinstalled])

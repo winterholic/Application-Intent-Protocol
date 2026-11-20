@@ -55,7 +55,7 @@ jobs:
         working-directory: core
         run: |
           set -o pipefail
-          python3 ../verification/1.0-consumers/run.py | tee "$RUNNER_TEMP/independent-consumers.log"
+          python3 ../verification/1.0-consumers/run.py 2>&1 | tee "$RUNNER_TEMP/independent-consumers.log"
       - name: Preserve console results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
