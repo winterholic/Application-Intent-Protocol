@@ -125,12 +125,18 @@ test("an offline-installed consumer forwards the JWT and reuses the shared read 
   const runtimePath = join(consumerDir, "runtime.mjs");
   writeFileSync(runtimePath, `
 import assert from "node:assert/strict";
-import { connect, WriteUnsettled, SDK_VERSION, SDK_IDENTITY, SDK_PROTOCOL } from "@aip/sdk";
+import { connect, WriteUnsettled, SDK_VERSION, SDK_IDENTITY, SDK_PROTOCOL, protocolWarning } from "@aip/sdk";
 
 assert.equal(typeof WriteUnsettled, "function");
 assert.equal(SDK_VERSION, ${JSON.stringify(workspaceVersion())});
 assert.equal(SDK_IDENTITY, "typescript/" + SDK_VERSION);
 assert.equal(SDK_PROTOCOL, ${JSON.stringify(protocolVersion())});
+// A different protocol major is a warning text, never a throw; same major, a newer minor and an absent value are fine.
+assert.equal(protocolWarning(SDK_PROTOCOL), undefined);
+assert.equal(protocolWarning("aip-protocol/" + SDK_PROTOCOL.split("/")[1].split(".")[0] + ".9"), undefined);
+assert.equal(protocolWarning(undefined), undefined);
+assert.equal(protocolWarning(null), undefined);
+for (const other of ["aip-protocol/9.0", "aip-protocol/0.1", "nonsense", 7, {}]) assert.match(protocolWarning(other), /different major/u);
 const fingerprint = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 const binding = {
   fingerprint,
