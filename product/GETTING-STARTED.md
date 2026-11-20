@@ -1,6 +1,8 @@
 # 시작 가이드: 정의 하나로 서버 띄우기
 
-이 문서는 빈 디렉터리에서 시작해 정의 파일 하나를 PostgreSQL에 배포하고, 인증된 호출자가 읽기와 쓰기를 실행하기까지의 순서다. 아래 명령은 같은 순서로 실제 실행해 확인했다(2026-10-18, macOS, PostgreSQL 17). 운영 구성, 설정 전체, 마이그레이션은 [제품 서비스 실행](OPERATIONS.md)을 따른다.
+이 문서는 빈 디렉터리에서 시작해 정의 파일 하나를 PostgreSQL에 배포하고, 인증된 호출자가 읽기와 쓰기를 실행하기까지의 순서다. 아래 명령은 같은 순서로 실제 실행해 확인했다(2026-11-21, macOS arm64, PostgreSQL 17, 소스에서 만든 묶음 `1.0.0`). 운영 구성, 설정 전체, 마이그레이션은 [제품 서비스 실행](OPERATIONS.md)을 따른다.
+
+무엇이 1.0 지원 범위인지는 [1.0 지원 범위](SUPPORT.md)에, 선언만으로 표현하지 못해 확장으로 풀어야 하는 요구는 [표현력 한계와 확장 우회](LIMITS.md)에 있다. 이 문서는 지원 범위 표의 "정의 검사", "계약 HTTP", "생성 binding", "JWT·principal" 경로를 따라간다. 데이터베이스는 PostgreSQL 17만 지원한다.
 
 AIP는 백엔드를 없애지 않는다. 컨트롤러·DTO·검증·권한·트랜잭션처럼 기능마다 반복되는 코드를 선언 하나와 검증된 실행 엔진으로 옮긴다. 아래 예제 정의(`prototype/example/app.aip`)에는 서버 코드가 한 줄도 없다. 호출자가 무엇을 읽고 바꿀 수 있는지는 정의가 정하고, 서버가 매 요청마다 최종 검사한다.
 
@@ -10,17 +12,34 @@ AIP는 백엔드를 없애지 않는다. 컨트롤러·DTO·검증·권한·트�
 
 | 필요한 것 | 비고 |
 | --- | --- |
-| Rust(1.98.1에서 검증) | `cargo build`로 `aip` 실행 파일을 만든다 |
-| PostgreSQL(17에서 검증) | 전용 데이터베이스를 쓴다. 다른 버전은 이 가이드로 확인하지 않았다 |
-| Node.js 26, Python 3 | 예제 호출 중 SDK와 worker 확장에만 필요하다 |
+| PostgreSQL 17 | 전용 데이터베이스를 쓴다. 다른 버전과 MySQL·MariaDB는 1.0 지원 범위 밖이다 |
+| Node.js 26 | 개발 토큰 도구와 TypeScript SDK에 필요하다. Python SDK와 Python worker 확장에는 Python 3.9 이상이 필요하다 |
+| Rust 1.98.1 | 소스에서 만들 때만 필요하다. 릴리스 아카이브를 쓰면 필요 없다 |
+
+이 가이드는 **묶음 디렉터리** 하나를 `AIP_HOME`으로 가리키고 거기서 `aip` 실행 파일, 개발 토큰 도구, 예제 정의, SDK를 가져온다. 묶음은 두 방법 중 하나로 얻는다. 저장소 checkout은 두 번째 방법에서만 필요하고 이후 단계는 checkout 없이 빈 디렉터리에서 진행한다.
+
+**방법 1. 릴리스 아카이브.** [설치 안내](INSTALL.md#cli)대로 `aip-<version>-<target>.tar.gz`를 받아 푼다. 풀린 디렉터리가 `AIP_HOME`이다. 안에 `bin/aip`, `tools/dev-jwt.mjs`, `example.aip`가 있다. SDK 파일(`aip-sdk-<version>.tgz`)은 아카이브가 아니라 같은 Release에서 따로 받거나 `npm install @aip/sdk`로 설치한다.
+
+**방법 2. 소스에서 만들기.** 저장소 루트에서 실행한다.
 
 ```sh
 # PGHOST 같은 PG* 환경 변수가 있는 셸에서도 된다: release 의존 그래프에 테스트 DB 안전장치(aip-test-support)가 없다.
-# 테스트 빌드(cargo test)는 여전히 PG* 변수를 거부한다.
+# 테스트 빌드(cargo test)는 여전히 PG* 변수를 거부한다(`PGHOST must be unset`).
 cargo build -p aip-cli --release
-export AIP=$PWD/target/release/aip
+npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund    # SDK 빌드 도구. 없으면 package.mjs가 SDK_TOOLCHAIN_MISSING으로 멈춘다
+node product/tools/package.mjs --out ./artifact --profile release          # 새 디렉터리여야 한다
+```
+
+`package.mjs`가 만든 `./artifact`가 `AIP_HOME`이다. `bin/aip`, `tools/dev-jwt.mjs`, `example.aip`, `extensions/`, 그리고 설치용 tarball `sdk/aip-sdk-1.0.0.tgz`가 들어 있다. SDK 소스만 빌드하는 `node product/tools/build-sdk.mjs --out <디렉터리>`는 tarball이 아니라 package 디렉터리를 만든다. tarball이 필요하면 `package.mjs`를 쓰거나 그 디렉터리에서 `npm pack --pack-destination <이미 있는 디렉터리>`를 실행한다.
+
+이제 저장소를 떠나 빈 디렉터리에서 시작한다.
+
+```sh
+export AIP_HOME=/path/to/묶음 디렉터리            # 방법 1은 푼 디렉터리, 방법 2는 <저장소>/artifact
+export PATH="$AIP_HOME/bin:$PATH"
 export AIP_DATABASE_URL='postgres://user:password@127.0.0.1:5432/aip_demo'   # 비밀번호는 셸에만 둔다. 파일에 쓰지 않는다
-mkdir demo && cd demo && cp ../prototype/example/app.aip .
+mkdir demo && cd demo && cp "$AIP_HOME/example.aip" app.aip
+aip --version                                      # aip 1.0.0
 ```
 
 서비스는 `.env`를 읽지 않는다. 연결 문자열은 설정에 적은 환경 변수 이름으로만 받는다.
@@ -30,10 +49,10 @@ mkdir demo && cd demo && cp ../prototype/example/app.aip .
 운영에서는 외부 인증 제공자가 RS256 access token을 발급한다. `aip service`는 토큰을 발급하지 않고 개발용 우회도 없다. 로컬에서는 제공자 대역을 하는 스크립트가 키를 만들고 토큰을 찍는다. 서비스가 검사하는 서명·issuer·audience·수명(최대 900초)은 그대로 적용된다. **운영에 쓰지 않는다.**
 
 ```sh
-TOKEN=$(node ../product/tools/dev-jwt.mjs --dir ./dev-idp --subject user-42)
+TOKEN=$(node "$AIP_HOME/tools/dev-jwt.mjs" --dir ./dev-idp --subject user-42)
 ```
 
-저장소 checkout 없이 릴리스 아카이브나 `package.mjs` 묶음만 받았다면 같은 도구가 묶음 안에 있다: `node <압축을 푼 디렉터리>/tools/dev-jwt.mjs --dir ./dev-idp --subject user-42`. 의존성은 Node.js 내장 모듈뿐이다. 앱 패키지(`package.mjs --manifest`)에는 운영 배포용이라 이 개발용 도구를 넣지 않는다.
+도구는 묶음 안에 있어 저장소 checkout이 필요 없다. 의존성은 Node.js 내장 모듈뿐이다. 앱 패키지(`package.mjs --manifest`)에는 운영 배포용이라 이 개발용 도구를 넣지 않는다.
 
 `./dev-idp/jwks.json`(공개 키)과 `dev-idp-private.pem`(개인 키, 모드 0600)이 생긴다. 토큰은 15분 뒤 만료되므로 만료되면 같은 명령을 다시 실행한다.
 
@@ -53,8 +72,8 @@ cat > service.json <<'EOF'
   }
 }
 EOF
-$AIP service check app.aip
-$AIP service init app.aip --config service.json
+aip service check app.aip
+aip service init app.aip --config service.json
 ```
 
 `schema`는 `aip_`로 시작하는 소문자 ASCII 식별자(63바이트 이하)여야 한다. 다르면 `BAD_SCHEMA`로 거부한다. `check`는 정의를 검사하고, `init`은 새 schema에 테이블과 배포 저널을 만든다. 이미 있는 schema에는 `init`을 쓰지 않는다. 정의를 바꿀 때는 `service migrate`를 쓴다.
@@ -69,17 +88,25 @@ INSERT INTO aip_demo.member(id) VALUES (42);
 INSERT INTO aip_demo.event(id, member_id, checked, title, link, phase, date)
 VALUES (11, 42, false, 'First event', 'https://example.test', 'READY', '2026-01-01T00:00:00Z');
 EOF
-$AIP service principal --config service.json bind --subject user-42 --actor 42
+aip service principal --config service.json bind --subject user-42 --actor 42
 ```
 
 토큰의 role이나 actor id는 권한으로 쓰이지 않는다. 연결은 서버 DB의 `bind`가 정한다.
 
+**열 이름 규칙.** 테이블과 열 이름은 정의의 이름에서 정해진다. resource와 필드 이름은 camelCase 대문자 앞에 `_`를 붙여 소문자로 바꾼다(`OrderLine`은 `order_line`, `dueAt`은 `due_at`). **다른 resource를 가리키는 참조 필드(`member: Member`)의 열 이름은 `<필드 이름>_id`다.** 그래서 위 INSERT는 `member`가 아니라 `member_id`다. `member`로 쓰면 다음 오류가 난다.
+
+```
+ERROR:  column "member" of relation "event" does not exist
+```
+
+열 이름이 헷갈리면 init 뒤에 `psql "$AIP_DATABASE_URL" -c '\d aip_demo.event'`로 실제 구조를 본다. `id`는 `generated by default as identity`라 값을 직접 넣어도 된다.
+
 ## 4. 서버 시작과 호출
 
 ```sh
-$AIP service gen app.aip --wire decimal --out binding.ts --sdk-import @aip/sdk
+aip service gen app.aip --wire decimal --out binding.ts --sdk-import @aip/sdk
 FP=$(sed -n 's/^export const contractFingerprint = "\(.*\)";/\1/p' binding.ts)
-$AIP service serve app.aip --config service.json &
+aip service serve app.aip --config service.json &
 ```
 
 기동하면 JSON 한 줄이 나온다(`"event":"listening"`). 서버는 loopback HTTP만 연다. 외부에는 TLS reverse proxy를 앞에 둔다. `FP`는 이 정의의 계약 지문이다. 호출자는 자기가 아는 계약을 헤더로 보내고, 서버가 다르면 DB에 닿기 전에 거부한다.
@@ -97,16 +124,19 @@ curl -s localhost:8080/apply -H "authorization: Bearer $TOKEN" -H "x-aip-contrac
 
 정의의 `transition mark`는 `member = actor`인 행의 `checked`를 `false`에서 `true`로 바꾸는 것만 허용한다. 호출자는 정의가 `expose`한 필드와 전이 밖의 것을 요청할 수 없다.
 
-토큰 없이 보내면 익명 호출자로 취급한다. 이 예제의 행 정책(`rows read when member = actor`)은 익명에게 행을 주지 않으므로 `"rows":[]`를 받는다. 계약 지문이 다르면 `WIRE.BAD_REQUEST`, 정의가 열지 않은 필드를 고르면 `WIRE.FIELD_NOT_EXPOSED`다. 모든 오류 코드와 재시도 지침은 [`spec/wire-errors.md`](../spec/wire-errors.md)에 있고 `aip explain-code <코드>`로도 볼 수 있다.
+토큰 없이 보내면 익명 호출자로 취급한다. 이 예제의 행 정책(`rows read when member = actor`)은 익명에게 행을 주지 않으므로 `"rows":[]`를 받는다. 계약 헤더가 없으면 `WIRE.CONTRACT_REQUIRED`, 지문 형식(64자리 16진수)이 아니면 `WIRE.BAD_REQUEST`, 형식은 맞지만 서버와 다른 지문이면 `WIRE.CONTRACT_MISMATCH`, 정의가 열지 않은 필드를 고르면 `WIRE.FIELD_NOT_EXPOSED`다. 모든 오류 코드와 재시도 지침은 [`spec/wire-errors.md`](../spec/wire-errors.md)에 있고 `aip explain-code <코드>`로도 볼 수 있다.
+
+### 시각(Time) 값의 형식
+
+`Time` 필드는 입력과 출력의 표기가 다르다. 입력은 `2026-01-01T00:00:00Z`, `2026-01-01T00:00:00+00:00`, `2026-01-01T09:00:00+09:00`처럼 UTC 오프셋이 붙은 시각을 받고(필터 값으로 세 표기를 모두 확인했다) 같은 순간이면 같은 행을 고른다. **출력은 항상 UTC이고 `Z`가 아니라 `+00:00`으로 끝난다.** 위 `date`는 `"2026-01-01T00:00:00+00:00"`로 돌아온다. 응답 문자열을 입력 표기와 문자열 비교하지 말고 시각으로 파싱해 비교한다.
 
 ## 5. SDK로 호출하기
 
 HTTP를 직접 쓸 필요는 없다. TypeScript SDK는 생성한 binding으로 타입을 검사하고, 캐시와 미확정 쓰기 복구를 처리한다.
 
 ```sh
-node ../product/tools/package.mjs --out ./artifact --profile release    # SDK tarball과 실행 파일 묶음
 mkdir app && cd app && npm init -y >/dev/null && npm pkg set type=module >/dev/null
-npm install --offline --ignore-scripts ../artifact/sdk/aip-sdk-1.0.0.tgz
+npm install --offline --ignore-scripts "$AIP_HOME/sdk/aip-sdk-1.0.0.tgz"    # 방법 1이면 Release에서 받은 tgz 경로, 또는 npm install @aip/sdk
 cp ../binding.ts .
 ```
 
@@ -114,15 +144,15 @@ cp ../binding.ts .
 import { connect } from "@aip/sdk";
 import { contract } from "./binding.ts";
 
-const client = connect("http://127.0.0.1:8080", process.env.TOKEN!, contract);
+const client = connect("http://127.0.0.1:8080", process.env.TOKEN!, contract);   // 익명 호출은 토큰 자리에 null
 const events = await client.read({ read: "Event", select: ["id", "title", "checked"] as const } as const);
 const done = await client.apply({ apply: "Event.mark", target: { ids: ["11"] } } as const, { key: "mark-11" });
 console.log(events.rows, done);
 ```
 
-Node 26은 `.ts` 파일을 그대로 실행한다: `TOKEN=$TOKEN node app.ts`. 컴파일하려면 `tsc`로 `binding.ts`와 함께 빌드한다.
+Node 26은 `.ts` 파일을 그대로 실행한다: `TOKEN=$TOKEN node app.ts`. 첫 실행은 `[{"checked":true,...,"id":"11",...}]`와 `{"changed":["11"],...}`를 낸다. 같은 이벤트는 위 curl로 이미 `checked`가 됐을 수 있으며, 그러면 `apply` 결과가 `"changed":[],"unchanged":["11"]`다. 이것도 정상이다. 컴파일하려면 `tsc`로 `binding.ts`와 함께 빌드한다.
 
-Python은 `product/python`을 `PYTHONPATH`에 두고 `from aip_sdk import connect`로 같은 계약 지문을 받아 쓴다(`connect(base, token, fingerprint).read({...})`). 두 SDK는 같은 멱등 key 공간을 쓴다. 전체 API는 [설치 SDK](SDK.md)를 따른다.
+Python은 `pip install application-intent-protocol-sdk`(또는 Release의 wheel, 소스 checkout이면 `pip install ./product/python`) 뒤 `from aip_sdk import connect`로 같은 계약 지문을 받아 쓴다(`connect(base, token, fingerprint).read({...})`). 익명 호출은 토큰 자리에 `None`을 준다. 두 SDK는 같은 멱등 key 공간을 쓴다. 전체 API는 [설치 SDK](SDK.md)를 따른다.
 
 ## 정리하고 다음으로
 
@@ -130,6 +160,8 @@ Python은 `product/python`을 `PYTHONPATH`에 두고 `from aip_sdk import connec
 kill %1 && psql "$AIP_DATABASE_URL" -c 'DROP SCHEMA aip_demo CASCADE'
 ```
 
+- 1.0이 지원하는 범위와 조건: [1.0 지원 범위](SUPPORT.md). 호환 약속과 업그레이드 때 달라지는 진단: [호환 표](../COMPATIBILITY.md).
+- 선언만으로 안 되는 요구(가변량 증감, 계산 집계, 부모·자식 동시 생성 등)와 확장 우회: [표현력 한계와 확장 우회](LIMITS.md).
 - 정의 문법: [`spec/definition-syntax.md`](../spec/definition-syntax.md). 진단 코드는 `aip explain-code DEF.<코드>`.
 - 정의를 바꿔 배포: [변경 배포와 기존 데이터 이관](OPERATIONS.md#변경-배포와-기존-데이터-이관).
 - 서버 확장(Node·Python), durable job, 파일, 이벤트: [관리형 실행](MANAGED-EXECUTION.md)과 [서버 인프라](INFRASTRUCTURE.md).

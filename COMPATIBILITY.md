@@ -28,7 +28,36 @@
 | 패키지 형식 `format` | `1` 유지 | 형식이 바뀌지 않았다. 패키지 안의 SDK 파일 이름만 버전·이름 설정에서 파생된다 |
 | 메시지 protocol(subscribe) | 유지 | 계약 문서 버전과 별개다(`crates/aip-runtime/src/subscribe.rs`) |
 
+### 왜 `aip-protocol/1.0`과 `aip-core/0.11`이 함께 있나
+
+두 표지는 다른 일을 한다. `aip-protocol`은 호출자가 읽는 계약 문서와 생성 binding의 약속이라 1.0 선언에 맞춰 올렸다. `aip-core`는 Core IR의 직렬화 태그이고 배포 저널에 저장된 digest에 들어간다. 올리면 기존 배포 전부가 "변경됨"으로 읽히고 롤백한 옛 binary가 새 태그를 거부하므로(`POC.I101`) IR의 의미가 바뀔 때만 올린다. 1.0은 IR 의미를 바꾸지 않았다. 제품 경로(`aip service`)는 Core IR이 아니라 자체 facts digest로 배포를 구분하므로 이 태그가 제품 사용자에게 보이는 일은 거의 없다.
+
 SDK가 서버 protocol을 비교하는 검사(`/capabilities`에 `protocol`을 싣고 클라이언트가 지원 major와 대조해 `CLIENT.PROTOCOL_ERROR`를 내는 방식)는 이번 릴리스에 넣지 않았다. 현재 SDK는 계약 지문 불일치만 검사한다. npm `package.json`의 `aip.protocol`과 Python `aip_sdk.PROTOCOL`은 이 SDK가 말하는 protocol을 표시하며, 빌드 때 `PROTOCOL_VERSION`과 일치하는지 검사한다. 런타임 비교는 `TBD`다.
+
+## 1.0 호환 약속과 경계
+
+정의를 바꿔 새로 배포할 때 무엇이 호환되고 무엇이 거부되는지는 다음과 같다. 코드의 동작을 문서화한 것이며 이 문서가 새 보장을 더하지 않는다.
+
+- **같은 protocol major(`aip-protocol/1.x`)** 안에서는 계약 문서에 선택 필드를 더하는 변경만 허용한다. 필드 제거, 의미 변경, 오류 코드 삭제는 major를 올린다. 오류 코드 추가는 minor다(위 "읽는 법").
+- **계약 지문**은 앱 단위 정체성이다. 호출자가 보낸 지문이 서버와 다르면 DB에 닿기 전에 `WIRE.CONTRACT_MISMATCH`로 거부한다(`retry: never`). 헤더가 없을 때의 코드는 경로마다 다르다([지원 범위](product/SUPPORT.md#계약-헤더-오류-코드)).
+- **구버전 클라이언트와 새 배포의 동시 지원은 없다.** `aip service migrate --apply` 뒤 이전 정의를 가진 listener는 `WIRE.DEPLOYMENT_CHANGED`로 작업을 거부한다. 새 정의로 서버를 재시작하고 binding을 다시 생성해 SDK와 같은 배포를 맞춘다([변경 배포](product/OPERATIONS.md#변경-배포와-기존-데이터-이관)).
+- **같은 지문이 같은 정책을 뜻하지 않는다.** 전이의 수정 허용 목록·기대 조건·입력 타입·nullable·range는 지문에 들어가지만, `allow`·`from`·effect 같은 정책 변경은 배포 facts digest로 fence한다. `aip service migrate`의 계획은 전이 변경을 `SecurityReview`로 표시한다([일반·부분 수정](product/GENERAL-UPDATE.md)).
+- **롤백은 백업 복원이다.** 역방향 migration과 자동 롤백은 없다. 구 패키지를 migration된 schema에 기동하면 `WIRE.SCHEMA_MISMATCH`로 거부된다.
+- **데이터베이스는 PostgreSQL 17만 지원한다.** 다른 버전과 MySQL·MariaDB는 지원 범위 밖이다([지원 범위](product/SUPPORT.md#postgresql-17-한정)).
+
+### 1.0.0에서 달라진 정의 검사
+
+1.0.0의 `aip service check`는 이전 개발 빌드가 통과시키던 정의 일부를 거부하거나 경고한다. 응답 값이나 계약 지문이 바뀌는 변경이 아니라 **정의를 받아들이는 기준**이 바뀐 것이다. 새 binary로 기존 정의를 먼저 검사한 뒤 배포한다.
+
+| 코드 | 종류 | 이전 | 1.0.0 | 조치 |
+| --- | --- | --- | --- | --- |
+| `DEF.MULTIPLE_ACTORS` | **오류**(신규) | `actor` 선언이 둘이면 마지막 선언이 조용히 이기고, 처음 선언을 가정해 쓴 조건은 관련 없는 필드·타입 오류 여러 개로 나타났다 | `actor`가 둘 이상이면 이 오류 하나만 낸다 | `actor Resource` 한 줄만 남긴다. 호출자 종류가 둘이면 resource 하나에 역할 필드를 두고 조건에서 구분한다 |
+| `DEF.CALLER_FILTER_POLICY_REQUIRED` | **오류**(신규) | 원본에 `rows read`가 있는 `callerFilter read` 집계는 `where`가 없을 때만, `--dev-checks`에서만 `DEF.ADVISORY_CALLER_FILTER_POLICY` 조언이 나왔다 | `where`가 원본의 `rows read` 정책을 함의하지 않으면 기본 `check`가 오류로 거부한다 | `where`에 원본 정책을 AND 항으로 적는다(`where owner = actor and amount > 0`). 정책이 `A or B`면 `where B`로 충분하다. 또는 `callerFilter none` |
+| `DEF.ADVISORY_PUBLIC_COUNT` | 경고(신규, 오류 아님) | 경고 없음 | `where` 없는 `count`는 `--dev-checks` 없이도 경고한다. 정의는 통과한다 | 공개 값이 의도라면 그대로 둔다. 아니면 `where`에 모집단을 적는다 |
+
+`DEF.CALLER_FILTER_POLICY_REQUIRED`가 막는 것은 호출자가 `callerFilter read`의 필터로 읽을 수 없는 행의 필드 값을 한 값씩 세어 알아내는 경로다. `count`가 원본의 `rows read`를 적용하지 않는다는 **공개 count 계약과 응답 값은 1.0에서 바꾸지 않았다.** `count` 집계의 facts에 키를 더하지 않아 기존 배포의 실행 digest도 달라지지 않는다. 저장소의 `.aip` 36개(FaceReview, FlaskBB, Infisical, 예제, 엔진 fixture)를 이전 binary와 새 binary로 검사했을 때 새로 오류가 나는 파일은 없었고, 새로 나온 출력은 `DEF.ADVISORY_PUBLIC_COUNT` 경고뿐이었다. 저장소 밖의 정의는 이 보장 범위 밖이므로 위 표의 두 오류를 직접 확인한다. 계약 전문은 [SDK의 공개 count 계약](product/SDK.md#public-count-contract-공개-count-계약)이다.
+
+같은 변경에서 이미 거부되던 입력의 **진단만** 정확해진 것도 있다. 호환에 영향이 없다. `traverse Child via field`처럼 잘못 쓴 `via`는 `DEF.TRAVERSE_VIA_FORM`이 올바른 형태(`via Child.field`)를 안내하고, Decimal에 쓴 `0`·`0.00`은 `DEF.BAD_VALUE`가 따옴표 형식(`"0.00"`)을 안내하며, `transition`에 빠진 `from`·`allow`는 어느 것이 빠졌는지 알려 준다.
 
 ## SDK 버전 식별
 
