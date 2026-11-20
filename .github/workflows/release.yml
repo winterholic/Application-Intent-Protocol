@@ -22,6 +22,7 @@ on:
       - 'product/python/**'
       - 'product/sdk/**'
       - 'product/tools/**'
+      - 'scripts/build-python.sh'
       - 'scripts/check-versions.mjs'
       - 'scripts/make-release-manifest.mjs'
       - 'scripts/package-cli-archive.sh'
@@ -246,7 +247,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip build twine
-          python -m build --outdir "$RUNNER_TEMP/py" product/python
+          scripts/build-python.sh --out "$RUNNER_TEMP/py"
           python -m twine check --strict "$RUNNER_TEMP/py"/*
           wheel="$RUNNER_TEMP/py/$(node product/tools/version.mjs wheel-file)"
           sdist="$(ls "$RUNNER_TEMP"/py/*.tar.gz)"

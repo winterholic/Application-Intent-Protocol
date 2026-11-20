@@ -110,9 +110,9 @@ impl ServerOptions {
 pub(crate) fn allowed_request_headers(value: Option<&str>) -> bool {
     value.is_none_or(|headers| {
         !headers.is_empty()
-            && headers
-                .split(',')
-                .all(|header| matches!(header.trim().to_ascii_lowercase().as_str(), "authorization" | "content-type" | "x-aip-contract"))
+            && headers.split(',').all(|header| {
+                matches!(header.trim().to_ascii_lowercase().as_str(), "authorization" | "content-type" | "x-aip-contract" | "x-aip-sdk")
+            })
     })
 }
 

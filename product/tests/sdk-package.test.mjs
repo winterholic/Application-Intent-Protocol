@@ -86,6 +86,10 @@ test("build emits the installable SDK JS and declaration closure with publishabl
   assert.ok(files.includes("LICENSE"));
   assert.ok(files.includes("README.md"));
   assert.ok(!files.some((name) => name.includes("spike")), "internal spike paths must not be built into the package");
+  // X10: the declarations and modules must not re-export or import through a spike directory name either.
+  for (const file of files.filter((name) => name.endsWith(".js") || name.endsWith(".d.ts") || name.endsWith(".json") || name.endsWith(".md"))) {
+    assert.ok(!/spikes\/|spike-v\d/u.test(readFileSync(join(packageDir, file), "utf8")), `${file} mentions an internal spike path`);
+  }
 
   for (const file of files.filter((name) => name.endsWith(".js") || name.endsWith(".d.ts"))) {
     const contents = readFileSync(join(packageDir, file), "utf8");
@@ -121,9 +125,12 @@ test("an offline-installed consumer forwards the JWT and reuses the shared read 
   const runtimePath = join(consumerDir, "runtime.mjs");
   writeFileSync(runtimePath, `
 import assert from "node:assert/strict";
-import { connect, WriteUnsettled } from "@aip/sdk";
+import { connect, WriteUnsettled, SDK_VERSION, SDK_IDENTITY, SDK_PROTOCOL } from "@aip/sdk";
 
 assert.equal(typeof WriteUnsettled, "function");
+assert.equal(SDK_VERSION, ${JSON.stringify(workspaceVersion())});
+assert.equal(SDK_IDENTITY, "typescript/" + SDK_VERSION);
+assert.equal(SDK_PROTOCOL, ${JSON.stringify(protocolVersion())});
 const fingerprint = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 const binding = {
   fingerprint,
@@ -133,7 +140,7 @@ const binding = {
 const calls = [];
 const fetchMock = async (url, init) => {
   const path = new URL(url).pathname;
-  calls.push({ path, authorization: init.headers.authorization });
+  calls.push({ path, authorization: init.headers.authorization, sdk: init.headers["x-aip-sdk"] });
   if (path === "/session") return new Response(JSON.stringify({ ok: true, principal: { actorId: "17" }, remainingMs: 60_000 }), { status: 200 });
   assert.equal(path, "/read");
   assert.equal(init.headers["x-aip-contract"], fingerprint);
@@ -148,9 +155,10 @@ assert.equal(first.cached, false);
 assert.deepEqual(first.rows, [{ id: "1", title: "cached" }]);
 const second = await client.read(query);
 assert.equal(second.cached, true);
+// Every request declares the SDK; the value is diagnostics for the server and the caller's own headers are kept.
 assert.deepEqual(calls, [
-  { path: "/session", authorization: "Bearer production-access-token" },
-  { path: "/read", authorization: "Bearer production-access-token" },
+  { path: "/session", authorization: "Bearer production-access-token", sdk: SDK_IDENTITY },
+  { path: "/read", authorization: "Bearer production-access-token", sdk: SDK_IDENTITY },
 ]);
 `);
   assertCommandOk(run(process.execPath, [runtimePath], { cwd: consumerDir }), "installed SDK runtime consumer");

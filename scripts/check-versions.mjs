@@ -83,6 +83,13 @@ if (initProtocol !== protocol) fail(`${config.pythonImport}.PROTOCOL ${initProto
 if (read("product/python/LICENSE") !== read("LICENSE")) fail("product/python/LICENSE가 루트 LICENSE와 다릅니다(node scripts/sync-version.mjs로 복사)");
 if (!/^readme\s*=\s*"README\.md"/mu.test(project) || !existsSync(resolve(repoRoot, "product/python/README.md"))) fail("Python 패키지에 README.md가 필요합니다");
 
+// 3a. TS SDK가 자기 버전으로 노출하고 x-aip-sdk 헤더로 보내는 상수.
+const sdkVersionSource = read("product/sdk/version.ts");
+const tsVersion = /^export const SDK_VERSION = "([^"]*)";$/mu.exec(sdkVersionSource)?.[1];
+const tsProtocol = /^export const SDK_PROTOCOL = "([^"]*)";$/mu.exec(sdkVersionSource)?.[1];
+if (tsVersion !== version) fail(`product/sdk/version.ts SDK_VERSION ${tsVersion}은 workspace 버전 ${version}과 다릅니다(node scripts/sync-version.mjs)`);
+if (tsProtocol !== protocol) fail(`product/sdk/version.ts SDK_PROTOCOL ${tsProtocol}은 PROTOCOL_VERSION ${protocol}과 다릅니다`);
+
 // 3. TS 패키지 매니페스트가 같은 값에서 만들어진다.
 const manifest = sdkPackageManifest(config, version, protocol);
 if (manifest.name !== config.npmPackage || manifest.version !== version) fail("SDK package.json 생성 값이 원천과 다릅니다");

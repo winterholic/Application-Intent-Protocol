@@ -54,7 +54,7 @@ jobs:
       - name: Verify the single version source and the release tooling
         run: |
           node scripts/check-versions.mjs
-          node --test product/tests/version-check.test.mjs product/tests/release-manifest.test.mjs product/tests/sdk-package.test.mjs
+          node --test product/tests/version-check.test.mjs product/tests/release-manifest.test.mjs product/tests/sdk-package.test.mjs product/tests/release-graph.test.mjs product/tests/python-build-script.test.mjs
       - name: Verify app packaging boundaries
         run: node --test product/tests/app-package.test.mjs product/tests/app-manifest.test.mjs product/tests/package-boundaries.test.mjs product/tests/app-deploy.test.mjs product/tests/smoke-options.test.mjs
       - name: Verify relocated release packages and installed SDK consumers

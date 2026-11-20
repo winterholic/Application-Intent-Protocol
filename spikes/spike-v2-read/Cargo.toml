@@ -19,10 +19,17 @@ tokio-postgres = "0.7.18"
 tokio-postgres-rustls = { version = "0.14.0", default-features = false, features = ["ring"] }
 rustls = { version = "0.23.35", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1.0.4"
-aip-test-support = { path = "../../crates/aip-test-support" }
+# 테스트 DB 안전장치는 test-db feature에서만 링크한다. 제품(release) 그래프에는 aip-test-support가 들어가지 않는다.
+aip-test-support = { path = "../../crates/aip-test-support", optional = true }
+
+[features]
+default = []
+test-db = ["dep:aip-test-support"]
 
 [dev-dependencies]
 aip-test-support = { path = "../../crates/aip-test-support", features = ["strict-db"] }
+# 이 crate의 통합 시험이 test-db helper를 쓴다.
+spike-v2-read = { path = ".", features = ["test-db"] }
 
 # 전체 DWARF 대신 줄 정보만 남겨 target 용량을 줄인다.
 [profile.dev]

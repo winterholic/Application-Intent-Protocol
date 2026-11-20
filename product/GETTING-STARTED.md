@@ -15,6 +15,8 @@ AIP는 백엔드를 없애지 않는다. 컨트롤러·DTO·검증·권한·트�
 | Node.js 26, Python 3 | 예제 호출 중 SDK와 worker 확장에만 필요하다 |
 
 ```sh
+# PGHOST 같은 PG* 환경 변수가 있는 셸에서도 된다: release 의존 그래프에 테스트 DB 안전장치(aip-test-support)가 없다.
+# 테스트 빌드(cargo test)는 여전히 PG* 변수를 거부한다.
 cargo build -p aip-cli --release
 export AIP=$PWD/target/release/aip
 export AIP_DATABASE_URL='postgres://user:password@127.0.0.1:5432/aip_demo'   # 비밀번호는 셸에만 둔다. 파일에 쓰지 않는다
@@ -30,6 +32,8 @@ mkdir demo && cd demo && cp ../prototype/example/app.aip .
 ```sh
 TOKEN=$(node ../product/tools/dev-jwt.mjs --dir ./dev-idp --subject user-42)
 ```
+
+저장소 checkout 없이 릴리스 아카이브나 `package.mjs` 묶음만 받았다면 같은 도구가 묶음 안에 있다: `node <압축을 푼 디렉터리>/tools/dev-jwt.mjs --dir ./dev-idp --subject user-42`. 의존성은 Node.js 내장 모듈뿐이다. 앱 패키지(`package.mjs --manifest`)에는 운영 배포용이라 이 개발용 도구를 넣지 않는다.
 
 `./dev-idp/jwks.json`(공개 키)과 `dev-idp-private.pem`(개인 키, 모드 0600)이 생긴다. 토큰은 15분 뒤 만료되므로 만료되면 같은 명령을 다시 실행한다.
 

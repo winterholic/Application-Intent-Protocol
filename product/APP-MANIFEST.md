@@ -73,6 +73,8 @@ AIP는 Spring의 Gradle/JAR/WAR 배포 모델처럼 임의의 AIP 앱을 선언 
 | `extensions.language` | 필수 (확장 시) | `"node"` \| `"python"` | 확장 worker 런타임 언어 |
 | `extensions.entrypoints` | 필수 (확장 시) | 상대 경로 배열 (1개 이상) | 실행 가능한 진입점 파일 목록 (확장 디렉터리 기준 상대 경로) |
 | `extensions.enable_writes` | 선택 | 불리언 (기본 `false`) | 확장 내 쓰기 트랜잭션 허용 여부 |
+
+정의가 worker 구현을 가진 `extension`·`operation`을 선언했는데 manifest에 `extensions`가 없으면 `package.mjs --manifest`가 패키징 단계에서 `EXTENSIONS_MISSING`으로 실패한다(엔진 `aip service check`가 알려 주는 `workers.extensions` 목록을 대조한다). manifest 확장 디렉터리에 구현 모듈 파일(`<module>.mjs` 또는 `.py`)이 없으면 `EXTENSION_FILE_MISSING`이다. 패키지의 `config.example.json`에는 manifest의 확장 설정에서 만든 `workers` 블록이 들어간다.
 | `static_assets` | 선택 | 객체 배열 | 정적 파일 서빙 마운트 목록 |
 | `static_assets[].mount` | 필수 | 문자열 (`/`로 시작) | HTTP 요청 경로 prefix (예: `/static`) |
 | `static_assets[].path` | 필수 | 상대 경로 | 서빙할 디렉터리 또는 파일 경로 |
