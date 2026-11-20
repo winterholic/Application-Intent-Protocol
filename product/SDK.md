@@ -43,6 +43,7 @@ node product/tools/package.mjs
 
 - **버전**: 루트 `Cargo.toml`의 `[workspace.package] version` 하나가 원천이다. Core(`aip --version`), TypeScript SDK, Python SDK가 같은 숫자를 쓴다(lockstep). `product/tools/version.mjs`가 이 값을 읽고, TypeScript 빌드, 패키징, smoke, 시험이 모두 여기서 파생한다. Python은 `pyproject.toml`과 `aip_sdk.__version__`에 값을 써야 하므로 `node scripts/sync-version.mjs`가 복사하고, `node scripts/check-versions.mjs [--tag vX.Y.Z]`가 어긋나면 실패한다. 사전 릴리스는 `1.0.0-rc.N`이며 Python에서는 PEP 440 `1.0.0rcN`으로 변환한다.
 - **이름**: `product/release.config.json` 한 곳에서만 정한다. 기본값은 npm `@aip/sdk`, PyPI `application-intent-protocol-sdk`, Python import `aip_sdk`다. 환경 변수 `AIP_NPM_PACKAGE`, `AIP_PYPI_PACKAGE`가 시험용으로 덮어쓴다. 이름을 바꾸면 `node scripts/sync-version.mjs`로 Python 파일에 반영한다. **최종 이름은 소유자 승인 대상이며 현재 값은 잠정이다**(npm `@aip` scope의 소유는 확인되지 않았고, PyPI 이름은 미등록 상태일 뿐 선점하지 않았다). 생성 binding의 `--sdk-import` 기본값(`@aip/sdk`)을 바꾸려면 호출 때 `--sdk-import <새 이름>`을 준다. 패키징 도구와 smoke는 설정 이름을 넘긴다.
+- **SDK 자기 버전**: `SDK_VERSION`, `SDK_IDENTITY`(TypeScript), `aip_sdk.SDK_IDENTITY`(Python)가 노출되고 모든 요청의 `x-aip-sdk` 헤더로 간다. 서버는 로그와 진단에만 쓰며 거부하지 않는다([COMPATIBILITY](../COMPATIBILITY.md#sdk-버전-식별)). TypeScript의 `product/sdk/version.ts`는 `scripts/sync-version.mjs`가 쓴다.
 - **protocol 표지**: npm `package.json`의 `aip.protocol`, Python `aip_sdk.PROTOCOL`이 이 SDK의 protocol(`aip-protocol/1.0`)을 표시한다. 대응 표는 [COMPATIBILITY](../COMPATIBILITY.md)다.
 
 ## resource 독립 operation
@@ -253,11 +254,35 @@ An aggregate is a separately exposed capability. `sourceAccess` determines which
 
 - `count` counts the source rows selected by `sourceAccess` and the aggregate's declared `where`. It does **not** apply source `rows read`. Treat a count as an explicit disclosure: callers may infer changes in that declared population. Use a restrictive `sourceAccess` and/or `where` when the complete population must not be public.
 - `sum`, `min`, and `max` apply source `rows read` as a SQL `FILTER`, in addition to `sourceAccess` and `where`. Their values therefore ignore rows hidden by the source resource's row policy. Standalone aggregate calls use this same measure path.
-- `groupKey` scopes a per-row aggregate. `callerFilter none` rejects a request filter; `callerFilter read` allows only the declared filter capability. A caller filter is not a substitute for the server's `sourceAccess` or `where`.
+- `groupKey` scopes a per-row aggregate. `callerFilter none` rejects a request filter; `callerFilter read` allows only the declared filter capability. A caller filter is not a substitute for the server's `sourceAccess` or `where`, and when the source resource has a `rows read` policy, `callerFilter read` requires the aggregate `where` to imply that policy (see "Public count contract" below).
 
 These rules define the noninterference boundary. Hidden source-row changes leave caller-scoped counts, filtered value aggregates, ordinary reads, and traversed relations unchanged when their declared predicates exclude those rows. A count intentionally authorized over a broader population is an explicit public exception: changes to that population can change the count. Field-hidden values remain unavailable for filtering and sorting, and rejection responses do not disclose the value or matching rows. The denial code/message/retry payload stays the same as hidden values change; `requestId` is intentionally unique correlation metadata for each request.
 
 For example, the service policy regression declares `ownVoteCount` with `sourceAccess callerVotes(actor)` and `where owner = actor`, but no source `rows read` filter is added to count. `publicVoteCount` has no `where`, so it counts every source vote permitted by `sourceAccess`. `minOwnVote` and `maxOwnVote` omit `where`; their source Vote `rows read when owner = actor` is applied by the measure. The tests compare both same-organization and cross-organization hidden vote changes, including the full `votes` relation response.
+
+### Public count contract (공개 count 계약)
+
+This section records the contract, its risk, the alternatives and their compatibility impact. The default meaning of a count (the value in the response) is **not changed** in 1.0. Changing it is an owner decision.
+
+**Existing behavior (unchanged).** `release count` counts the rows selected by `sourceAccess` and the aggregate `where`. It does not apply the source `rows read`. `sum`, `min` and `max` apply source `rows read` as a `FILTER`. A count without `where` is therefore a *public count*: it includes rows the caller cannot read, and its value changes when hidden rows are added.
+
+**Risk.** A count is a disclosure of its declared population. With `callerFilter read` on a source that has `rows read`, the caller's filter is added to the `WHERE` of that count, and the caller can read the count for one value at a time (`filter amount eq -900` returns `1` if a hidden row has that value). The 2026-11-21 audit (§6.2) reproduced this on a definition with `aggregate oracleCount ... callerFilter read; release count` over a `Vote` source with `rows read when owner = actor`, which the default `aip service check` accepted.
+
+**What 1.0 changes (alternatives A and B).** Neither changes a response value of an accepted definition.
+
+| | Rule | Where |
+|---|---|---|
+| B. Close the oracle | A `callerFilter read` aggregate whose source has a `rows read` policy must have a `where` that implies that policy, or `aip service check` fails with `DEF.CALLER_FILTER_POLICY_REQUIRED` (an error, with or without `--dev-checks`). The check is structural on the normalized expressions: the whole policy, or one branch of a policy written `A or B`, must be an AND term of `where` (`where owner = actor and amount > 0`; `where isAdmin(actor)` for a policy `... or isAdmin(actor)`). A logically equivalent but differently written `where` is rejected; write the policy the same way. | `spikes/spike-v1-fixture/src/sema.rs` `aggregate` |
+| A. Say it | A `count` without `where` reports the advisory `DEF.ADVISORY_PUBLIC_COUNT` in every `aip service check` (`advisories` in the JSON result; not an error, no `--dev-checks` needed). | `sema.rs`, always on in `spikes/spike-v11-dev-checks/src/lib.rs` |
+
+**Alternatives left to the owner (not implemented).**
+
+| | Change | Compatibility impact |
+|---|---|---|
+| C. Explicit public count | Default `release count` inherits `rows read`; a public count needs an explicit key such as `release count public`. | Every existing where-less count definition must be rewritten, and the response of those counts changes. M: definition, sema, plan, SDK contract and docs. |
+| D. `rows read` on every count | `measure` applies `rows read` to `count` as it does to `sum`/`min`/`max` (`spikes/spike-v2-read/src/plan.rs`). | The values of all public counts shrink to the caller's visible rows (FaceReview `watchCount`, `commentCount`, `likeCount`, the recruitment `bookmarkCount` fixture, and every app that relies on a broad `sourceAccess`). The contract fingerprint and the TS/Python types do not change, but responses do. M plus a compatibility decision. |
+
+**Compatibility of the 1.0 change.** `aip service check` ran on all 36 `.aip` files of the repository (FaceReview, FlaskBB, Infisical, `product/examples`, `prototype`, the engine fixtures) with the pre-change binary and the changed binary. No file gets a new error. Two files fail in both runs for reasons unrelated to this change (`porting/flaskbb/tests/fixtures/topic-move-private-grant-repro.aip` is a deliberate failing repro, `product/tests/fixtures/facereview-auth/operations.aip` is an operation-only fragment without an `actor`). The three FaceReview admin totals (`User.totalCount`, `Comment.totalCount`, `VideoRequest.totalCount`) use `callerFilter read` with `where isAdmin(actor)`; that implies the `... or isAdmin(actor)` branch of their `rows read`, so they are accepted (a literal "same policy" rule would have rejected them). The only new output is `DEF.ADVISORY_PUBLIC_COUNT`: FaceReview `watchCount`, `commentCount` and `likeCount`, and `Recruitment.bookmarkCount` in the recruitment fixture. Response values do not change. A definition outside the repository that uses `callerFilter read` over a `rows read` source without a policy-implying `where` is rejected after the upgrade. The diagnostic names the aggregate; the fix is to add the policy to `where` or to use `callerFilter none`. A `callerFilter read` aggregate over a source without `rows read` is not affected (that source is denied by default, so such a count is a public count and gets the advisory when `where` is missing).
 
 ### Standalone counts in FaceReview
 

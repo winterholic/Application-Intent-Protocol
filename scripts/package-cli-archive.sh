@@ -16,10 +16,11 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 stage="$work/$name"
-mkdir -p "$stage/bin" "$stage/extensions"
+mkdir -p "$stage/bin" "$stage/extensions" "$stage/tools"
 cp "$bundle/bin/aip" "$stage/bin/aip"
 cp "$bundle/config.example.json" "$bundle/example.aip" "$bundle/README.md" "$stage/"
 cp "$bundle/extensions/event.mjs" "$bundle/extensions/event.py" "$stage/extensions/"
+cp "$bundle/tools/dev-jwt.mjs" "$stage/tools/"
 cp "$root/LICENSE" "$root/product/INSTALL.md" "$root/COMPATIBILITY.md" "$stage/"
 chmod 0755 "$stage/bin/aip"
 
@@ -35,4 +36,7 @@ if [[ "$reported" != "aip $version" ]]; then
   exit 1
 fi
 "$verify/$name/bin/aip" service check "$verify/$name/example.aip" >/dev/null
+# 개발용 토큰 도구가 checkout 없이 동작하는지 확인한다.
+(cd "$verify" && node "$name/tools/dev-jwt.mjs" --dir ./dev-idp --subject user-42 | awk -F. 'NF==3 { found=1 } END { exit !found }')
+test -f "$verify/dev-idp/jwks.json"
 echo "{\"ok\":true,\"archive\":\"$name.tar.gz\",\"version\":\"$version\",\"target\":\"$target\"}"

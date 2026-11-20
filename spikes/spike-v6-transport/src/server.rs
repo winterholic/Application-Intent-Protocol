@@ -173,6 +173,7 @@ impl Server {
         }
     }
 
+    #[cfg(feature = "test-db")]
     pub(crate) fn detach(mut self) {
         self.task.take();
         self.shutdown.take();

@@ -1164,6 +1164,8 @@ async fn serve_request(
                 }
             }
             "x-request-id" => w.trace.accept_inbound(&v),
+            // 진단 전용: 값은 로그에만 남고 응답이나 거부 판단에는 쓰지 않는다.
+            "x-aip-sdk" => w.trace.accept_sdk(&v),
             "traceparent" => w.trace.accept_traceparent(&v),
             "x-spike-drop-response" => drop = runtime.fault_injection && v == "1",
             _ => {}
@@ -1265,7 +1267,7 @@ async fn serve_request(
         // The origin was matched exactly against the allow-list above, so credentials may be allowed for it. Only the cookie routes need that.
         let credentials = if credential_path { "access-control-allow-credentials: true\r\n" } else { "" };
         let extra = format!(
-            "vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers\r\naccess-control-allow-methods: {methods}\r\naccess-control-allow-headers: authorization, content-type, x-aip-contract\r\n{credentials}"
+            "vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers\r\naccess-control-allow-methods: {methods}\r\naccess-control-allow-headers: authorization, content-type, x-aip-contract, x-aip-sdk\r\n{credentials}"
         );
         return reply_with_headers(&mut w, &json!({"ok":true}).to_string(), &extra).await;
     }
@@ -2048,22 +2050,26 @@ async fn serve_request(
     reply(&mut w, &out).await;
 }
 
+#[cfg(feature = "test-db")]
 /// 서버를 띄우고 (포트, 토큰 발급기)를 돌려준다. 발급기는 시험에서 로그인 제공자 역할을 한다.
 pub async fn start(facts: Value) -> (u16, auth::Keyring) {
     start_with_id_wire(facts, IdWire::Legacy).await
 }
 
+#[cfg(feature = "test-db")]
 pub async fn start_with_apply_contract(facts: Value, wire: IdWire) -> (u16, auth::Keyring) {
     let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_apply(&facts, wire).into());
     start_with_fingerprint(facts, wire, fingerprint).await
 }
 
+#[cfg(feature = "test-db")]
 /// V13 비교 후보. wire는 서버 설정이며 호출자의 JSON 옵션으로 받지 않는다.
 pub async fn start_with_id_wire(facts: Value, wire: IdWire) -> (u16, auth::Keyring) {
     let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_wire(&facts, wire).into());
     start_with_fingerprint(facts, wire, fingerprint).await
 }
 
+#[cfg(feature = "test-db")]
 async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint: Option<Arc<str>>) -> (u16, auth::Keyring) {
     let server = server::listen_with_fingerprint(
         facts,

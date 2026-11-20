@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Cargo.toml의 workspace 버전과 product/release.config.json의 이름을 Python 패키지 파일에 쓴다.
+// Cargo.toml의 workspace 버전과 product/release.config.json의 이름을 Python 패키지 파일과 TypeScript SDK의 version.ts에 쓴다.
 // 버전의 원천은 Cargo.toml 하나이므로 이 스크립트는 그 값을 복사만 한다. 일치 검사는 check-versions.mjs가 한다.
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -25,6 +25,14 @@ let source = readFileSync(init, "utf8");
 source = replaceOnce(source, /^__version__ = "[^"]*"$/mu, `__version__ = "${pythonVersion(version)}"`, "__version__");
 source = replaceOnce(source, /^PROTOCOL = "[^"]*"$/mu, `PROTOCOL = "${protocol}"`, "PROTOCOL");
 writeFileSync(init, source);
+
+const sdkVersionFile = resolve(repoRoot, "product/sdk/version.ts");
+writeFileSync(sdkVersionFile, `// Written by scripts/sync-version.mjs from Cargo.toml and crates/aip-contract. Do not edit by hand;
+// scripts/check-versions.mjs fails when these values drift from their sources.
+export const SDK_VERSION = "${version}";
+export const SDK_PROTOCOL = "${protocol}";
+export const SDK_IDENTITY = \`typescript/\${SDK_VERSION}\`;
+`);
 
 copyFileSync(resolve(repoRoot, "LICENSE"), resolve(repoRoot, "product/python/LICENSE"));
 console.log(JSON.stringify({ ok: true, version, pythonVersion: pythonVersion(version), protocol, npm: config.npmPackage, pypi: config.pypiDistribution }));

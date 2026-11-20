@@ -42,6 +42,25 @@ worker가 있는 앱은 `workers.directory`를 **설치한 패키지의 `app/<ex
 node /srv/my-app/1.0.0/tools/app-deploy.mjs preflight --config /srv/my-app/operator/service.json
 ```
 
+패키지의 `config.example.json`은 manifest에 `extensions`가 있으면 `workers` 블록(`directory: "./app/<확장 디렉터리>"`, `language`, `enable_writes`, `isolation: "auto"`)을 이미 싣는다. `directory`는 설정 파일 기준이므로 설정을 패키지 밖으로 옮기면 설치 경로의 절대 경로로 바꾼다. 앱 manifest가 `config_template`을 직접 정하면 그 파일을 그대로 쓴다.
+
+### 실패 원인 분류
+
+`init/plan/migrate`가 실패하면 엔진의 원문 오류는 비밀 보호를 위해 전달하지 않고, 엔진이 stderr에 낸 실패 `code`만 아래 분류로 바꿔 `cause`(와 `engineCode`)로 알려 준다. 분류에 없는 코드는 `UNCLASSIFIED`다.
+
+| `cause` | `engineCode` | 뜻과 조치 |
+| --- | --- | --- |
+| `DB_UNREACHABLE` | `DB_CONNECT`, `DB_CONFIG`, `DB_CA_CONFIG` | DB에 연결하지 못함. 주소, 포트, 자격 증명, TLS 확인 |
+| `SCHEMA_EXISTS` | `SCHEMA_EXISTS` | `init`이 이미 있는 schema를 만나 거부함. 다른 schema 이름을 쓰거나 `migrate` 사용 |
+| `DB_PRIVILEGE` | `DB_PRIVILEGE` | migration 역할의 CREATE 권한 부족 |
+| `PLAN_DIGEST_MISMATCH` | `PLAN_CHANGED` | 승인한 digest가 현재 DB 또는 정의와 다름. `plan`을 다시 실행해 새 digest 검토 |
+| `SCHEMA_NOT_INITIALIZED` | `SCHEMA_NOT_READY` | migration metadata가 없는 schema. `init`을 먼저 실행하거나 schema 이름 확인 |
+| `DEPLOYMENT_DIGEST_MISMATCH` | `WIRE.SCHEMA_MISMATCH` | 배포된 schema와 정의가 다름 |
+| `CONFIG_INVALID`, `MIGRATION_INVALID` | `BAD_CONFIG`, `BAD_MIGRATION` | 설정 또는 migration 선언 오류 |
+| `ENGINE_NOT_RUNNABLE`, `ENGINE_TIMEOUT`, `ENGINE_SIGNALED` | (없음) | 엔진을 시작하지 못했거나 시간 초과, 신호 종료 |
+
+`init`의 `DB_INIT`(분류 전 단일 코드)는 `SCHEMA_EXISTS`, `DB_PRIVILEGE`와 그 밖의 SQL 실패로 나뉘었다. 분류는 PostgreSQL SQLSTATE만 보며 서버 메시지는 읽지 않는다.
+
 ## 초기화·기동·종료
 
 ```sh

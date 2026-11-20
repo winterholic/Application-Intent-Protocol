@@ -214,17 +214,20 @@ pub async fn connect_owned_with_url_and_ca(url: &str, ca_cert_pem: &[u8]) -> Res
 
 /// Resolve the database used by tests. There is deliberately no built-in endpoint: a libpq-style DSN without a port reaches
 /// whatever PostgreSQL listens on the default port, which is shared on developer machines.
+#[cfg(feature = "test-db")]
 pub fn test_database_url_from(raw: Option<&str>) -> Result<String, &'static str> {
     let raw = raw.ok_or("AIP_TEST_DATABASE_URL is required; refusing PostgreSQL defaults")?;
     aip_test_support::validate_database_url(raw)?;
     Ok(raw.to_owned())
 }
 
+#[cfg(feature = "test-db")]
 pub fn test_database_url() -> String {
     test_database_url_from(std::env::var("AIP_TEST_DATABASE_URL").ok().as_deref())
         .unwrap_or_else(|reason| panic!("AIP_TEST_DATABASE_URL is unusable: {reason}"))
 }
 
+#[cfg(feature = "test-db")]
 pub async fn connect() -> Client {
     connect_with_url(&test_database_url()).await.expect("테스트 PostgreSQL 연결")
 }

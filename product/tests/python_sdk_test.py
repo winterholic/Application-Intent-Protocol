@@ -48,6 +48,21 @@ class PythonSdkTest(unittest.TestCase):
         self.assertEqual(client.session(), {"actorId": "42"})
         self.assertEqual([call[0] for call in server.calls], ["/session"])
 
+    def test_every_request_declares_the_sdk_identity_header_and_the_version_is_exposed(self):
+        import aip_sdk
+
+        self.assertEqual(aip_sdk.SDK_IDENTITY, f"python/{aip_sdk.__version__}")
+        self.assertRegex(aip_sdk.SDK_IDENTITY, r"^python/\d+\.\d+\.\d+(rc\d+)?$")
+        server = FakeServer()
+        server.script("/capabilities", {"ok": True, "contractFingerprint": FP, "operations": {}})
+        server.script("/read", {"ok": True, "rows": [], "deps": [], "contractFingerprint": FP})
+        client = connect("http://aip", "t1", transport=server)
+        client.session()
+        client.read({"read": "Event", "select": ["id"]})
+        self.assertGreaterEqual(len(server.calls), 3)
+        for path, headers, _body in server.calls:
+            self.assertEqual(headers.get("x-aip-sdk"), aip_sdk.SDK_IDENTITY, path)
+
     def test_discovers_fingerprint_and_sends_it_on_contract_paths(self):
         server = FakeServer()
         server.script("/capabilities", {"ok": True, "contractFingerprint": FP, "operations": {}})

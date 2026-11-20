@@ -28,6 +28,24 @@ function command(program, args, stage, cwd) {
   return result.stdout;
 }
 
+// `aip service check` lists the extensions and operations the definition implements in a worker. A manifest without an
+// `extensions` section (or without the module file) would otherwise package fine and fail only at the operator's preflight.
+function verifyWorkerExtensions(checkOutput, contract) {
+  let workers;
+  try { workers = JSON.parse(checkOutput).workers; } catch { return; }
+  if (!workers?.required) return;
+  const names = workers.extensions.map(item => item.name).join(", ");
+  const extensions = contract.app.extensions;
+  if (!extensions) fail("EXTENSIONS_MISSING", `정의가 worker 확장을 선언했지만 manifest에 extensions가 없습니다: ${names}`, "definition-check");
+  const suffix = extensions.language === "python" ? "py" : "mjs";
+  const packaged = new Set(contract.files.filter(file => file.role === "extension").map(file => file.path));
+  for (const item of workers.extensions) {
+    const module = String(item.implementation).split(".")[0];
+    const expected = `${extensions.directory}/${module}.${suffix}`.replace(/^\.\//u, "");
+    if (!packaged.has(expected)) fail("EXTENSION_FILE_MISSING", `확장 ${item.name}의 모듈 ${module}.${suffix}가 manifest의 ${extensions.directory}에 없습니다`, "definition-check");
+  }
+}
+
 async function sourceSnapshot(root) {
   const files = new Map();
   const collect = async path => {
@@ -84,12 +102,18 @@ async function validateDependencies(contract, appRoot) {
   }
 }
 
-function safeConfig(name) {
-  return {
+function safeConfig(name, extensions) {
+  const config = {
     schema: `aip_${name.replaceAll("-", "_").slice(0, 59)}`, database_url_env: "AIP_DATABASE_URL", listen: "127.0.0.1:8080", wire: "decimal",
     allowed_origins: ["https://app.example.com"],
     auth: { issuer: "https://issuer.example", audience: "aip-api", jwks: { kind: "file", path: "./jwks.json" } },
   };
+  // 앱 manifest에 확장이 있으면 운영자가 workers 블록을 처음부터 쓰지 않도록 예시를 싣는다.
+  // directory는 설정 파일 위치 기준이다. 설정을 다른 곳으로 옮기면 패키지의 app/<확장 디렉터리> 절대 경로로 바꾼다.
+  if (extensions) {
+    config.workers = { directory: `./app/${extensions.directory.replace(/^\.\//u, "")}`, language: extensions.language, enable_writes: Boolean(extensions.enable_writes), isolation: "auto" };
+  }
+  return config;
 }
 
 export async function packageApplication({ manifest, out, profile = "release" }, { root = repoRoot, run = command } = {}) {
@@ -129,7 +153,8 @@ export async function packageApplication({ manifest, out, profile = "release" },
     const binary = join(root, "target", profile, "aip");
     const binaryDigest = hash(await readFile(binary));
     const engineVersion = run(binary, ["--version"], "engine-version", root).trim();
-    run(binary, ["service", "check", join(appRoot, contract.app.definition)], "definition-check", appRoot);
+    const checked = run(binary, ["service", "check", join(appRoot, contract.app.definition)], "definition-check", appRoot);
+    verifyWorkerExtensions(checked, contract);
     const packagedFiles = new Set();
     const write = async (name, bytes) => {
       await mkdir(dirname(join(out, name)), { recursive: true });
@@ -174,7 +199,7 @@ export async function packageApplication({ manifest, out, profile = "release" },
       static: contract.app.static_assets ? "app/" : undefined,
       sdk: `sdk/${sdkTarball}`, bindings: "bindings.ts", deploy: "tools/app-deploy.mjs", checksums: "SHA256SUMS", appChecksums: "APP_SHA256SUMS",
     };
-    if (!contract.app.config_template) await write("config.example.json", JSON.stringify(safeConfig(contract.app.name), null, 2) + "\n");
+    if (!contract.app.config_template) await write("config.example.json", JSON.stringify(safeConfig(contract.app.name, contract.app.extensions), null, 2) + "\n");
     const json = value => JSON.stringify(value, null, 2) + "\n";
     await write("APP_CONTRACT.json", json(contract));
     let revision = null, dirty = null;

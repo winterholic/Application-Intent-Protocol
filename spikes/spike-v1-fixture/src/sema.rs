@@ -491,6 +491,14 @@ impl<'a> Ctx<'a> {
                 _ => {}
             }
         }
+        if let (Expr::Int(_), Some(TT { ty: Ty::Decimal(_, scale), .. })) = (e, want) {
+            let sample = if *scale == 0 { "0".to_string() } else { format!("0.{}", "0".repeat(usize::from(*scale))) };
+            return Err(Diag::new(
+                "DEF.BAD_VALUE",
+                format!("`{}` 값은 정수 리터럴이 아니라 따옴표 문자열로 씀(예: `\"{sample}\"`)", want.expect("matched").show()),
+                span_of(e),
+            ));
+        }
         if let (Expr::Path(segs, sp), Some(TT { ty: Ty::Enum(en), .. })) = (e, want) {
             if segs.len() == 1 {
                 match self.path(segs, *sp, sc) {
@@ -1643,27 +1651,17 @@ impl<'a> Ctx<'a> {
         match a.caller_filter.as_deref() {
             None => self.d("DEF.MISSING_ITEM", format!("aggregate `{}`에 `callerFilter` 필요", a.name), a.span),
             Some("none" | "read") => {}
-            Some(x) => self.d("DEF.UNSUPPORTED", format!("`callerFilter {x}`는 spike에서 지원하지 않음(허용: none, read)"), a.span),
+            Some(x) => self.d("DEF.UNSUPPORTED", format!("`callerFilter {x}`는 지원하지 않음(허용: none, read)"), a.span),
         }
         match a.row_output.as_deref() {
             None => self.d("DEF.MISSING_ITEM", format!("aggregate `{}`에 `rowOutput` 필요", a.name), a.span),
             Some("none") => {}
-            Some(x) => self.d("DEF.UNSUPPORTED", format!("`rowOutput {x}`는 spike에서 지원하지 않음(허용: none)"), a.span),
+            Some(x) => self.d("DEF.UNSUPPORTED", format!("`rowOutput {x}`는 지원하지 않음(허용: none)"), a.span),
         }
         let source = a.source.clone().unwrap_or_else(|| r.name.clone());
         if !self.res.contains_key(source.as_str()) {
             self.d("DEF.UNKNOWN_SYMBOL", format!("집계 source `{source}` 없음"), a.span);
             return None;
-        }
-        if a.caller_filter.as_deref() == Some("read")
-            && a.where_.is_none()
-            && self.res.get(source.as_str()).is_some_and(|source| source.row_read.is_some())
-        {
-            self.advisory(
-                "DEF.ADVISORY_CALLER_FILTER_POLICY",
-                format!("aggregate `{}` uses `callerFilter read` without `where` although `{source}` has a row read policy; its count can reveal matching rows the caller cannot read", a.name),
-                a.span,
-            );
         }
         let (release, release_field) = match a.release.as_deref() {
             None => {
@@ -1761,6 +1759,40 @@ impl<'a> Ctx<'a> {
                 self.run(w)?
             }
         };
+        // 호출자 filter는 원본 행 정책을 거치지 않고 WHERE에 붙는다. 정책 없이 값별 count를 받으면 숨은 행의 값을 한 값씩 확인할 수 있다.
+        if a.caller_filter.as_deref() == Some("read") {
+            if let Some(policy) = self.res.get(source.as_str()).and_then(|s| s.row_read.as_ref()) {
+                let mut sc = self.base_scope();
+                sc.this = Some(source.clone());
+                let required = self.bool_of(policy, &sc).ok();
+                if required.is_some_and(|policy| !implies_policy(&where_, &policy)) {
+                    self.d(
+                        "DEF.CALLER_FILTER_POLICY_REQUIRED",
+                        format!(
+                            "aggregate `{}`: `callerFilter read`는 where가 `{source}`의 `rows read` 정책을 함의해야 함(정책 전체나 정책의 OR 가지를 AND 항으로 쓴다. 아니면 호출자가 읽을 수 없는 행의 필드 값을 필터로 확인할 수 있음)",
+                            a.name
+                        ),
+                        a.span,
+                    );
+                }
+            }
+        }
+        // 공개 count: 행 정책을 적용하지 않으므로 응답 값이 호출자가 읽을 수 있는 행 수와 다를 수 있다. 계약이며 값은 바뀌지 않는다.
+        if release == "count" && a.where_.is_none() {
+            let filter = if a.caller_filter.as_deref() == Some("read") {
+                " 호출자 filter(`callerFilter read`)로 숨은 행의 필드 값을 센다."
+            } else {
+                ""
+            };
+            self.advisory(
+                "DEF.ADVISORY_PUBLIC_COUNT",
+                format!(
+                    "aggregate `{}`는 where 없는 공개 count: `{source}`의 `rows read` 정책을 적용하지 않고 sourceAccess가 허용한 모든 행을 세므로 호출자가 읽을 수 없는 행도 포함하고 숨은 행이 늘면 값이 바뀐다.{filter} 의도한 공개 값이 아니면 where에 행 정책을 적는다",
+                    a.name
+                ),
+                a.span,
+            );
+        }
         let mut out = json!({
             "ty": tt.show(), "tyRange": a.ty.range.map(|(x, y)| json!([x, y])), "input": ij, "source": source, "sourceAccess": access, "groupKey": a.group_key,
             "where": where_, "callerFilter": a.caller_filter, "rowOutput": a.row_output, "release": release,
@@ -2216,7 +2248,7 @@ impl<'a> Ctx<'a> {
             return Some(contract);
         }
         if x.kind != "read" {
-            self.d("DEF.UNSUPPORTED", format!("extension 종류 `{}`는 spike 범위 밖", x.kind), x.span);
+            self.d("DEF.UNSUPPORTED", format!("extension 종류 `{}`는 지원하지 않는 종류(허용: read, write)", x.kind), x.span);
             return None;
         }
         if x.effect != "none" {
@@ -2277,6 +2309,29 @@ fn valid_message_queue(value: &str) -> bool {
     let mut bytes = value.bytes();
     let Some(first) = bytes.next() else { return false };
     value.len() <= 128 && (first.is_ascii_alphabetic() || first == b'_') && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// `condition`이 참이면 `policy`도 참임을 정규화된 식의 구조만으로 보인다(보수적이라 같은 뜻의 다른 식은 거부한다).
+/// `condition`의 AND 항 중에 정책 전체가 있거나, 정책이 AND이면 모든 항이, OR이면 한 가지가 같은 방식으로 충족되어야 한다.
+fn implies_policy(condition: &Value, policy: &Value) -> bool {
+    fn flatten<'a>(e: &'a Value, out: &mut Vec<&'a Value>) {
+        match e.get("and").and_then(Value::as_array) {
+            Some(items) => items.iter().for_each(|x| flatten(x, out)),
+            None => out.push(e),
+        }
+    }
+    fn covered(have: &[&Value], need: &Value) -> bool {
+        if have.contains(&need) {
+            return true;
+        }
+        if let Some(terms) = need.get("and").and_then(Value::as_array) {
+            return terms.iter().all(|t| covered(have, t));
+        }
+        need.get("or").and_then(Value::as_array).is_some_and(|branches| branches.iter().any(|b| covered(have, b)))
+    }
+    let mut have = vec![];
+    flatten(condition, &mut have);
+    covered(&have, policy)
 }
 
 /// 부분 인덱스 조건으로 쓸 수 있는 식인지: 자기 행의 직접 열과 상수 비교만.

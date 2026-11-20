@@ -139,7 +139,8 @@ fn durable_jobs_are_explicit_and_managed_capabilities_are_server_scoped() {
     assert_eq!(facts["operations"]["count"]["access"]["http.billing"], true);
     assert_eq!(facts["operations"]["count"]["effect"], "managed");
     let helper = SOURCE.replace("operation read count", "operation read helper");
-    let job_calling_read = format!("{}\n{}", helper, managed.replace("jobs.count", "jobs.helper"));
+    // 두 정의를 이어 붙이므로 둘째의 `actor`는 뺀다. actor가 둘이면 DEF.MULTIPLE_ACTORS다.
+    let job_calling_read = format!("{}\n{}", helper, managed.replace("jobs.count", "jobs.helper").replacen("actor principal\n", "", 1));
     assert!(load_str(&job_calling_read, Form::A).is_ok(), "job capabilities may target a declared read operation");
     for invalid in [
         managed.replace("http.billing", "shell.exec"),

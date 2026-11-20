@@ -75,7 +75,10 @@ test("unchanged inputs produce a real SDK tarball and verifiable bundle manifest
   const root = fixture(t, "none", true);
   const result = runPackage(root);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).files, 8);
+  assert.equal(JSON.parse(result.stdout).files, 9);
+  // X4: the dev token tool ships in the bundle, byte for byte, and is covered by SHA256SUMS, so a checkout is not needed.
+  assert.equal(readFileSync(join(root, "bundle/tools/dev-jwt.mjs"), "utf8"), readFileSync(join(repo, "product/tools/dev-jwt.mjs"), "utf8"));
+  assert.ok(readFileSync(join(root, "bundle/SHA256SUMS"), "utf8").includes("  tools/dev-jwt.mjs\n"));
   assertManifest(root, "SOURCE_SHA256SUMS", root);
   assert.ok(readFileSync(join(root, "bundle/SOURCE_SHA256SUMS"), "utf8").includes("  crates/aip-execution/src/jobs.rs\n"));
   assertManifest(root, "SHA256SUMS", join(root, "bundle"));

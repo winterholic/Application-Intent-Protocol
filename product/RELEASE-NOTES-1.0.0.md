@@ -25,6 +25,12 @@ AIP(Application Intent Protocol) 1.0.0은 정의 파일 하나로 인증·정책
 - **패키지를 publish할 수 있게 정비.** TypeScript tarball은 더 이상 `private`이 아니고 `license`, `repository`, `files`, README, LICENSE를 갖췄으며 내부 `spikes/` 경로가 없다. Python wheel과 sdist에는 LICENSE와 README(long description)가 들어간다.
 - **패키지 이름을 한 곳에서 정한다.** `product/release.config.json`. 기본값은 npm `@aip/sdk`, PyPI `application-intent-protocol-sdk`다.
 - **제품 바이너리 빌드가 `PG*` 환경 변수에 막히지 않는다.** `aip-test-support`의 `build.rs`는 테스트 빌드에서만 `PG*` 변수를 거부하고, 테스트 DSN을 꺼내는 시점에도 같은 검사를 한다. 개발자 셸에 `PGHOST`가 있어도 `cargo build -p aip-cli`가 성공한다.
+- **release 빌드가 테스트 안전장치와 분리됐다.** `aip-test-support`가 `aip-cli`의 release 의존 그래프에 없다(`spike-v2-read`와 `spike-v6-transport`의 `test-db` feature 뒤로 이동). `cargo tree -p aip-cli -e normal,build -i aip-test-support`가 비어 있고, 테스트 빌드의 `PG*` 거부는 그대로다.
+- **개발용 토큰 도구 동봉.** 릴리스 아카이브와 `package.mjs` 묶음에 `tools/dev-jwt.mjs`가 들어 있어 저장소 checkout 없이 개발 토큰을 만든다(운영 금지). 앱 패키지에는 넣지 않는다.
+- **앱 패키징 검사 강화.** 정의가 worker 확장을 선언했는데 manifest에 `extensions`가 없거나 모듈 파일이 없으면 `package.mjs --manifest`가 실패한다. `config.example.json`에는 `workers` 블록 예시가 들어간다.
+- **배포 실패 원인 분류.** `app-deploy`의 `SERVICE_FAILED`가 `cause`(`DB_UNREACHABLE`, `SCHEMA_EXISTS`, `DB_PRIVILEGE`, `PLAN_DIGEST_MISMATCH` 등)와 `engineCode`를 알려 준다. 엔진 원문은 계속 전달하지 않는다. 엔진의 `init`은 이미 있는 schema를 `SCHEMA_EXISTS`로 보고한다(이전에는 `DB_INIT`).
+- **SDK 버전 식별.** 두 SDK가 자기 버전을 노출하고 `x-aip-sdk` 헤더로 보낸다. 서버는 로그와 진단에만 쓰고 거부하지 않는다. 브라우저에서 SDK 1.0.0을 쓰려면 엔진도 1.0.0 이상이어야 한다(CORS 허용 헤더). 자세한 내용은 [COMPATIBILITY](../COMPATIBILITY.md#sdk-버전-식별).
+- **Python wheel을 오프라인으로 빌드할 수 있다.** `scripts/build-python.sh --wheelhouse|--no-isolation`. 요구사항은 [INSTALL](INSTALL.md)에 있다.
 - **릴리스 자동화.** 태그 push로 시작하는 `release.yml`: 4개 플랫폼 CLI 아카이브, `SHA256SUMS`, 빌드 provenance attestation, GitHub Release 초안, npm provenance publish, PyPI trusted publishing. 승인(environment `release`)과 태그 조건 없이는 publish하지 않는다.
 - **Linux 바이너리의 glibc 하한을 낮췄다.** Debian 12(glibc 2.36) 이미지에서 빌드해 요구 glibc가 2.39에서 2.34로 내려갔다(aarch64 측정). 자세한 내용은 [INSTALL](INSTALL.md#glibc-하한).
 

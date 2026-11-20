@@ -558,3 +558,14 @@ async fn managed_identity_cannot_replace_a_same_named_actor_resource() {
         "{report}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn init_on_an_existing_schema_reports_schema_exists_not_a_generic_sql_failure() {
+    let schema = OwnedSchema::new();
+    init(DB, &schema.0, &facts()).await.unwrap();
+    let failure = init(DB, &schema.0, &facts()).await.expect_err("a second init must be refused");
+    assert_eq!(failure["code"], "SCHEMA_EXISTS", "{failure}");
+    assert_eq!(failure["ok"], false);
+    let text = failure.to_string();
+    assert!(!text.contains(&schema.0) && !text.contains("postgres://"), "the refusal must not echo names or DSNs: {text}");
+}

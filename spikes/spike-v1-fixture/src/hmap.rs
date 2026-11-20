@@ -309,7 +309,8 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
         for (n, v, vs) in obj(x, xs, "transitions")? {
             let to = obj(v, *vs, "transition")?;
             keys(to, &["from", "to", "delete", "patch", "expect", "allow", "repeat", "effects"], "transition")?;
-            let (f, fs) = req(to, "from", *vs, "transition")?;
+            let (f, fs) = get(to, "from")
+                .ok_or_else(|| Diag::new("DEF.MISSING_ITEM", format!("transition `{n}`에 `from` 필요(필수. 조건 없이 허용하려면 \"true\")"), *vs))?;
             let (a, asp) = req(to, "allow", *vs, "transition")?;
             let names = |key| get(to, key).map(|(v, vs)| strs(v, vs, key)).transpose().map(|v| v.unwrap_or_default());
             let patch = names("patch")?;

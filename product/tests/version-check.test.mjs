@@ -19,7 +19,7 @@ function sandbox(t) {
   };
   for (const name of [
     "Cargo.toml", "Cargo.lock", "prototype/Cargo.lock", "LICENSE", "COMPATIBILITY.md", "scripts/check-versions.mjs", "product/tools/version.mjs",
-    "product/release.config.json", "product/python/pyproject.toml", "product/python/README.md", "product/python/LICENSE", "product/python/aip_sdk/__init__.py",
+    "product/release.config.json", "product/python/pyproject.toml", "product/python/README.md", "product/python/LICENSE", "product/python/aip_sdk/__init__.py", "product/sdk/version.ts",
     "crates/aip-contract/src/lib.rs", "crates/aip-ir/src/lib.rs",
   ]) copy(name);
   for (const entry of readdirSync(join(repo, "crates"), { withFileTypes: true })) {
@@ -89,6 +89,8 @@ for (const [label, file, from, to, pattern] of [
   ["Cargo.toml version moves alone", "Cargo.toml", `\nversion = "${workspaceVersion()}"`, '\nversion = "9.9.9"', /Cargo\.lock의 .* 9\.9\.9|pyproject version/u],
   ["pyproject version drifts", "product/python/pyproject.toml", `\nversion = "${pythonVersion(workspaceVersion())}"`, '\nversion = "0.0.1"', /pyproject version 0\.0\.1/u],
   ["python __version__ drifts", "product/python/aip_sdk/__init__.py", `__version__ = "${pythonVersion(workspaceVersion())}"`, '__version__ = "0.0.1"', /__version__ 0\.0\.1/u],
+  ["TypeScript SDK_VERSION drifts", "product/sdk/version.ts", `SDK_VERSION = "${workspaceVersion()}"`, 'SDK_VERSION = "0.0.1"', /SDK_VERSION 0\.0\.1/u],
+  ["TypeScript SDK_PROTOCOL drifts", "product/sdk/version.ts", 'SDK_PROTOCOL = "aip-protocol/1.0"', 'SDK_PROTOCOL = "aip-protocol/0.1"', /SDK_PROTOCOL aip-protocol\/0\.1/u],
   ["python PROTOCOL drifts", "product/python/aip_sdk/__init__.py", 'PROTOCOL = "aip-protocol/1.0"', 'PROTOCOL = "aip-protocol/0.1"', /PROTOCOL aip-protocol\/0\.1/u],
   ["pyproject name differs from the config", "product/python/pyproject.toml", 'name = "application-intent-protocol-sdk"', 'name = "aip-sdk"', /pyproject name aip-sdk/u],
   ["a stale Cargo.lock entry", "prototype/Cargo.lock", `name = "aip-crypto"\nversion = "${workspaceVersion()}"`, 'name = "aip-crypto"\nversion = "0.1.0"', /prototype\/Cargo\.lock의 aip-crypto은 0\.1\.0/u],
