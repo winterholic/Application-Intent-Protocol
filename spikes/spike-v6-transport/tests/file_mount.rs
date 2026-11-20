@@ -164,7 +164,7 @@ async fn managed_file_mount_serves_owner_bucket_bytes_with_private_headers_and_r
         "127.0.0.1:0".parse().unwrap(),
         aip_test_support::test_database_url!().into(),
         Some(ReadExtensions { lang: WorkerLang::Node, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
-        ServerOptions { allowed_origins: vec!["https://app.example.com".into()] },
+        ServerOptions { allowed_origins: vec!["https://app.example.com".into()], ..ServerOptions::default() },
         false,
         auth,
         Some(DeploymentFence::new(schema.clone(), digest).unwrap()),

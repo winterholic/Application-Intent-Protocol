@@ -120,7 +120,7 @@ pub async fn serve(args: Serve) -> Result<Value, Value> {
     if args.dev_actor.is_some() && (!(1..=300).contains(&args.dev_token_ttl) || args.dev_actor.is_some_and(|id| id <= 0)) {
         return Err(error("BAD_DEV_SESSION", "개발 actor는 양의 Id, 토큰 수명은 1~300초여야 함"));
     }
-    let options = spike_v6_transport::server::ServerOptions { allowed_origins: args.allow_origin };
+    let options = spike_v6_transport::server::ServerOptions { allowed_origins: args.allow_origin, ..Default::default() };
     options.validate().map_err(|_| error("BAD_ORIGIN", "허용 출처는 정규화한 HTTP loopback origin이어야 함"))?;
     let facts = load(&args.file, false)?.output.execution;
     let extensions = match (args.worker_dir, args.worker_lang) {

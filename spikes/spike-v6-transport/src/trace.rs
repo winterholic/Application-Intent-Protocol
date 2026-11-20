@@ -79,6 +79,9 @@ pub struct Trace {
     route: &'static str,
     status: Option<u16>,
     code: Option<String>,
+    /// Why a failed write extension failed (a class such as `ctx.read.filter_not_exposed`, or the business code of a rejection).
+    /// It is set by the server from its own classes, never from a request body.
+    cause: Option<String>,
     /// The caller's `x-aip-sdk` value when it was a short token of safe characters. Used for the log line only.
     sdk: Option<String>,
     otlp_exporter: Option<Arc<crate::otlp::OtlpExporter>>,
@@ -97,6 +100,7 @@ impl Default for Trace {
             route: "other",
             status: None,
             code: None,
+            cause: None,
             sdk: None,
             otlp_exporter: None,
         }
@@ -149,6 +153,12 @@ impl Trace {
         .with_span_id(self.span_id.clone());
     }
 
+    /// Remembers the cause class of a failed extension call. Only a short token of safe characters is kept.
+    pub fn set_cause(&mut self, cause: &str) {
+        let clean: String = cause.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':')).take(80).collect();
+        self.cause = (!clean.is_empty()).then_some(clean);
+    }
+
     pub fn begin(&mut self, method: &str, path: &str) {
         self.method = method.chars().filter(char::is_ascii_alphabetic).take(8).collect();
         self.route = route_of(path);
@@ -180,6 +190,9 @@ impl Trace {
         line.insert("status".into(), self.status.map_or(serde_json::Value::Null, Into::into));
         if let Some(code) = &self.code {
             line.insert("code".into(), code.clone().into());
+        }
+        if let Some(cause) = &self.cause {
+            line.insert("cause".into(), cause.clone().into());
         }
         line.insert("ms".into(), (self.started.elapsed().as_millis() as u64).into());
         if let Some(sdk) = &self.sdk {
@@ -432,6 +445,21 @@ mod tests {
         assert!(!line.contains("hunter2") && !line.contains("private-query-token-abc"), "{line}");
         t.record("200 OK", "{\"ok\":true}");
         assert!(t.line().contains("\"status\":200") && !t.line().contains("WIRE.BAD_VALUE"), "a later reply replaces the earlier outcome");
+    }
+
+    #[test]
+    fn the_line_names_the_cause_class_of_a_failed_extension_and_keeps_only_safe_characters() {
+        let mut t = Trace::default();
+        t.begin("POST", "/apply");
+        t.record("200 OK", "{\"code\":\"WIRE.EXTENSION_ERROR\",\"ok\":false}");
+        t.set_cause("ctx.read.filter_not_exposed");
+        let v: serde_json::Value = serde_json::from_str(&t.line()).unwrap();
+        assert_eq!((v["code"].as_str(), v["cause"].as_str()), (Some("WIRE.EXTENSION_ERROR"), Some("ctx.read.filter_not_exposed")));
+        // The cause is always one of the server's own classes; the filter is only a second guard that keeps the line one clean token.
+        t.set_cause("a b\n\"c\"; x=y");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&t.line()).unwrap()["cause"], "abcxy");
+        t.set_cause(" \n");
+        assert!(serde_json::from_str::<serde_json::Value>(&t.line()).unwrap().get("cause").is_none());
     }
 
     /// Writes `head` and then `chunks` through a tap over a tiny pipe (so the longer head needs several writes) and

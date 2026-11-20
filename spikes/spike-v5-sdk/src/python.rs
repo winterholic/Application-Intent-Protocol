@@ -41,6 +41,25 @@ fn pascal(name: &str) -> String {
 }
 
 fn value_type(facts: &Value, ty: &str) -> String {
+    try_value_type(facts, ty).unwrap_or_else(|| {
+        let clean = ty.trim_end_matches('?');
+        let clean = clean.split_once('(').map_or(clean, |(name, _)| name);
+        if let Some(resource) = clean.strip_prefix("Ref<").or_else(|| clean.strip_prefix("Id<")).and_then(|s| s.strip_suffix('>')) {
+            if resource == "principal" {
+                panic!("unsupported reference to principal without principal actor: {ty}");
+            }
+            panic!("unsupported or unknown resource reference in type: {ty}");
+        }
+        if let Some(en) = clean.strip_prefix("Enum<").and_then(|s| s.strip_suffix('>')) {
+            panic!("unknown enum: {en}");
+        }
+        panic!("unsupported or unknown type: {ty}")
+    })
+}
+
+/// The same mapping without the panic, for the helpers that were added after the contract had shipped: a type this generator does not know
+/// becomes `Any` there, so that an existing application can still generate its binding.
+fn try_value_type(facts: &Value, ty: &str) -> Option<String> {
     let base = ty.trim_end_matches('?');
     let clean = if let Some((name, _)) = base.split_once('(') { name } else { base };
     let t = if let Some(resource) = clean.strip_prefix("Ref<").or_else(|| clean.strip_prefix("Id<")).and_then(|s| s.strip_suffix('>')) {
@@ -49,33 +68,26 @@ fn value_type(facts: &Value, ty: &str) -> String {
             {
                 "principalId".to_string()
             } else {
-                panic!("unsupported reference to principal without principal actor: {ty}");
+                return None;
             }
         } else if facts.get("resources").and_then(Value::as_object).is_some_and(|r| r.contains_key(resource)) {
             format!("{resource}Id")
         } else {
-            panic!("unsupported or unknown resource reference in type: {ty}");
+            return None;
         }
     } else if let Some(en) = clean.strip_prefix("Enum<").and_then(|s| s.strip_suffix('>')) {
-        if let Some(variants) = facts.get("enums").and_then(|e| e.get(en)).and_then(Value::as_array) {
-            format!("Literal[{}]", variants.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "))
-        } else {
-            panic!("unknown enum: {en}");
-        }
+        let variants = facts.get("enums").and_then(|e| e.get(en)).and_then(Value::as_array)?;
+        format!("Literal[{}]", variants.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "))
     } else {
         match clean {
             "Text" | "Email" | "Url" | "Time" | "Date" => "str".to_string(),
             "Int" => "int".to_string(),
             "Bool" => "bool".to_string(),
             d if d.starts_with("Decimal<") && d.ends_with('>') => "str".to_string(),
-            _ => panic!("unsupported or unknown type: {ty}"),
+            _ => return None,
         }
     };
-    if ty.ends_with('?') {
-        format!("Optional[{t}]")
-    } else {
-        t
-    }
+    Some(if ty.ends_with('?') { format!("Optional[{t}]") } else { t })
 }
 
 /// Apply input TypedDicts and checked-name helpers. Input optionality is independent of nullability.
@@ -170,6 +182,7 @@ pub fn contract_module_python(facts: &Value, wire: IdWire) -> String {
             writeln!(s,"\ndef apply_{}_{}(client: Client, target: {}{params}, *, key: str | None = None) -> dict:\n    return client.apply({{\"apply\": \"{res}.{action}\", \"target\": dict(target){body}}}, key=key)\n",snake(res),snake(action),target_types.join(" | ")).unwrap();
         }
     }
+    push_create_and_write_helpers(&mut s, facts);
     if let Some(views) = facts.get("views").and_then(Value::as_object) {
         for (view_name, vf) in views {
             if let Some(fields) = vf.get("fields").and_then(Value::as_object) {
@@ -246,4 +259,57 @@ pub fn contract_module_python(facts: &Value, wire: IdWire) -> String {
         writeln!(s, "OperationOutput = {}\n", if op_outputs.is_empty() { "dict".into() } else { union(&op_outputs) }).unwrap();
     }
     s
+}
+
+/// Typed `create_<resource>` and `write_<resource>_<extension>` helpers, the Python side of the TypeScript `bundle` create and
+/// `writeExtension`. They delegate to `Client.create` and `Client.write_extension`, so the key, the lost-response recovery and the
+/// server's validation are the SDK's. A type the generator does not know becomes `Any` here instead of stopping the generation.
+fn push_create_and_write_helpers(s: &mut String, facts: &Value) {
+    let ty = |declared: &str| try_value_type(facts, declared).unwrap_or_else(|| "Any".to_string());
+    for (res, rf) in facts["resources"].as_object().unwrap() {
+        if let Some(allowed) = rf["exposeCreate"]["fields"].as_array() {
+            let fields = allowed
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(|name| {
+                    let declared = rf["fields"][name]["ty"].as_str()?;
+                    // The create contract leaves out only fields that take null; every other field is required.
+                    let py = ty(declared);
+                    Some(format!("    {name:?}: {},", if declared.ends_with('?') { format!("NotRequired[{py}]") } else { py }))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            writeln!(s, "\n{res}CreateValues = TypedDict(\"{res}CreateValues\", {{\n{fields}\n}})").unwrap();
+            writeln!(
+                s,
+                "\ndef create_{}(client: Client, values: {res}CreateValues, *, key: str | None = None) -> dict:\n    \"\"\"One row of the exposed create `{res}`; the new id is `result[\"created\"][0][\"id\"]`.\"\"\"\n    return client.create({res:?}, dict(values), key=key)\n",
+                snake(res)
+            )
+            .unwrap();
+        }
+        for (name, ex) in rf["extensions"].as_object().into_iter().flatten().filter(|(_, ex)| ex["kind"] == "write" && ex["internal"] != true) {
+            let prefix = format!("{res}{}", name.chars().next().unwrap().to_uppercase().collect::<String>() + &name[1..]);
+            for (key, suffix, optional) in [("input", "WriteInput", true), ("output", "WriteOutput", false)] {
+                let fields = ex[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|field| {
+                        let (fname, declared) = (field[0].as_str()?, field[1].as_str()?);
+                        let py = ty(declared);
+                        Some(format!("    {fname:?}: {},", if optional && declared.ends_with('?') { format!("NotRequired[{py}]") } else { py }))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                writeln!(s, "\n{prefix}{suffix} = TypedDict(\"{prefix}{suffix}\", {{\n{fields}\n}})").unwrap();
+            }
+            writeln!(
+                s,
+                "\ndef write_{}_{}(client: Client, input: {prefix}WriteInput, *, key: str | None = None) -> dict:\n    \"\"\"The write extension `{res}.{name}`. A business refusal is the failure result `WIRE.EXTENSION_REJECTED` (read it with `aip_sdk.extension_rejection`); the output of a success is `{prefix}WriteOutput`.\"\"\"\n    return client.write_extension(\"{res}.{name}\", dict(input), key=key)\n",
+                snake(res),
+                snake(name)
+            )
+            .unwrap();
+        }
+    }
 }

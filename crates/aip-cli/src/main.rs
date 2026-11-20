@@ -8,7 +8,14 @@ mod explain;
 mod registry;
 
 #[derive(Parser)]
-#[command(name = "aip", version, about = "AIP compiler and runtime")]
+#[command(
+    name = "aip",
+    version,
+    about = "AIP compiler and runtime",
+    after_help = "Commands marked [1.0] are the supported 1.0 path: `aip service` for definitions written in `.aip` (check, gen, init, serve, ...), and the code references.\n\
+Commands marked [PoC] belong to the PoC language and runtime (`.aipoc` programs). They stay available, but they are not part of the 1.0 contract.\n\
+Start with `aip service --help`."
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -16,39 +23,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Run the caller-contract product service, with external access-token authentication
+    /// [1.0] Run the caller-contract product service, with external access-token authentication
     Service {
         #[command(subcommand)]
         command: aip_service::Command,
     },
-    /// Parse a definition file and print the AST as JSON
-    Parse { file: PathBuf },
-    /// Parse and type-check a definition file
-    Check {
-        file: PathBuf,
-        #[arg(long)]
-        json: bool,
-    },
-    /// Print the PostgreSQL DDL for a definition
-    Ddl { file: PathBuf },
-    /// Print the compiled execution plans (IR) as JSON
-    Ir { file: PathBuf },
-    /// Print the canonical semantic IR (Core IR) as JSON, or its digest
-    Core {
-        file: PathBuf,
-        #[arg(long)]
-        digest: bool,
-    },
-    /// Explain one intent: its steps and exact SQL
-    Explain { file: PathBuf, intent: String },
-    /// Explain an error code (for example POC.E103, DEF.UNKNOWN_FIELD or WIRE.BAD_VALUE): meaning, fix, and for the wire and runtime codes the retry
+    /// [1.0] Explain an error code (for example POC.E103, DEF.UNKNOWN_FIELD or WIRE.BAD_VALUE): meaning, fix, and for the wire and runtime codes the retry
     /// guidance. A code of an old scheme (an `AIP-` or `AIP.` prefix, or a bare product name such as UNKNOWN_FIELD) is mapped to its new name
     ExplainCode {
         code: String,
         #[arg(long)]
         json: bool,
     },
-    /// List every error code. Codes are AREA.NAME: DEF (product definition checker), WIRE (product HTTP API), CLIENT (raised by the SDKs), POC (PoC language and runtime).
+    /// [1.0] List every error code. Codes are AREA.NAME: DEF (product definition checker), WIRE (product HTTP API), CLIENT (raised by the SDKs), POC (PoC language and runtime).
     /// `--area poc|def|wire|client` limits the listing (default all), `--json` prints the entries, `--markdown` the generated spec document of one area
     Diagnostics {
         #[arg(long)]
@@ -58,7 +45,27 @@ enum Cmd {
         #[arg(long, default_value = "all")]
         area: String,
     },
-    /// Apply the schema to DATABASE_URL: the first time everything is created, later the change from the deployed program is planned and applied
+    /// [PoC] Parse a definition file and print the AST as JSON
+    Parse { file: PathBuf },
+    /// [PoC] Parse and type-check a definition file
+    Check {
+        file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// [PoC] Print the PostgreSQL DDL for a definition
+    Ddl { file: PathBuf },
+    /// [PoC] Print the compiled execution plans (IR) as JSON
+    Ir { file: PathBuf },
+    /// [PoC] Print the canonical semantic IR (Core IR) as JSON, or its digest
+    Core {
+        file: PathBuf,
+        #[arg(long)]
+        digest: bool,
+    },
+    /// [PoC] Explain one intent: its steps and exact SQL
+    Explain { file: PathBuf, intent: String },
+    /// [PoC] Apply the schema to DATABASE_URL: the first time everything is created, later the change from the deployed program is planned and applied
     /// in one transaction (`--plan` only prints it; `--reset` drops and recreates)
     Migrate {
         file: PathBuf,
@@ -71,9 +78,9 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Re-encrypt every encrypted value that is not under the current key (the first of AIP_ENCRYPTION_KEYS); safe to run again
+    /// [PoC] Re-encrypt every encrypted value that is not under the current key (the first of AIP_ENCRYPTION_KEYS); safe to run again
     Rekey { file: PathBuf },
-    /// Run the HTTP runtime
+    /// [PoC] Run the HTTP runtime
     Run {
         file: PathBuf,
         #[arg(long, default_value_t = 4000)]
@@ -88,7 +95,7 @@ enum Cmd {
         #[arg(long)]
         allow_private_webhook_targets: bool,
     },
-    /// Compare the contract of a definition with a deployed version: breaking changes, behavior changes, compatible ones (exit 1 when something breaks)
+    /// [PoC] Compare the contract of a definition with a deployed version: breaking changes, behavior changes, compatible ones (exit 1 when something breaks)
     Diff {
         file: PathBuf,
         /// A Core IR JSON file (`aip core`), or `deployed` for the program recorded in the database of DATABASE_URL
@@ -97,13 +104,13 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Issue a signed actor token (uses AIP_SECRET)
+    /// [PoC] Issue a signed actor token (uses AIP_SECRET)
     Token {
         actor: String,
         #[arg(long, default_value_t = 86400)]
         ttl: i64,
     },
-    /// Print the machine-readable contract (`--operator`: the server-side setup instead: webhook signing, job file retention)
+    /// [PoC] Print the machine-readable contract (`--operator`: the server-side setup instead: webhook signing, job file retention)
     Contract {
         file: PathBuf,
         #[arg(long)]
@@ -112,9 +119,9 @@ enum Cmd {
         #[arg(long)]
         pretty: bool,
     },
-    /// Generate a typed TypeScript client from the contract
+    /// [PoC] Generate a typed TypeScript client from the contract
     GenTs { file: PathBuf, out: PathBuf },
-    /// Parse every ```aipoc block (PoC programs) in markdown files under the given paths; ```aip blocks are product definitions and are left to their own checks
+    /// [PoC] Parse every ```aipoc block (PoC programs) in markdown files under the given paths; ```aip blocks are product definitions and are left to their own checks
     CheckDocs {
         #[arg(default_values = ["docs", "spec"])]
         paths: Vec<PathBuf>,

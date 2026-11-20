@@ -71,7 +71,7 @@ async fn invalid_origin_configuration_is_rejected_before_binding() {
             "127.0.0.1:0".parse().unwrap(),
             BAD_DB.into(),
             None,
-            ServerOptions { allowed_origins: vec![origin.into()] },
+            ServerOptions { allowed_origins: vec![origin.into()], ..ServerOptions::default() },
         )
         .await;
         assert!(result.is_err(), "accepted {origin:?}");
@@ -87,7 +87,7 @@ async fn explicit_preflight_is_route_and_header_bounded_before_authentication() 
         "127.0.0.1:0".parse().unwrap(),
         BAD_DB.into(),
         None,
-        ServerOptions { allowed_origins: vec![origin.into()] },
+        ServerOptions { allowed_origins: vec![origin.into()], ..ServerOptions::default() },
     )
     .await
     .unwrap();
@@ -127,7 +127,7 @@ async fn allowed_origin_can_read_authentication_contract_and_framing_errors() {
         "127.0.0.1:0".parse().unwrap(),
         BAD_DB.into(),
         None,
-        ServerOptions { allowed_origins: vec![origin.into()] },
+        ServerOptions { allowed_origins: vec![origin.into()], ..ServerOptions::default() },
     )
     .await
     .unwrap();

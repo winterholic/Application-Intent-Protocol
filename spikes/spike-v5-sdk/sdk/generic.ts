@@ -210,9 +210,14 @@ export type OperationBinding<C extends ContractShape<C>, A extends ApplyContract
   readonly __operations?: O;
   readonly operations: OperationDescriptors<O>;
 };
+/**
+ * 쓰기 확장의 결과. 실패 중 `code`가 `WIRE.EXTENSION_REJECTED`이면 확장이 `ctx.reject(code, message)`로 업무상 거절한 것이고,
+ * `appCode`가 확장이 고른 업무 코드(분기에 쓴다), `msg`가 사용자에게 보일 문장이다. 쓴 것은 모두 되돌려졌다.
+ * `WIRE.EXTENSION_ERROR`는 확장 코드의 실패다. 개발 모드 서버만 원인 분류 `cause`와 `detail`을 함께 돌려준다.
+ */
 export type WriteExtensionResult<O> =
   | { readonly ok: true; readonly output: DeepReadonly<O>; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
-  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string; readonly retry?: RetryGuidance };
+  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string; readonly retry?: RetryGuidance; readonly appCode?: string; readonly cause?: string; readonly detail?: string };
 
 
 export type ReadDescriptors<C extends ContractShape<C>> = {

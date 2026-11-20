@@ -282,6 +282,11 @@ pub struct Config {
     pub auth: aip_auth::Config,
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// Development only. A failed write extension then also answers with `cause` (the class of its first failure) and `detail`;
+    /// the request log line names the `cause` in every mode. Leave it off in production: the response then says no more than
+    /// `WIRE.EXTENSION_ERROR`.
+    #[serde(default)]
+    pub developer_diagnostics: bool,
     pub workers: Option<Workers>,
     #[serde(default)]
     pub static_mounts: Vec<infrastructure::MountConfig>,
@@ -632,12 +637,14 @@ fn configuration_with_mode(path: &Path, gate: Gate) -> Result<Config, Value> {
             return Err(error("BAD_CONFIG", "database_adapter는 postgres, mysql 또는 mariadb여야 함"));
         }
     }
-    spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins.clone() }.validate_product().map_err(|_| {
-        error(
-            "BAD_ORIGIN",
-            "allowed_origins는 정규화된 HTTPS origin(또는 로컬 HTTP origin)이어야 함: 경로·끝 슬래시·와일드카드 없이 scheme://host[:port]",
-        )
-    })?;
+    spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins.clone(), ..Default::default() }.validate_product().map_err(
+        |_| {
+            error(
+                "BAD_ORIGIN",
+                "allowed_origins는 정규화된 HTTPS origin(또는 로컬 HTTP origin)이어야 함: 경로·끝 슬래시·와일드카드 없이 scheme://host[:port]",
+            )
+        },
+    )?;
     let parent = path.parent().unwrap_or(Path::new("."));
     if let aip_auth::JwksSource::File { path } = &mut config.auth.jwks
         && path.is_relative()
@@ -1708,7 +1715,8 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
             Language::Python => spike_v6_transport::server::WorkerLang::Python,
         },
     });
-    let options = spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins };
+    let options =
+        spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins, developer_diagnostics: config.developer_diagnostics };
     #[cfg(unix)]
     let mut termination =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|_| error("SIGNAL_CONFIG", "종료 signal 등록 실패"))?;

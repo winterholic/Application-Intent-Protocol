@@ -13,6 +13,127 @@ use tokio_postgres::{Client, Transaction};
 pub const MAX_CTX_CALLS: usize = 20;
 const COMMIT_MARGIN_MS: u64 = 300;
 
+/// A business code an extension hands to the caller with `ctx.reject`: upper-case ASCII, digits and `_`, so it can never look like an
+/// `AREA.NAME` platform code (`WIRE.FORBIDDEN`) and stays a stable key a client can switch on.
+pub const MAX_REJECT_CODE_BYTES: usize = 48;
+/// The text beside the code is shown to the end user as written, so it is short and free of control and invisible characters.
+pub const MAX_REJECT_MESSAGE_CHARS: usize = 200;
+/// The key of `ctx.data.apply` and `ctx.data.create` names the call for the extension author and for the durable job journal.
+pub const MAX_CTX_KEY_BYTES: usize = 100;
+const KEY_FORMAT_MSG: &str = "ctx key 형식 오류";
+
+fn invisible_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{E0000}'..='\u{E007F}'
+    )
+}
+
+pub fn valid_app_code(code: &str) -> bool {
+    let mut chars = code.chars();
+    code.len() <= MAX_REJECT_CODE_BYTES
+        && chars.next().is_some_and(|first| first.is_ascii_uppercase())
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+pub fn valid_reject_message(message: &str) -> bool {
+    !message.trim().is_empty()
+        && message.chars().count() <= MAX_REJECT_MESSAGE_CHARS
+        && !message.chars().any(|c| c.is_control() || invisible_format(c))
+}
+
+/// Puts a short tag in front of the `msg` of a `Reject`, which is shared by every path: the cause class of a refused extension
+/// (`ctx.read.filter_not_exposed`) or the business code of a rejection (`INSUFFICIENT_STOCK`).
+pub fn tagged(tag: &str, text: impl std::fmt::Display) -> String {
+    format!("[{tag}] {text}")
+}
+
+/// Splits a `msg` made by [`tagged`].
+pub fn untag(msg: &str) -> Option<(&str, &str)> {
+    let rest = msg.strip_prefix('[')?;
+    let (tag, text) = rest.split_once("] ")?;
+    (!tag.is_empty() && tag.len() <= 80 && tag.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_'))).then_some((tag, text))
+}
+
+/// A refused `ctx` call of a write extension, kept so that the caller of the extension can be told why the whole call failed.
+struct Poison {
+    cause: String,
+    detail: String,
+}
+
+fn op_label(message: &Value) -> &'static str {
+    match message["op"].as_str() {
+        Some("apply") => "apply",
+        Some("read") => "read",
+        Some("create") => "create",
+        Some("mongo") => "mongo",
+        Some("redis") => "redis",
+        _ => "call",
+    }
+}
+
+/// The class of a refused ctx call, named for what the extension author has to change. The codes are the server's own, never text the
+/// extension wrote, so the class is safe to log.
+fn ctx_cause(op: &str, error: &Reject) -> String {
+    let reason = match error.code {
+        "WIRE.ACCESS_NOT_DECLARED" => "access_not_declared".to_string(),
+        "WIRE.FILTER_NOT_ALLOWED" => "filter_not_exposed".to_string(),
+        "WIRE.FIELD_NOT_EXPOSED" => "field_not_exposed".to_string(),
+        "WIRE.UNKNOWN_KEY" => "unknown_key".to_string(),
+        "WIRE.UNSUPPORTED" => "unsupported".to_string(),
+        "WIRE.TOKEN_EXPIRED" => "stale_ctx".to_string(),
+        "WIRE.BAD_VALUE" if error.msg == KEY_FORMAT_MSG => "key_format".to_string(),
+        code => code.strip_prefix("WIRE.").unwrap_or(code).to_ascii_lowercase(),
+    };
+    format!("ctx.{op}.{reason}")
+}
+
+fn clip_detail(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control() && !invisible_format(*c)).take(MAX_REJECT_MESSAGE_CHARS).collect()
+}
+
+/// The `EXTENSION_ERROR` of an extension that ended after a refused ctx call, or by raising: tagged with the class of the first cause.
+/// The `msg` reads `[cause] detail | base`: `base` stays the last segment, as it was before the tag existed.
+fn extension_error(base: String, poison: Option<&Poison>, raised: Option<&Value>) -> Reject {
+    let (cause, detail) = match (poison, raised) {
+        (Some(poison), _) => (poison.cause.as_str(), poison.detail.clone()),
+        (None, Some(error)) => ("extension.exception", clip_detail(error["message"].as_str().unwrap_or(""))),
+        (None, None) => return Reject { code: "WIRE.EXTENSION_ERROR", msg: base },
+    };
+    let text = if detail.is_empty() { base } else { format!("{detail} | {base}") };
+    Reject { code: "WIRE.EXTENSION_ERROR", msg: tagged(cause, text) }
+}
+
+/// Splits the text of a tagged `EXTENSION_ERROR` into the author-facing detail (what the refused call or the exception said) and the base.
+pub fn split_detail(text: &str) -> (Option<&str>, &str) {
+    match text.rsplit_once(" | ") {
+        Some((detail, base)) => (Some(detail), base),
+        None => (None, text),
+    }
+}
+
+/// `ctx.reject(code, message)` of the worker: a refusal on business grounds. A code or text outside the limits is a bug of the extension.
+fn rejection(error: &Value) -> Reject {
+    match (error["appCode"].as_str(), error["message"].as_str()) {
+        (Some(code), Some(message)) if valid_app_code(code) && valid_reject_message(message) => {
+            Reject { code: "WIRE.EXTENSION_REJECTED", msg: tagged(code, message) }
+        }
+        _ => Reject {
+            code: "WIRE.EXTENSION_ERROR", msg: tagged("extension.reject_invalid", "ctx.reject의 코드나 메시지가 허용 범위를 벗어남")
+        },
+    }
+}
+
+/// The `key` an extension passes to `ctx.data.apply`. The whole extension call already runs in one transaction under the idempotency key of
+/// the outer request, so a stored result of the outer call replays without running the extension again; the inner key therefore has
+/// nothing to deduplicate here and is only checked, then dropped (durable jobs journal it instead).
+fn check_ctx_key(key: &Value) -> Result<(), Reject> {
+    match key.as_str() {
+        Some(text) if !text.is_empty() && text.len() <= MAX_CTX_KEY_BYTES && !text.chars().any(|c| c.is_control() || invisible_format(c)) => Ok(()),
+        _ => rej("WIRE.BAD_VALUE", KEY_FORMAT_MSG),
+    }
+}
+
 /// 실행 효과와 caller의 추가 결과 기록을 함께 커밋하기 위한 private spike 경계.
 pub struct PreparedWrite {
     pub output: Value,
@@ -137,6 +258,7 @@ pub async fn invoke_write_action(
     let token = crate::grant_token('w', invoke_id);
     w.send_before(&json!({"type":"invoke","invoke":invoke_id,"impl":x["implementation"],"input":input,"token":token}), expires).await?;
     let mut poisoned: Option<&'static str> = None;
+    let mut poison: Option<Poison> = None;
     let mut calls = 0usize;
     let result: Result<Value, Reject> = loop {
         let left = expires.saturating_duration_since(Instant::now());
@@ -245,6 +367,7 @@ pub async fn invoke_write_action(
                 let reply = reply.inspect_err(|error| {
                     if mine {
                         poisoned.get_or_insert(error.code);
+                        poison.get_or_insert_with(|| Poison { cause: ctx_cause(op_label(&message), error), detail: clip_detail(&error.msg) });
                     }
                 });
                 let response = match reply {
@@ -275,11 +398,16 @@ pub async fn invoke_write_action(
                         _ => {}
                     }
                 }
+                if let (None, Some(error)) = (poisoned, message.get("error")) {
+                    if error["code"] == "WIRE.EXTENSION_REJECTED" {
+                        break Err(rejection(error));
+                    }
+                }
                 if let Some(code) = poisoned {
-                    break rej("WIRE.EXTENSION_ERROR", format!("ctx 실패 뒤 성공 반환: {code}"));
+                    break Err(extension_error(format!("ctx 실패 뒤 성공 반환: {code}"), poison.as_ref(), None));
                 }
                 if let Some(error) = message.get("error") {
-                    break rej("WIRE.EXTENSION_ERROR", format!("확장 실패: {}", error["code"].as_str().unwrap_or("?")));
+                    break Err(extension_error(format!("확장 실패: {}", error["code"].as_str().unwrap_or("?")), None, Some(error)));
                 }
                 let output = message["output"].clone();
                 break validate_write_output(facts, name, &output, wire).map(|_| output);
@@ -401,6 +529,7 @@ async fn run_write_in(
     w.send_before(&json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token }), expires).await?;
     // ctx 쓰기가 한 번이라도 실패하면 확장이 오류를 잡고 성공을 돌려줘도 커밋하지 않는다(트랜잭션 오염 방지).
     let mut poisoned: Option<&'static str> = None;
+    let mut poison: Option<Poison> = None;
     let mut calls = 0usize;
     let knobs = Knobs { audit_via: Some("extension"), fresh_now_after_lock: true, internal: true, ..Knobs::default() };
     let result: Result<Value, Reject> = loop {
@@ -457,6 +586,7 @@ async fn run_write_in(
                 let reply = reply.map_err(|e| before_commit_rejection(tx, e));
                 if let (Err(e), true) = (&reply, mine) {
                     poisoned.get_or_insert(e.code);
+                    poison.get_or_insert_with(|| Poison { cause: ctx_cause(op_label(&m), e), detail: clip_detail(&e.msg) });
                 }
                 let msg = match reply {
                     Ok(v) => json!({ "type": "reply", "call": m["call"], "value": v }),
@@ -473,11 +603,22 @@ async fn run_write_in(
                 if poisoned == Some("WIRE.DB_UNAVAILABLE") {
                     break Err(lost_before_commit());
                 }
-                if let Some(e) = m.get("error") {
-                    break rej("WIRE.EXTENSION_ERROR", format!("확장 실패: {}", e["code"].as_str().unwrap_or("?")));
+                if let (None, Some(e)) = (poisoned, m.get("error")) {
+                    if e["code"] == "WIRE.EXTENSION_REJECTED" {
+                        break Err(rejection(e));
+                    }
                 }
+                // A refused ctx call is the first cause even when the extension then raised: what it raised is only the symptom.
                 if let Some(code) = poisoned {
-                    break rej("WIRE.EXTENSION_ERROR", format!("ctx 쓰기 실패 뒤 성공 반환: {code}"));
+                    let base = if m.get("error").is_some() {
+                        format!("확장 실패: {}", m["error"]["code"].as_str().unwrap_or("?"))
+                    } else {
+                        format!("ctx 쓰기 실패 뒤 성공 반환: {code}")
+                    };
+                    break Err(extension_error(base, poison.as_ref(), None));
+                }
+                if let Some(e) = m.get("error") {
+                    break Err(extension_error(format!("확장 실패: {}", e["code"].as_str().unwrap_or("?")), None, Some(e)));
                 }
                 let out = m["output"].clone();
                 break check_write_record(facts, &x["output"], &out, "출력", wire).map(|_| out);
@@ -590,6 +731,10 @@ fn ctx_request(message: &Value, wire: IdWire) -> Result<Value, Reject> {
     // A patch transition takes the caller's values and the expected current values (GENERAL-UPDATE); they are not part of the target.
     let mut request = json!({"apply":message["name"]});
     if let Some(object) = target.as_object_mut() {
+        match object.remove("key") {
+            None | Some(Value::Null) => {}
+            Some(key) => check_ctx_key(&key)?,
+        }
         for key in ["values", "expect"] {
             if let Some(value) = object.remove(key) {
                 request[key] = value;
@@ -625,9 +770,46 @@ mod ctx_request_tests {
     fn a_patch_transition_carries_values_and_expect_next_to_its_target() {
         let message = json!({"name": "R.t", "input": {"ids": ["u"], "values": {"a": 1}, "expect": {"lock_version": 3}, "key": "k"}});
         let request = ctx_request(&message, IdWire::Legacy).unwrap();
-        assert_eq!(request, json!({"apply": "R.t", "values": {"a": 1}, "expect": {"lock_version": 3}, "target": {"ids": ["u"], "key": "k"}}));
+        // The key names the call for the author; it is not part of the target the transition planner checks (C1).
+        assert_eq!(request, json!({"apply": "R.t", "values": {"a": 1}, "expect": {"lock_version": 3}, "target": {"ids": ["u"]}}));
         let plain = ctx_request(&json!({"name": "R.t", "input": {"ids": ["u"]}}), IdWire::Legacy).unwrap();
         assert_eq!(plain, json!({"apply": "R.t", "target": {"ids": ["u"]}}));
+    }
+
+    #[test]
+    fn a_key_outside_the_documented_form_is_refused_and_a_null_key_is_absent() {
+        let with = |key: serde_json::Value| ctx_request(&json!({"name": "R.t", "input": {"ids": ["u"], "key": key}}), IdWire::Legacy);
+        assert_eq!(with(json!(null)).unwrap(), json!({"apply": "R.t", "target": {"ids": ["u"]}}));
+        for bad in [json!(""), json!(7), json!("a".repeat(101)), json!("tab\there"), json!("zero\u{200B}width")] {
+            let error = with(bad.clone()).unwrap_err();
+            assert_eq!((error.code, error.msg.as_str()), ("WIRE.BAD_VALUE", "ctx key 형식 오류"), "{bad}");
+        }
+        assert!(with(json!("a".repeat(100))).is_ok());
+    }
+
+    #[test]
+    fn business_codes_and_messages_keep_to_their_limits() {
+        use super::{untag, valid_app_code, valid_reject_message};
+        for ok in ["OK1", "E1", &"A".repeat(48)] {
+            assert!(valid_app_code(ok), "{ok}");
+        }
+        for bad in ["", "insufficient", "WIRE.FORBIDDEN", "1ST", "A-B", "A B", &"A".repeat(49), "한글"] {
+            assert!(!valid_app_code(bad), "{bad}");
+        }
+        assert!(valid_reject_message("재고가 부족합니다"));
+        assert!(valid_reject_message(&"가".repeat(200)));
+        for bad in ["", "   ", "line\nbreak", "bell\u{7}", "zero\u{200B}width", &"가".repeat(201)] {
+            assert!(!valid_reject_message(bad), "{bad:?}");
+        }
+        assert_eq!(untag("[AB] 재고"), Some(("AB", "재고")));
+        assert_eq!(untag("[ctx.read.filter_not_exposed] x | y"), Some(("ctx.read.filter_not_exposed", "x | y")));
+        assert_eq!(
+            super::split_detail("`id` 필터는 계약에 없음 | 확장 실패: WIRE.FILTER_NOT_ALLOWED"),
+            (Some("`id` 필터는 계약에 없음"), "확장 실패: WIRE.FILTER_NOT_ALLOWED")
+        );
+        assert_eq!(super::split_detail("확장 실패: X"), (None, "확장 실패: X"));
+        assert_eq!(untag("no tag"), None);
+        assert_eq!(untag("[bad tag] x"), None);
     }
 }
 
@@ -703,6 +885,129 @@ mod duplicate_create_conflict_tests {
             Err(error) => error,
         };
         assert_eq!(error.code, "WIRE.CONFLICT");
+    }
+}
+
+#[cfg(test)]
+mod rejection_on_the_action_path_tests {
+    use super::{invoke_write_action, untag, WriteActionHost, WriteWorker};
+    use crate::host::HostFuture;
+    use serde_json::{json, Value};
+    use spike_v2_read::id_wire::IdWire;
+    use spike_v2_read::plan::{Caller, Reject};
+    use std::{collections::VecDeque, time::Instant};
+
+    /// A worker that first makes one ctx call (`first`) and then ends with `done`.
+    struct Script {
+        lines: VecDeque<String>,
+        first: Value,
+        done: Value,
+    }
+
+    impl WriteWorker for Script {
+        fn next_invoke_id(&mut self) -> u64 {
+            1
+        }
+
+        fn read_line<'a>(&'a mut self) -> HostFuture<'a, std::io::Result<Option<String>>> {
+            Box::pin(async move { Ok(self.lines.pop_front()) })
+        }
+
+        fn send_before<'a>(&'a mut self, message: &'a Value, _: Instant) -> HostFuture<'a, Result<(), Reject>> {
+            Box::pin(async move {
+                if message["type"] == "invoke" {
+                    let token = message["token"].clone();
+                    let mut call = self.first.clone();
+                    call["type"] = json!("call");
+                    call["call"] = json!(1);
+                    call["token"] = token;
+                    self.lines.push_back(call.to_string());
+                    let mut done = self.done.clone();
+                    done["type"] = json!("done");
+                    done["invoke"] = json!(1);
+                    self.lines.push_back(done.to_string());
+                }
+                Ok(())
+            })
+        }
+    }
+
+    struct Host {
+        refuse: Option<&'static str>,
+        seen: Vec<Value>,
+    }
+
+    impl WriteActionHost for Host {
+        fn apply<'a>(&'a mut self, _: &'a str, request: &'a Value, _: &'a Caller, _: IdWire) -> HostFuture<'a, Result<Value, Reject>> {
+            self.seen.push(request.clone());
+            let refuse = self.refuse;
+            Box::pin(async move {
+                match refuse {
+                    Some(code) => Err(Reject { code, msg: "서버 문장".into() }),
+                    None => Ok(json!({"changed": ["1"], "unchanged": []})),
+                }
+            })
+        }
+    }
+
+    async fn run(first: Value, done: Value, refuse: Option<&'static str>) -> (Result<(), Reject>, Vec<Value>) {
+        let facts = json!({"resources":{"Order":{"extensions":{"place":{
+            "kind":"write", "input":[], "deadlineMs":5000, "implementation":"test", "output":[],
+            "access":{"Order.pay":{}}
+        }}}}});
+        let caller = Caller { actor_id: Some(1), now: "2026-10-22T00:00:00Z".into() };
+        let mut host = Host { refuse, seen: vec![] };
+        let result = invoke_write_action(
+            &mut host,
+            &mut Script { lines: VecDeque::new(), first, done },
+            &facts,
+            "Order.place",
+            &json!({}),
+            &caller,
+            IdWire::Legacy,
+        )
+        .await;
+        (result.map(|_| ()), host.seen)
+    }
+
+    fn pay_with_key() -> Value {
+        json!({"op": "apply", "name": "Order.pay", "input": {"ids": ["1"], "key": "pay-1"}})
+    }
+
+    #[tokio::test]
+    async fn a_valid_rejection_reaches_the_caller_with_its_business_code_and_text() {
+        let done = json!({"error": {"code": "WIRE.EXTENSION_REJECTED", "appCode": "OOS", "message": "재고가 부족합니다"}});
+        let (result, seen) = run(pay_with_key(), done, None).await;
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "WIRE.EXTENSION_REJECTED");
+        assert_eq!(untag(&error.msg), Some(("OOS", "재고가 부족합니다")));
+        assert_eq!(seen, vec![json!({"apply": "Order.pay", "target": {"ids": ["1"]}})], "the key never reaches the transition planner");
+    }
+
+    #[tokio::test]
+    async fn a_rejection_outside_the_limits_or_after_a_refused_call_is_an_extension_error() {
+        for (app_code, message) in [("lower", "x"), ("WIRE.FORBIDDEN", "x"), ("TL1", &"x".repeat(201)), ("ML1", "a\nb")] {
+            let done = json!({"error": {"code": "WIRE.EXTENSION_REJECTED", "appCode": app_code, "message": message}});
+            let error = run(pay_with_key(), done, None).await.0.unwrap_err();
+            assert_eq!((error.code, untag(&error.msg).map(|t| t.0)), ("WIRE.EXTENSION_ERROR", Some("extension.reject_invalid")), "{app_code}");
+        }
+        let done = json!({"error": {"code": "WIRE.EXTENSION_REJECTED", "appCode": "OOS", "message": "x"}});
+        let error = run(pay_with_key(), done, Some("WIRE.FORBIDDEN")).await.0.unwrap_err();
+        assert_eq!((error.code, untag(&error.msg).map(|t| t.0)), ("WIRE.EXTENSION_ERROR", Some("ctx.apply.forbidden")));
+        assert!(error.msg.ends_with("ctx 실패 뒤 성공 반환: WIRE.FORBIDDEN") || error.msg.ends_with("WIRE.FORBIDDEN"), "{}", error.msg);
+    }
+
+    #[tokio::test]
+    async fn a_raising_extension_names_extension_exception_and_a_refused_call_names_its_class() {
+        let raised = json!({"error": {"code": "WIRE.EXTENSION_ERROR", "message": "boom"}});
+        let error = run(pay_with_key(), raised, None).await.0.unwrap_err();
+        assert_eq!((error.code, untag(&error.msg).map(|t| t.0)), ("WIRE.EXTENSION_ERROR", Some("extension.exception")));
+        let bad_key = json!({"op": "apply", "name": "Order.pay", "input": {"ids": ["1"], "key": ""}});
+        let error = run(bad_key, json!({"output": {}}), None).await.0.unwrap_err();
+        assert_eq!((error.code, untag(&error.msg).map(|t| t.0)), ("WIRE.EXTENSION_ERROR", Some("ctx.apply.key_format")));
+        let undeclared = json!({"op": "apply", "name": "Order.cancel", "input": {"ids": ["1"]}});
+        let error = run(undeclared, json!({"output": {}}), None).await.0.unwrap_err();
+        assert_eq!(untag(&error.msg).map(|t| t.0), Some("ctx.apply.access_not_declared"));
     }
 }
 
