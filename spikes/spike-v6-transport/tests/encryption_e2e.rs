@@ -11,6 +11,7 @@ use tokio_postgres::NoTls;
 const SPEC: &str = r#"
 resource Member {
   fields { id: Id; name: Text }
+  expose create { allow true; fields name }
 }
 actor Member
 
@@ -36,6 +37,7 @@ resource SecretItem {
     budget { rows 100; depth 1; deadline 2s; cost 100 }
   }
   expose apply update_title { target id; bulk maxRows 10 }
+  expose compose { bulk maxRows 10; transitions update_title }
 }
 "#;
 
@@ -136,6 +138,46 @@ async fn encryption_read_write_zero_plaintext_and_idempotency_rotation() {
     assert_eq!(apply_res["ok"], true, "apply failed: {apply_res}");
     let created_id = apply_res["created"][0]["id"].as_i64().expect("created id");
     assert!(created_id > 0, "valid created id");
+
+    // An encrypted transaction rejects unsupported bundle operations before any write or journal entry.
+    let unsupported_requests = [
+        (
+            "encrypted-compose",
+            json!({
+                "atomic": [
+                    create_body["request"]["atomic"][0],
+                    {"compose": "SecretItem", "targets": {"ids": [created_id]}, "steps": [{"transition": "update_title"}]}
+                ]
+            }),
+        ),
+        (
+            "encrypted-refs",
+            json!({
+                "atomic": [
+                    {"create": "Member", "values": {"name": "bundle owner"}},
+                    {
+                        "create": "SecretItem",
+                        "values": {"title": "bundle item", "secret_body": plaintext_body, "secret_tag": plaintext_tag},
+                        "refs": {"owner": {"created": 0}}
+                    }
+                ]
+            }),
+        ),
+    ];
+    for (key, request) in unsupported_requests {
+        let rejection = spike_v6_transport::handle(&mut db, &facts, "/apply", &json!({"key": key, "request": request}), &caller, wire).await;
+        assert_eq!(rejection["code"], "WIRE.UNSUPPORTED", "{key}: {rejection}");
+        let journaled = db.query_opt(&format!("SELECT 1 FROM {schema}.aip_idem WHERE key = $1"), &[&key]).await.unwrap();
+        assert!(journaled.is_none(), "{key} was journaled");
+    }
+    let row = db
+        .query_one(
+            &format!("SELECT (SELECT count(*) FROM {schema}.member), (SELECT count(*) FROM {schema}.secret_item), title FROM {schema}.secret_item"),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!((row.get::<_, i64>(0), row.get::<_, i64>(1), row.get::<_, &str>(2)), (1, 1, "Production Secret"));
 
     // 2. PROVE ZERO PLAINTEXT IN DATABASE TABLES
     // Check secret_item table row

@@ -223,7 +223,7 @@ async fn an_absence_dependent_create_grant_runs_the_extension_serializable(env: 
 async fn a_refused_create_or_a_later_failure_commits_nothing_and_names_its_cause(env: &mut Env) {
     let input = json!({"owner": "1", "name": "plan"});
     // (extension, caller, input, cause tag, the same refusal a client create gets as `(request, code)`)
-    let cases: Vec<(&str, i64, Value, &str, Option<(Value, &str)>)> = vec![
+    let cases = [
         // R-2: both rows existed in the transaction when the extension threw.
         ("familyThenThrow", 1, input.clone(), "extension.exception", None),
         // C-F4: the extension caught the refusal and returned normally; the call still does not commit, parent and child included.

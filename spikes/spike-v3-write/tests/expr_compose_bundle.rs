@@ -269,7 +269,7 @@ async fn d3_compose_plans_and_the_row_total_are_decided_before_the_transaction()
             assert!(bundle_plan(&facts, &[big(&ids)], &Knobs::default(), IdWire::Legacy).is_ok());
             let over = bundle_plan(&facts, &[big(&ids), big(&ids)], &Knobs::default(), IdWire::Legacy).err().expect("2000 rows");
             assert_eq!(over.code, "WIRE.BULK_LIMIT");
-            assert!(BUNDLE_MAX_ROWS < 2000);
+            const { assert!(BUNDLE_MAX_ROWS < 2000) };
             // compose 하나에 다른 연산 하나만 더해도 합이 넘으면 막힌다(compose 1000 + create 1).
             let extra = bundle_plan(
                 &facts,

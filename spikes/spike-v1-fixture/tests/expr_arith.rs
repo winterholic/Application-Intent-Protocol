@@ -320,12 +320,7 @@ fn b1_terms_are_positive_int_input_needs_a_lower_bound_of_one() {
     }
     facts(&DEF.replace("input { qty: Int(1..100) }", "input { qty: Int(1..1) }"));
     // 음수·0 리터럴 항. 음수 정수 리터럴은 문법에 없어 파서가 막고, 0과 Decimal 문자열은 sema가 막는다.
-    for term in ["0"] {
-        expect_code(
-            &DEF.replace("to likes = likes + 1, balance = balance + \"1.50\"", &format!("to balance = balance + {term}")),
-            "DEF.ARITH_NOT_ALLOWED",
-        );
-    }
+    expect_code(&DEF.replace("to likes = likes + 1, balance = balance + \"1.50\"", "to balance = balance + 0"), "DEF.ARITH_NOT_ALLOWED");
     for term in ["\"-1.50\"", "\"0.00\"", "\"0\""] {
         expect_code(&DEF.replace("balance = balance + \"1.50\"", &format!("balance = balance + {term}")), "DEF.ARITH_NOT_ALLOWED");
     }
@@ -358,10 +353,6 @@ fn b2_allow_cannot_compare_input_with_a_hidden_field() {
         "allow actor != null and stock >= input.qty\n    to stock = stock - input.qty",
     ));
     // exists 안쪽 resource의 가려진 필드도 같다.
-    let wallet = DEF
-        .replace("balance: Decimal(12,2); credit", "balance: Decimal(12,2); credit")
-        .replace("rows read when true\n  transition take", "rows read when true\n  transition take");
-    let _ = wallet;
     let exists = DEF
         .replace(
             "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true",
@@ -404,8 +395,8 @@ fn b3_effect_leading_operand_is_the_target_rows_bare_field() {
 fn b4_effect_decrease_without_a_lower_bound_check_is_advised() {
     let advisories =
         |src: &str| -> Vec<&'static str> { load_str(src, Form::A).unwrap_or_else(|e| panic!("{e:?}")).advisories.iter().map(|d| d.code).collect() };
-    assert_eq!(advisories(&DEF), ["DEF.ADVISORY_EFFECT_NO_LOWER_BOUND"]);
-    let guarded = DEF.replace("rows read when true\n  transition take", "rows read when true\n  transition take").replacen(
+    assert_eq!(advisories(DEF), ["DEF.ADVISORY_EFFECT_NO_LOWER_BOUND"]);
+    let guarded = DEF.replacen(
         "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true",
         "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true\n  check fundsNotNegative when funds >= \"0.00\"",
         1,

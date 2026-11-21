@@ -196,6 +196,14 @@ jobs:
           df -h "$GITHUB_WORKSPACE"
           du -sh target
           bash tools/verify.sh
+      - name: Run expressiveness consumer apps on PostgreSQL
+        if: ${{ !inputs.member_ui_diagnostic && !inputs.admin_metrics_diagnostic }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "expressiveness consumer apps on PostgreSQL"
+          node product/tests/fixtures/expr-apps/run.mjs
       - name: Record verification disk usage
         if: always()
         shell: bash

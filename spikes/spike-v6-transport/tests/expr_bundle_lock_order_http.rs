@@ -1,6 +1,4 @@
-//! Consumer-app finding over real HTTP: six callers race `[create Order, create OrderLine (FK to Product), take(Product)]` for stock 4 with
-//! two units each. Before the row-lock fix every request ended `WIRE.DEADLINE_EXCEEDED` (the FK insert's KEY SHARE and `take`'s FOR UPDATE
-//! deadlocked and each victim cost PostgreSQL's 1s `deadlock_timeout`). Now exactly two succeed in milliseconds, whatever the operation order.
+//! Six callers race for four units of stock. Creating the line before taking stock also reads the product price under a policy lock.
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{id_wire::IdWire, sqlgen};
@@ -18,7 +16,7 @@ const SPEC: &str = r#"
 resource Member { fields { id: Id } }
 actor Member
 resource Product {
-  fields { id: Id; owner: Member; stock: Int(0..1000) }
+  fields { id: Id; owner: Member; stock: Int(0..1000); price: Int(0..1000) }
   rows read when true
   transition take { input { qty: Int(1..100) }; from stock >= input.qty; allow actor != null; to stock = stock - input.qty }
   expose apply take { target id; bulk maxRows 5 }
@@ -29,9 +27,9 @@ resource Order {
   expose create { allow owner = actor; fields owner }
 }
 resource OrderLine {
-  fields { id: Id; owner: Member; order: Order; product: Product; qty: Int(1..100) }
+  fields { id: Id; owner: Member; order: Order; product: Product; qty: Int(1..100); unitPrice: Int(0..1000) }
   rows read when owner = actor
-  expose create { allow owner = actor; fields owner, order, product, qty }
+  expose create { allow owner = actor and unitPrice = product.price; fields owner, order, product, qty, unitPrice }
 }
 "#;
 
@@ -58,7 +56,7 @@ async fn post(address: SocketAddr, token: &str, fingerprint: &str, body: &Value)
 
 fn flow(key: &str, actor: i64, product: i64, line_first: bool) -> Value {
     let order = json!({"create": "Order", "values": {"owner": actor.to_string()}});
-    let line = json!({"create": "OrderLine", "values": {"owner": actor.to_string(), "product": product.to_string(), "qty": 2}, "refs": {"order": {"created": if line_first { 0 } else { 1 }}}});
+    let line = json!({"create": "OrderLine", "values": {"owner": actor.to_string(), "product": product.to_string(), "qty": 2, "unitPrice": 10}, "refs": {"order": {"created": if line_first { 0 } else { 1 }}}});
     let take = json!({"apply": "Product.take", "target": {"ids": [product.to_string()]}, "input": {"qty": 2}});
     json!({"key": key, "request": {"atomic": if line_first { vec![order, line, take] } else { vec![take, order, line] }}})
 }
@@ -80,7 +78,7 @@ async fn six_racing_orders_get_exactly_two_successes_in_either_operation_order()
     let address: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
     for (name, line_first) in [("take-first", false), ("line-first", true)] {
         let product: i64 = if line_first { 2 } else { 1 };
-        db.batch_execute(&format!("INSERT INTO {schema}.product(id,owner_id,stock) VALUES ({product},1,4)")).await.unwrap();
+        db.batch_execute(&format!("INSERT INTO {schema}.product(id,owner_id,stock,price) VALUES ({product},1,4,10)")).await.unwrap();
         let started = Instant::now();
         let calls: Vec<_> = (1..=6)
             .map(|actor| {

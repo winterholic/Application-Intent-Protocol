@@ -3,7 +3,7 @@ use serde_json::{json, Map, Value};
 use spike_v2_read::id_wire::{id_array_cast, id_kind, parse_entity_id, parse_typed_id, EntityId, IdWire};
 use spike_v2_read::plan::{Caller, Reject};
 use spike_v2_read::sqlgen::{self, column, table, Ctx, Env, Handle};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tokio_postgres::{types::ToSql, Client, Transaction};
 
@@ -112,11 +112,12 @@ pub async fn retry_backoff(attempt: usize) {
     tokio::time::sleep(Duration::from_millis(10 * (1u64 << attempt.min(6)) + jitter)).await;
 }
 
-/// 전이가 대상 행에 거는 행 잠금. 키 열(`id`, `unique`, 부분 유일 인덱스 열)을 바꾸지 않는 전이는 `FOR NO KEY UPDATE`로 충분하다.
+/// 전이가 대상 행에 거는 행 잠금. 키 열 변경과 자식 행의 집합을 읽는 효과에는 `FOR UPDATE`가 필요하다.
 /// `FOR UPDATE`는 같은 묶음 앞 연산이 FK로 그 행을 가리키며 잡은 `FOR KEY SHARE`와 충돌해서, `[줄 create(FK) → 같은 행 전이]` 순서의
 /// 요청 N개가 서로 공유 잠금을 쥔 채 갱신 잠금을 기다리는 교착을 만든다. PostgreSQL은 이 교착의 희생자 한 명마다 `deadlock_timeout`(1초)을
 /// 쓰고 N-1명이 필요해 쓰기 기한(2초) 안에 수렴하지 못했다. `FOR NO KEY UPDATE`는 `KEY SHARE`와 충돌하지 않으므로 FK 삽입이 전이를 막지 않고,
-/// 전이끼리는 여전히 직렬화된다. 삭제나 키 열 변경은 PostgreSQL이 어차피 `FOR UPDATE`급 잠금을 요구하므로 그대로 `FOR UPDATE`다.
+/// 전이끼리는 여전히 직렬화된다. 기존 자식을 갱신하거나 삭제하는 효과는 먼저 시작한 FK 삽입이 끝날 때까지 기다려야
+/// 그 자식까지 포함한다. 이 효과에는 삭제나 키 열을 변경하는 전이와 같이 `FOR UPDATE`를 유지한다.
 fn row_lock(facts: &Value, res: &str, transitions: &[&str]) -> &'static str {
     let rf = &facts["resources"][res];
     let mut key: std::collections::BTreeSet<&str> = std::collections::BTreeSet::from(["id"]);
@@ -126,13 +127,14 @@ fn row_lock(facts: &Value, res: &str, transitions: &[&str]) -> &'static str {
     for invariant in rf["invariants"].as_object().into_iter().flat_map(|o| o.values()) {
         key.extend(invariant["enforcement"]["columns"].as_array().into_iter().flatten().filter_map(Value::as_str));
     }
-    let touches_key = transitions.iter().any(|tr| {
+    let requires_full_lock = transitions.iter().any(|tr| {
         let t = &rf["transitions"][*tr];
         t["delete"] == true
             || t["to"].as_object().into_iter().flat_map(|to| to.keys()).any(|f| key.contains(f.as_str()))
             || t["patch"].as_array().into_iter().flatten().filter_map(Value::as_str).any(|f| key.contains(f))
+            || t["effects"].as_array().into_iter().flatten().any(|effect| effect.get("update").is_some() || effect.get("delete").is_some())
     });
-    if touches_key {
+    if requires_full_lock {
         " FOR UPDATE OF t"
     } else {
         " FOR NO KEY UPDATE OF t"
@@ -167,10 +169,8 @@ mod row_lock_tests {
     use super::row_lock;
     use serde_json::json;
 
-    /// A transition that leaves key columns alone takes FOR NO KEY UPDATE (an FK insert's KEY SHARE does not block it);
-    /// deleting, or assigning `id`, a `unique` column or a partial-unique-index column, keeps FOR UPDATE.
     #[test]
-    fn only_key_changing_or_deleting_transitions_keep_for_update() {
+    fn key_changes_and_effects_that_select_related_rows_keep_for_update() {
         let facts = json!({"resources": {"Item": {
         "unique": [["sku"]],
         "invariants": {"one": {"enforcement": {"kind": "partialUniqueIndex", "columns": ["slot"]}}},
@@ -180,16 +180,17 @@ mod row_lock_tests {
             "park": {"to": {"slot": {}}},
             "patchSku": {"to": {}, "patch": ["sku"]},
             "patchNote": {"to": {}, "patch": ["note"]},
-            "drop": {"delete": true, "to": {}}
+                "drop": {"delete": true, "to": {}},
+                "release": {"effects": [{"update": "Allocation", "maxRows": 3}]},
+                "cleanup": {"effects": [{"delete": "Allocation"}]}
         }}}});
         let lock = |names: &[&str]| row_lock(&facts, "Item", names);
         assert_eq!(lock(&["take"]), " FOR NO KEY UPDATE OF t");
         assert_eq!(lock(&["patchNote"]), " FOR NO KEY UPDATE OF t");
-        for keyed in ["rename", "park", "patchSku", "drop"] {
-            assert_eq!(lock(&[keyed]), " FOR UPDATE OF t", "{keyed}");
+        for transition in ["rename", "park", "patchSku", "drop", "release", "cleanup"] {
+            assert_eq!(lock(&[transition]), " FOR UPDATE OF t", "{transition}");
         }
-        // 조합은 단계 중 하나라도 키를 바꾸면 전체가 FOR UPDATE다.
-        assert_eq!(lock(&["take", "rename"]), " FOR UPDATE OF t");
+        assert_eq!(lock(&["take", "release"]), " FOR UPDATE OF t");
     }
 }
 
@@ -722,6 +723,8 @@ async fn update(
     Ok(())
 }
 
+// The delete uses the same validated input and audit context as the judge.
+#[allow(clippy::too_many_arguments)]
 async fn delete_rows(
     tx: &Transaction<'_>,
     facts: &Value,
@@ -1191,6 +1194,7 @@ async fn ensure_refs_readable(
     values: &[(String, Src)],
     caller: &Caller,
     knobs: &Knobs,
+    reference_lock: impl Fn(&str, EntityId) -> &'static str,
 ) -> Result<(), Reject> {
     for (field, src) in values {
         let Src::Lit(id, _) = src else { continue };
@@ -1218,7 +1222,8 @@ async fn ensure_refs_readable(
         let env = Env { this: Some(("t".into(), referenced.to_string())), ..Default::default() };
         let vis = cx.cond(&facts["resources"][referenced]["rowRead"], &env).map_err(internal)?;
         let p = cx.params.bind(Some(id.to_string()), id_kind(facts, referenced));
-        let sql = format!("SELECT 1 FROM {} t WHERE t.id = {p} AND {vis}", table(referenced));
+        let lock = reference_lock(referenced, id);
+        let sql = format!("SELECT 1 FROM {} t WHERE t.id = {p} AND {vis}{lock}", table(referenced));
         let params = cx.params.values.clone();
         if typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("참조 행 확인", e))?.is_empty() {
             return rej("WIRE.MISSING_TARGET", format!("`{target}.{field}`가 가리키는 `{referenced}` 행을 찾을 수 없음"));
@@ -1655,7 +1660,7 @@ async fn apply_op(
     };
     let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs, Some(&input)).await?;
     let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
-    ensure_refs_readable(tx, facts, res, &input.values, &decided, knobs).await?;
+    ensure_refs_readable(tx, facts, res, &input.values, &decided, knobs, |_, _| "").await?;
     let effect_targets = effect_targets_at_transition_start(tx, facts, res, tr, &j.change, &decided, knobs).await?;
     if facts["resources"][res]["transitions"][tr]["delete"] == true {
         effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs, Some(&input)).await?;
@@ -1930,6 +1935,42 @@ pub fn bundle_plan<'a>(facts: &'a Value, ops: &'a [Value], knobs: &Knobs, wire: 
     Ok(plan)
 }
 
+/// A create policy can take FOR SHARE on a referenced row that a later apply will update.
+/// Reserve the write lock in the existing visibility query, before evaluating that create policy.
+/// Keep each operation's checks and writes in the requested order.
+fn bundle_reference_locks<'a>(facts: &'a Value, ops: &[Value], knobs: &Knobs, wire: IdWire) -> BTreeMap<(&'a str, EntityId), (usize, &'static str)> {
+    let mut locks = BTreeMap::new();
+    if knobs.skip_row_lock || knobs.skip_policy_lock {
+        return locks;
+    }
+    let Some(first_create) = ops.iter().position(|op| op.get("create").is_some()) else { return locks };
+    for (index, op) in ops.iter().enumerate().skip(first_create + 1) {
+        let Some(request) = op.as_object() else { continue };
+        let Some(name) = request.get("apply").and_then(Value::as_str) else { continue };
+        let Ok((res, tr, expose)) = exposed(facts, name) else { continue };
+        if refuse_internal(expose, knobs, request).is_err()
+            || keys(request, &["apply", "target", "values", "expect", "input"], "apply 요청").is_err()
+            || apply_input(facts, res, tr, request, wire).is_err()
+        {
+            continue;
+        }
+        let Ok(TargetSpec::Ids(ids)) = parse_target(facts, res, expose, &op["target"], wire) else { continue };
+        let lock = row_lock(facts, res, &[tr]);
+        for id in ids {
+            locks
+                .entry((res, id))
+                .and_modify(|(last, strongest): &mut (usize, &str)| {
+                    *last = index;
+                    if lock == " FOR UPDATE OF t" {
+                        *strongest = lock;
+                    }
+                })
+                .or_insert((index, lock));
+        }
+    }
+    locks
+}
+
 async fn bundle_run(
     tx: &Transaction<'_>,
     facts: &Value,
@@ -1940,6 +1981,7 @@ async fn bundle_run(
     wire: IdWire,
 ) -> Result<BundleResult, Reject> {
     let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![], ops: vec![] };
+    let reference_locks = bundle_reference_locks(facts, ops, knobs, wire);
     // 연산 번호 → 그 연산이 만든 행의 id. create가 아니거나 id를 못 돌려준 연산은 None이다(계획 단계가 가리키지 못하게 막았다).
     let mut made: Vec<Option<EntityId>> = Vec::with_capacity(ops.len());
     for (at, op) in ops.iter().enumerate() {
@@ -1960,7 +2002,7 @@ async fn bundle_run(
             out.applied.push(apply_op(tx, facts, m, caller, knobs, wire, created_target).await?);
             made.push(None);
         } else if let Some(composed) = &plan[at].compose {
-            // 같은 `compose_exec`를 그대로 쓴다. 대상은 그 안에서 `ORDER BY id FOR UPDATE`로 잠그고 결과는 연산 순서대로 이어 붙인다.
+            // 같은 `compose_exec`를 그대로 쓴다. 대상은 그 안에서 `ORDER BY id`로 잠그고 결과는 연산 순서대로 이어 붙인다.
             // 만든 행이 여럿이라 뒤 연산이 번호로 가리킬 수 없다(`refs`·`target.created`는 계획 단계에서 VALUE_SOURCE_NOT_ALLOWED).
             let result = compose_exec(tx, facts, composed, caller, knobs, wire).await?;
             out.applied.extend(result.applied);
@@ -2001,7 +2043,10 @@ async fn bundle_run(
                 let referenced = ops[*i]["create"].as_str().unwrap_or("");
                 row.push((field.clone(), Src::Lit(id.to_string(), id_kind(facts, referenced))));
             }
-            ensure_refs_readable(tx, facts, res, &row, caller, knobs).await?;
+            ensure_refs_readable(tx, facts, res, &row, caller, knobs, |referenced, id| {
+                reference_locks.get(&(referenced, id)).filter(|(last_apply, _)| at < *last_apply).map_or("", |(_, lock)| *lock)
+            })
+            .await?;
             let id = create_row(tx, facts, res, &row, caller, knobs).await?;
             out.created += 1;
             out.created_rows.push((res.to_string(), id));

@@ -10,7 +10,7 @@
 | C0-2 타입 | 대입은 `same_target` 규칙을 따른다. nullable 값은 non-null 필드에 못 들어간다. `Ref<X>`에는 `X`를 만든 연산의 id만 들어간다. 판정은 트랜잭션 전에 facts로 끝낸다(DB에 닿기 전 거절) | sema.rs `same_target`, v3 `compose_plan`(:1696)의 `WIRE.TYPE_MISMATCH` 판정 |
 | C0-3 권한 | 새 출처로 만든 값도 기존 검사를 모두 거친다. `Created(i)` 참조도 `ensure_refs_readable`(E4 규칙)과 `expose create allow`를 다시 평가한다. 호출자가 만들었어도 읽을 수 없는 행이면 `WIRE.MISSING_TARGET`이다. 우회 경로를 만들지 않는다 | v3 `ensure_refs_readable`(:1075), `create_row` allow |
 | C0-4 멱등 | 묶음 전체가 바깥 `/apply` key 하나에 묶인다. 저장 요청은 참조를 기호(`{"created":0}`) 그대로 저장하므로 재전송은 같은 요청으로 판정되고 저장 결과(만든 id 포함)를 재생한다. 확장 안 `ctx.data.*`의 key는 형식만 검사하고 무시한다(바깥 key가 덮는다) | v6 `apply_attempt`(lib.rs:314, `aip_idem`), v4 `ctx_request`의 `check_ctx_key` |
-| C0-5 잠금 순서 | 연산은 배열 순서로 실행하고 각 연산은 기존대로 대상 행을 `ORDER BY id`로 잠근다. 키를 바꾸지 않는 전이는 `FOR NO KEY UPDATE`를 사용하며, 키 변경과 삭제는 `FOR UPDATE`를 사용한다. 산술은 잠근 행 값에서 같은 `UPDATE` 문으로 계산한다(`col = t.col + $p`) | v3 `judge_query`(:379), `update`(:548) |
+| C0-5 잠금 순서 | 연산은 배열 순서로 실행하고 대상 행은 `ORDER BY id`로 잠근다. 키를 바꾸지 않는 전이는 `FOR NO KEY UPDATE`를 쓴다. 키 변경·삭제와 기존 자식 행 갱신·삭제 효과는 `FOR UPDATE`를 쓴다. 생성이 가리키는 행을 뒤의 명시적 `target.ids` 전이가 갱신하면, 기존 참조 가시성 조회에서 전이에 필요한 잠금을 먼저 잡는다. 산술은 잠근 행 값에서 같은 `UPDATE` 문으로 계산한다 | v3 `judge_query`, `row_lock`, `bundle_reference_locks`, `update` |
 | C0-6 롤백 | 어느 연산이든 실패하면 트랜잭션 전체가 롤백되고 멱등 결과를 남기지 않는다. 서버가 소유하는 선언형 SQL 트랜잭션은 재시도 가능한 직렬화 실패·교착을 최대 3회 재실행한다. 동기 쓰기 확장은 서버에서 재실행하지 않는다. 확장이 `WIRE.CONFLICT`를 그대로 반환하면 호출자가 같은 키로 다시 보낸다 | v3 `before_commit_rejection`, `retry_owned_transaction` |
 | C0-7 호환 | 기존 정의의 facts·계약 지문·실행 digest를 바꾸지 않는다. 새 facts 키는 그 기능을 쓴 정의에만 나온다. 리터럴 정수 증감은 계속 `{"increment": n}`으로 낸다. 구버전 서버는 새 wire 키를 `WIRE.UNKNOWN_KEY`로 거부한다(fail-closed, 이번 세션 실행 확인) | v5 `contract_module_with_apply`: 지문은 `write_binding` 접미부 전에 계산 |
 | C0-8 오류 코드 | 새 WIRE 코드를 만들지 않는다. 형식·범위는 `WIRE.BAD_VALUE`, 타입은 `WIRE.TYPE_MISMATCH`, 허용 안 된 출처는 `WIRE.VALUE_SOURCE_NOT_ALLOWED`, 모르는 키는 `WIRE.UNKNOWN_KEY`. DEF는 기존 `DEF.ARITH_NOT_ALLOWED`, `DEF.TYPE_MISMATCH`, `DEF.UNSUPPORTED`에 메시지만 더한다 | `spec/wire-errors.md`, codes.rs |
@@ -75,7 +75,7 @@
 | 선택안 | **compose 입력 슬롯은 열지 않는다**(D-P-UPDATE "compose 입력 슬롯은 확장하지 않고 원자 조합은 bundle" 유지). 대신 bundle 연산 종류에 `{"compose": ...}`를 더해 compose와 apply(patch·expect·input)를 한 묶음에 넣게 한다. 중첩은 한 단계만(compose 안 compose 없음) |
 | 규칙 | 행 수 = compose 대상×단계 + 다른 연산, 합이 `BUNDLE_MAX_ROWS` 이하. `bundle_needs_serializable`(:1346)은 compose 연산에 `compose_needs_serializable`을 적용하게 고친다(지금 코드는 `create` 키가 없으면 false로 떨어진다). P0-A `refs`는 compose 연산을 가리킬 수 없다(만든 행이 여럿이라 번호가 모호): `WIRE.VALUE_SOURCE_NOT_ALLOWED` |
 | 기각 | ① 단계별 values(대상 N개에 같은 값 또는 대상별 값): 대상별 expect가 필요해져 compose가 두 번째 bundle이 된다. ② compose create의 참조 필드에 상수 허용: 의도적으로 막은 숨은 행 연결 경로(`VALUE_SOURCE_NOT_ALLOWED`). ③ compose 폐지: 기존 계약 파괴 |
-| 재사용 | `compose_in`(:1809)을 `bundle_run`의 한 분기로 부른다. 대상 잠금은 compose가 먼저 `ORDER BY id FOR UPDATE`로 잡는 기존 방식 |
+| 재사용 | `compose_exec`를 `bundle_run`의 한 분기로 부른다. 조합은 먼저 대상을 `ORDER BY id`로 잠그고 단계 중 가장 강한 잠금 모드를 사용한다 |
 | 와이어·SDK | 요청: `atomic[]` 원소로 `{compose, targets, steps}`. TS `BundleOp`에 `ComposeRequest`를 더한다. 생성 계약의 compose `transitions`에는 정의 단계에서 이미 patch/expect 전이가 없으므로 input 전이도 같은 규칙으로 빠진다. 응답은 `applied[]`·`created[]`에 compose 결과가 연산 순서대로 이어 붙는다 |
 | 호환·보안 | 기존 top-level `compose` 요청 그대로. 권한은 compose 경로 그대로(대상 가시성 잠금, sameScope, selfRow) |
 | 멱등·잠금·롤백 | C0-4~6. compose 대상 잠금이 그 연산 시점에 일어나므로 앞 연산이 잡은 잠금과 순서가 섞인다. 교착은 기존 40P01 재시도가 처리한다 |

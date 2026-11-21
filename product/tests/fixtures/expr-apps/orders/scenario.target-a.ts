@@ -108,9 +108,7 @@ await scenario("A6-price-forgery-unit-price-blocked-total-still-client-asserted"
   assert.equal(sql(`SELECT max(total) FROM ${schema}."order" WHERE id=${honestLine.ok ? honestLine.created[0]!.id : 0}`), "1");
 });
 
-// 동시 주문: 같은 상품 행을 두 번 잠그는 순서가 결과를 가른다.
-//   줄 먼저(create OrderLine이 FK로 상품 행에 공유 잠금을 잡고, 뒤의 take가 그 행을 갱신 잠금으로 올린다): 서로 기다리는 교착
-//   take 먼저(갱신 잠금을 먼저 잡고 줄을 만든다): 직렬화되어 가능한 만큼 성공
+// 두 연산 순서 모두에서 단가 정책을 지키며 가능한 수량만 주문된다.
 async function burst(sku: string, label: string, takeFirst: boolean) {
   const p = pid(sku); // 재고 4, 2개짜리 6건
   assert.equal(stock(sku), 4);
@@ -124,11 +122,10 @@ async function burst(sku: string, label: string, takeFirst: boolean) {
   }, { key: `tgt-a7-${label}-${i}` })));
   const ok = results.filter((r) => r.ok).length;
   console.log(`INFO A7-${label}: 재고 4개, 2개짜리 주문 6건 동시(${takeFirst ? "take 먼저" : "줄 먼저"}) -> 성공 ${ok}건 (${results.map(code).join("|")}), 최종 재고 ${stock(sku)}, ${Date.now() - started}ms`);
+  assert.equal(ok, 2, "재고 4개로 2개짜리 주문은 정확히 2건 성공한다");
+  assert.deepEqual(results.filter((result) => !result.ok).map(code), Array(4).fill("WIRE.INVALID_STATE"));
   assert.equal(stock(sku), 4 - 2 * ok, "성공 건수 x 2만큼만 차감");
   assert.equal(sql(`SELECT count(*) FROM ${schema}.order_line WHERE product_id=${p}`), String(ok), "성공한 주문의 줄만 남는다(고아 없음)");
-  return ok;
 }
-await scenario("A7a-concurrent-orders-lines-first-invariants-only", async () => { await burst("E", "lines-first", false); });
-await scenario("A7b-concurrent-orders-take-first-exact-success-count", async () => {
-  assert.equal(await burst("F", "take-first", true), 2, "기대: 재고 4개로 2개짜리 주문은 정확히 2건 성공(우회 버전은 1건)");
-});
+await scenario("A7a-concurrent-orders-lines-first-exact-success-count", () => burst("E", "lines-first", false));
+await scenario("A7b-concurrent-orders-take-first-exact-success-count", () => burst("F", "take-first", true));

@@ -128,7 +128,7 @@ P0-D(bundle 안 compose)와 나중에 합칠 때를 위해 `spike-v3-write/src/l
 ## 6. 이 묶음 밖에서 본 것 (고치지 않음)
 
 - `s07a_decimal_sum.aip` 같은 groupKey 없는 Decimal 합은 `totalOfVisible`로는 여전히 거부된다(`access allowAll(a: Member) = true`처럼 guard access를 써야 한다). guard access를 쓴 단독 Decimal 합은 PG 시험에 포함했다(`decimal_sum.rs`의 `allTotal`).
-- HTTP(`aip service serve`)·TS/Python SDK 클라이언트를 거친 Decimal sum 종단 시험은 하지 않았다. v2 계획+PG와 생성 계약 시험까지만 했다(`미실행`).
+- 초기 검증은 v2 계획·실제 PG 및 생성 계약까지였다. HTTP와 생성 TS/Python SDK 검증은 7절에서 이어서 실행했다.
 - 공개 `count`의 `rows read` 비상속은 바꾸지 않았다(소유자 결정 대기).
 - MySQL의 Decimal sum은 `WIRE.UNSUPPORTED`다. 필요하면 `mysql_rows.rs`에 Decimal 정규화와 초과 검사를 더해야 한다.
 - 합칠 때 겹칠 곳: `spec/wire-errors.md`(한 항목), `spec/definition-*.md`(생성 문서이므로 재생성). P0-D가 건드리는 v3·v6 `lib.rs`와는 겹치지 않는다.

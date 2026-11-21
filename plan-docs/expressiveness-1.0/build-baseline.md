@@ -20,7 +20,7 @@
 | sema.rs 변경 → `cargo check -p aip-service` | 처음 check 프로필이라 의존성 check 포함 | 15.63 |
 | 대표 PG 시험 실행 시간 | v3 `general_update` 0.29, `counters` 0.13, v2 `keyset_cursor` 0.48, v6 `bundle_http` 0.22, v4 `write_wire` 0.34 | 시험 자체는 1초 미만 |
 
-`touch`만으로는 재컴파일이 일어나지 않았다(cargo가 mtime 대신 내용 변화로 판단한 것으로 보인다, 확인 필요). 측정은 주석·상수 한 줄을 넣었다 되돌리는 방식으로 했고 작업 트리는 원상태다(`git status` 깨끗함).
+초기 측정은 주석·상수 한 줄을 넣었다 되돌리는 방식으로 했고 작업 트리는 원상태였다. 이후 mtime을 강제로 과거로 되돌린 사본에서 Cargo가 이전 바이너리를 재사용했고, 수정 시각을 갱신하자 재컴파일했다. 재현 명령과 바이너리 마커 변화는 [WP3 O-4](wp3-notes.md#o-4-cargo-build가-fresh로-끝났는데-바이너리가-이전-소스)에 있다.
 
 target 크기: 위 작업 전부 뒤 `/tmp/aip-expr-target` 4.9G.
 
@@ -47,3 +47,9 @@ target 크기: 위 작업 전부 뒤 `/tmp/aip-expr-target` 4.9G.
 | 셸 | `unset PGHOST PGPORT`를 먼저(로컬 셸에 설정돼 있음) |
 | 디스크 | 작업자당 약 5G. 묶음이 끝나면 그 `/tmp/aip-target-<묶음>`만 지운다(공유 target이나 다른 작업자 것은 건드리지 않는다) |
 | 반복 | 수정 중에는 묶음의 좁은 시험만. 전체 워크스페이스 시험 반복 금지 |
+
+## 통합 후보 재측정
+
+macOS arm64에서 P1 작업이 끝난 뒤 `/tmp/aip-target-p1sema`를 통합 worktree 전용으로 넘겼다. 같은 target에서 `/usr/bin/time -p cargo build --locked -p aip-cli --bin aip`를 실행했다. 정책 잠금 교정이 들어간 첫 빌드는 8.84초, 입력을 그대로 두고 다시 실행한 빌드는 0.15초였다. 위 기준선과는 revision 및 캐시 상태가 달라 개선율은 계산하지 않았다.
+
+PostgreSQL 17.11에서 단가 정책이 있는 주문·암호화 경계·결과 참조·v16 타입 및 HTTP를 단일 v6 Cargo 호출로 묶었다. 컴파일을 포함해 8.29초에 7건을 실행했다. 전용 DB의 호스트·포트와 target을 해당 검증에서 고정했다.

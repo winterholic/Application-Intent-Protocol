@@ -268,7 +268,7 @@ audit의 "범위 밖 발견"인 LIMITS E2 본문과 `ctx.reject`의 불일치는
 | P-3 | `access x = totalOfVisible(Comment)`를 `Task`의 `commentCount`에 사용하면 `spikes/spike-v1-fixture/src/sema.rs:1721`이 `DEF.ACCESS_MISMATCH`와 실제 문구 `` `visibleTotal`은 `Comment` 기준 groupKey 집계에만 사용 ``을 만든다. 판정은 `p != r.name || a.group_key.is_none()`이며 여기서 `r.name`은 집계 선언 resource(`Task`), `p`는 접근 원본(`Comment`)이다. 즉 Comment 행이 Task를 가리키는 groupKey 집계라는 뜻이 반대로 읽힌다 | `sema.rs`·`codes.rs`는 다른 작업자 소유라 수정하지 않음. 제안: `` `{n}`은 `{r.name}`을 참조하는 `{p}`의 groupKey 집계에서만 사용 ``(예: “`visibleTotal`은 `Task`를 참조하는 `Comment`의 groupKey 집계에서만 사용”) |
 | P-4 | LIMITS.md E2 본문 대 `ctx.reject` 동작 | audit.md가 이미 기록한 항목, 이번에도 재현 |
 | P-5 | 확장의 낙관적 충돌이 호출자에게 `WIRE.EXTENSION_ERROR`로 보임(1차 동시 주문 시험, F15) | P0 merge 뒤 같은 시험에서 `WIRE.CONFLICT`로 보임을 확인했다. 해소됨 |
-| P-6 | 변형 A 묶음에서 `create OrderLine`을 `take`보다 앞에 두고 같은 상품을 6건 동시에 주문 → 0~2건 성공, 나머지 `WIRE.DEADLINE_EXCEEDED`, PG 로그 `deadlock detected`. `take`를 맨 앞으로 옮기면 정확히 2건 | 잠금 순서에 따라 교착이 나는 작성 함정이다. 문서에 순서 지침이 없다. 응답은 `DEADLINE_EXCEEDED`라 교착이 원인임을 호출자가 알기 어렵다 |
+| P-6 | 초기 변형 A 묶음에서 `create OrderLine`을 `take`보다 앞에 두고 같은 상품을 6건 동시에 주문 → 0~2건 성공, 나머지 `WIRE.DEADLINE_EXCEEDED`, PG 로그 `deadlock detected`. `take`를 맨 앞으로 옮기면 정확히 2건 | 통합 후보에서 단가 정책까지 포함해 잠금 순서 교정. 11절 참조 |
 | P-7 | 변형 B 확장 안에서 `take`가 `INVALID_STATE`로 실패하거나 낙관적 충돌이 나면 호출자는 `WIRE.EXTENSION_ERROR`를 받는다. 사전 확인이 못 거른 경쟁 패배는 `EXTENSION_REJECTED`가 아니라 일반 오류로 보인다(6건 동시 시험의 `EXTENSION_ERROR` 원인이 `take` 실패라는 것은 확장 로그를 보지 않은 추정) | 사유 구분이 필요하면 확장이 `ctx.reject`를 쓰도록 `take` 실패를 잡을 수 없다(호출이 poison됨, SDK.md 업무 거절 절). 호출자는 재시도 가능 여부를 알기 어렵다 |
 
 ## 10. 미실행과 한계
@@ -279,3 +279,11 @@ audit의 "범위 밖 발견"인 LIMITS E2 본문과 `ctx.reject`의 불일치는
 - 변형 A `take` 먼저가 항상 2건이라는 결론은 약 6회 관찰에 근거한다. 다른 부하·다른 PG 설정에서는 확인하지 않았다.
 - RED 확인(시험이 실패할 수 있는지): 변형 A의 `unitPrice = product.price` 제거는 A6가, 변형 B의 `total = 0` 제거는 B3가, `take`의 `from` 제거는 A2·A5(`INVALID_STATE`가 `BAD_VALUE`로 바뀜)가 잡았다. 처음 시험은 `from`이 없어도 stock의 `Int(0..)` 범위 검사가 음수를 막아 통과했기 때문에 코드 단언을 보강했다.
 - 일반 백엔드 비교는 계층 목록이며 줄 수나 개발 시간은 측정하지 않았다.
+
+## 11. 통합 후보의 단가 정책과 동시 주문
+
+변형 A의 `unitPrice = product.price` 정책은 상품 행을 `FOR SHARE`로 읽는다. FK 삽입과의 충돌을 없앤 뒤에도 줄을 먼저 만드는 요청들은 이 공유 잠금을 잡은 채 재고 전이의 갱신 잠금을 기다렸다. 상품 행을 뒤의 명시적 `target.ids` 전이에서 갱신하면, 생성 단계가 그 참조의 가시성을 검사할 때 필요한 갱신 잠금을 먼저 잡는다. 생성 정책과 후속 전이의 조건 및 실행 순서는 유지한다.
+
+PostgreSQL 17.11에서 `cargo test --locked --manifest-path spikes/spike-v6-transport/Cargo.toml --test expr_bundle_lock_order_http`의 단가 정책 포함 시험을 실행했다. 교정 전에는 줄 먼저의 6건이 모두 `WIRE.DEADLINE_EXCEEDED`였다. 교정 뒤에는 두 순서 각각 2건 성공, 4건 `WIRE.INVALID_STATE`, 최종 재고 0, 남은 주문 줄 2건을 확인했다. 기존 자식 행 갱신·삭제 효과에는 강한 잠금을 유지하며, 실제 PG의 `bounded_update_effects`로 먼저 시작한 자식 삽입이 효과에 포함되는지 검사한다.
+
+소비자 앱의 A7a·A7b도 두 순서에 같은 결과를 단언한다. 전체 앱 검증은 기존 Linux Verify의 PostgreSQL 및 worker 환경에서 실행한다.
