@@ -13,6 +13,7 @@ AIP는 백엔드를 없애지 않는다. 컨트롤러·DTO·검증·권한·트�
 | 필요한 것 | 비고 |
 | --- | --- |
 | PostgreSQL 17 | 전용 데이터베이스를 쓴다. 다른 버전과 MySQL·MariaDB는 1.0 지원 범위 밖이다 |
+| `psql` (PostgreSQL 클라이언트) | 3단계의 데이터 입력과 정리에 쓴다. macOS Homebrew의 `postgresql@17`은 keg-only라 PATH에 없을 수 있다(`brew link` 또는 `/opt/homebrew/opt/postgresql@17/bin`을 PATH에 추가). 서버가 Docker 컨테이너면 `docker exec -i <컨테이너> psql -U <사용자> <DB>`로 대신할 수 있다 |
 | Node.js 26 | 개발 토큰 도구와 TypeScript SDK에 필요하다. Python SDK와 Python worker 확장에는 Python 3.9 이상이 필요하다 |
 | Rust 1.98.1 | 소스에서 만들 때만 필요하다. 릴리스 아카이브를 쓰면 필요 없다 |
 
@@ -150,9 +151,27 @@ const done = await client.apply({ apply: "Event.mark", target: { ids: ["11"] } }
 console.log(events.rows, done);
 ```
 
-Node 26은 `.ts` 파일을 그대로 실행한다: `TOKEN=$TOKEN node app.ts`. 첫 실행은 `[{"checked":true,...,"id":"11",...}]`와 `{"changed":["11"],...}`를 낸다. 같은 이벤트는 위 curl로 이미 `checked`가 됐을 수 있으며, 그러면 `apply` 결과가 `"changed":[],"unchanged":["11"]`다. 이것도 정상이다. 컴파일하려면 `tsc`로 `binding.ts`와 함께 빌드한다.
+Node 26은 `.ts` 파일을 그대로 실행한다: `TOKEN=$TOKEN node app.ts`. 첫 실행은 `[ { checked: true, id: '11', title: 'First event' } ]`(Node 객체 출력 형식)와 `{ changed: [ '11' ], ok: true, ... }`를 낸다. 같은 이벤트는 위 curl로 이미 `checked`가 됐을 수 있으며, 그러면 `apply` 결과가 `"changed":[],"unchanged":["11"]`다. 이것도 정상이다. 컴파일하려면 `tsc`로 `binding.ts`와 함께 빌드한다.
 
-Python은 `pip install application-intent-protocol-sdk`(또는 Release의 wheel, 소스 checkout이면 `pip install ./product/python`) 뒤 `from aip_sdk import connect`로 같은 계약 지문을 받아 쓴다(`connect(base, token, fingerprint).read({...})`). 익명 호출은 토큰 자리에 `None`을 준다. 두 SDK는 같은 멱등 key 공간을 쓴다. 전체 API는 [설치 SDK](SDK.md)를 따른다.
+Python은 가상환경에 SDK를 설치하고(`pip install application-intent-protocol-sdk`, Release의 wheel, 소스 checkout이면 `pip install ./product/python`. 시스템 Python에 직접 설치하면 PEP 668로 막힐 수 있다, [설치 안내](INSTALL.md#python-sdk)) 생성기로 계약 지문 상수를 만든다.
+
+```sh
+aip service gen app.aip --lang python --wire decimal --out binding.py     # binding.py의 CONTRACT_FINGERPRINT가 계약 지문이다
+python3 -m venv .venv && .venv/bin/pip install ./application_intent_protocol_sdk-1.0.0-py3-none-any.whl   # Release에서 받은 wheel 경로
+```
+
+```python
+# call.py
+import os
+from aip_sdk import connect
+import binding
+
+client = connect("http://127.0.0.1:8080", os.environ["TOKEN"], binding.CONTRACT_FINGERPRINT)
+print(client.read({"read": "Event", "select": ["id", "title", "checked"]}))      # rows 목록
+print(client.apply({"apply": "Event.mark", "target": {"ids": ["11"]}}, key="mark-py-11"))
+```
+
+`binding.py`가 있는 디렉터리(위 `app/`이 아니라 `demo/`)에서 `TOKEN=$TOKEN .venv/bin/python call.py`로 실행한다. 익명 호출은 토큰 자리에 `None`을 준다. 두 SDK는 같은 멱등 key 공간을 쓴다. 전체 API는 [설치 SDK](SDK.md)를 따른다.
 
 ## 정리하고 다음으로
 

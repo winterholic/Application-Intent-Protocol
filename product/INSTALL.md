@@ -81,17 +81,18 @@ npm install --offline ./aip-sdk-1.0.0.tgz
 ## Python SDK
 
 ```sh
+python3 -m venv .venv && . .venv/bin/activate
 pip install application-intent-protocol-sdk     # 이름 잠정(TBD)
 python -c "import aip_sdk; print(aip_sdk.__version__, aip_sdk.PROTOCOL)"
 ```
 
-공개 전에는 Release의 wheel을 쓴다.
+공개 전에는 Release의 wheel(또는 sdist)을 쓴다.
 
 ```sh
 pip install ./application_intent_protocol_sdk-1.0.0-py3-none-any.whl
 ```
 
-소스에서는 `pip install ./product/python`이다. Python 3.9 이상, 외부 의존성은 없다.
+소스에서는 `pip install ./product/python`이다. Python 3.9 이상, 외부 의존성은 없다. **가상환경 안에서 설치한다.** Homebrew·Debian 계열 Python은 시스템 환경에 직접 설치하는 것을 막고(PEP 668 `externally-managed-environment`), macOS에는 `pip` 명령이 없고 `pip3`만 있을 수 있다. `uv`를 쓰면 `uv venv .venv && uv pip install --python .venv/bin/python <wheel>`이다. 3.9와 3.14에서 wheel 설치와 호출을 확인했다(2026-11-21).
 
 ### Python wheel을 직접 빌드할 때(네트워크 요구사항)
 
