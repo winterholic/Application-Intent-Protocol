@@ -366,7 +366,9 @@ pub async fn rekey_target_column(
     };
     let mut checkpoint = RekeyLease::acquire(db, &identity, DEFAULT_LEASE_TTL_SECS).await?.ok_or(StoreError::StaleWriter)?;
 
-    let table = quote_ident(&target.table);
+    // Every other statement in the stack qualifies the deployment schema; resolving the bare name through the session's
+    // search_path would rewrite whichever same-named table comes first (a `$user` or `public` table, another deployment).
+    let table = format!("{}.{}", quote_ident(ctx.store.deployment_schema()), quote_ident(&target.table));
     let column = quote_ident(&target.column);
     let id_column = quote_ident(&target.id_column);
     loop {
