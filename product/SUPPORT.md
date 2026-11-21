@@ -74,7 +74,7 @@ Core의 자동 tenant 격리, search, publishable, consent, subscribe 같은 기
 | 요청 | 코드 | 확인 |
 | --- | --- | --- |
 | `/read`, `/apply`(전이·묶음·조합), `/status`에서 헤더 없음 | `WIRE.CONTRACT_REQUIRED` | 실행 |
-| 같은 경로에서 64자리 16진수가 아닌 값 | `WIRE.BAD_REQUEST` | 실행 |
+| 같은 경로에서 소문자 16진수 64자리가 아닌 값(대문자 16진수 포함) | `WIRE.BAD_REQUEST` | 실행 |
 | 같은 경로에서 형식은 맞고 서버와 다른 지문 | `WIRE.CONTRACT_MISMATCH` | 실행 |
 | object API(`/objects/*`), RAG API(`/rag/*`), 쓰기 확장 `/apply`에서 헤더 없음 | `WIRE.CONTRACT_MISMATCH`(`CONTRACT_REQUIRED`가 아니다) | 코드 확인만, 실행하지 않음 |
 

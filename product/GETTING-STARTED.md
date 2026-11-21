@@ -125,7 +125,7 @@ curl -s localhost:8080/apply -H "authorization: Bearer $TOKEN" -H "x-aip-contrac
 
 정의의 `transition mark`는 `member = actor`인 행의 `checked`를 `false`에서 `true`로 바꾸는 것만 허용한다. 호출자는 정의가 `expose`한 필드와 전이 밖의 것을 요청할 수 없다.
 
-토큰 없이 보내면 익명 호출자로 취급한다. 이 예제의 행 정책(`rows read when member = actor`)은 익명에게 행을 주지 않으므로 `"rows":[]`를 받는다. 계약 헤더가 없으면 `WIRE.CONTRACT_REQUIRED`, 지문 형식(64자리 16진수)이 아니면 `WIRE.BAD_REQUEST`, 형식은 맞지만 서버와 다른 지문이면 `WIRE.CONTRACT_MISMATCH`, 정의가 열지 않은 필드를 고르면 `WIRE.FIELD_NOT_EXPOSED`다. 모든 오류 코드와 재시도 지침은 [`spec/wire-errors.md`](../spec/wire-errors.md)에 있고 `aip explain-code <코드>`로도 볼 수 있다.
+토큰 없이 보내면 익명 호출자로 취급한다. 이 예제의 행 정책(`rows read when member = actor`)은 익명에게 행을 주지 않으므로 `"rows":[]`를 받는다. 계약 헤더가 없으면 `WIRE.CONTRACT_REQUIRED`, 지문 형식(소문자 16진수 64자리, 대문자는 거부)이 아니면 `WIRE.BAD_REQUEST`, 형식은 맞지만 서버와 다른 지문이면 `WIRE.CONTRACT_MISMATCH`, 정의가 열지 않은 필드를 고르면 `WIRE.FIELD_NOT_EXPOSED`다. 모든 오류 코드와 재시도 지침은 [`spec/wire-errors.md`](../spec/wire-errors.md)에 있고 `aip explain-code <코드>`로도 볼 수 있다.
 
 ### 시각(Time) 값의 형식
 
