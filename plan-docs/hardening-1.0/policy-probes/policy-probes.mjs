@@ -393,6 +393,99 @@ resource Note {
       return `u1=${code(first)} v1 same body=${code(sameBody)} (not a replay of u1's changed:[1]: ${J(sameBody.body.changed) !== J(first.body.changed)}) v1 other body=${code(otherBody)}`;
     },
   },
+  {
+    id: 'C7-read-extension-ctx-read',
+    claim: '읽기 확장은 `access read.<Resource>` 선언 없이 `ctx.data.read`를 부를 수 있다(선언할 문법이 없음). 그래도 호출자의 행·필드 정책, 계약(select·filter·sort·limit), 노출 여부, 루트 질의 가능 여부가 공개 `/read`와 같이 적용된다.',
+    def: `actor Member
+resource Member { fields { id: Id; org: Int } rows read when org = actor.org
+  expose read { select id, org; filter id.eq; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } } }
+resource Doc {
+  fields { id: Id; owner: Member; org: Int; risk: Int; title: Text(1..9); memo: Text(1..9) }
+  rows read when org = actor.org
+  field risk read when owner = actor
+  expose read { select id, org, title, risk, owner; filter id.eq, org.eq; sort id; budget { rows 2; depth 1; deadline 2s; cost 1000 } }
+  extension read peek { input { which: Text(1..30); id: Doc.Id } output { out: Text(0..1800) } effect none deadline 3s implementation "x.peek" }
+}
+resource Note { fields { id: Id; doc: Doc; text: Text(1..9) } rows read when true
+  expose read { select id, text; sort id } }
+resource Secret { fields { id: Id; v: Int } rows read when true }`,
+    seed: `INSERT INTO $S.member(id,org) VALUES (1,1),(2,1),(10,2);
+INSERT INTO $S.doc(id,owner_id,org,risk,title,memo) VALUES (1,1,1,37,'a','m1'),(2,2,1,5,'b','m2'),(3,2,1,6,'c','m3'),(20,10,2,99,'foreign','m20');
+INSERT INTO $S.note(id,doc_id,text) VALUES (1,1,'n1'); INSERT INTO $S.secret(id,v) VALUES (1,7)`,
+    workers: `export async function peek(input, ctx) {
+  const w = input.which; let out;
+  const read = (q) => ctx.data.read(q);
+  if (w === 'ran') out = 'ran';
+  else if (w === 'readHidden') out = await read({ read: 'Doc', select: ['id','risk'], filter: [{ field: 'id', op: 'eq', value: input.id }] });
+  else if (w === 'filterHidden') out = await read({ read: 'Doc', select: ['id'], filter: [{ field: 'risk', op: 'gte', value: 1 }] });
+  else if (w === 'foreignTenant') out = await read({ read: 'Doc', select: ['id','org'], filter: [{ field: 'org', op: 'eq', value: 2 }] });
+  else if (w === 'foreignById') out = await read({ read: 'Doc', select: ['id','org'], filter: [{ field: 'id', op: 'eq', value: '20' }] });
+  else if (w === 'unexposed') out = await read({ read: 'Secret', select: ['id','v'] });
+  else if (w === 'traverseOnly') out = await read({ read: 'Note', select: ['id','text'] });
+  else if (w === 'notInSelect') out = await read({ read: 'Doc', select: ['id','memo'] });
+  else if (w === 'overBudget') out = await read({ read: 'Doc', select: ['id'], limit: 1000 });
+  else if (w === 'sortNotAllowed') out = await read({ read: 'Doc', select: ['id'], sort: [{ field: 'title', dir: 'asc' }] });
+  else if (w === 'filterOpNotAllowed') out = await read({ read: 'Doc', select: ['id'], filter: [{ field: 'org', op: 'gte', value: 0 }] });
+  else if (w === 'unknownKey') out = await read({ read: 'Doc', select: ['id'], where: 'true' });
+  else if (w === 'publicSame') out = await read({ read: 'Doc', select: ['id','org','title','risk'], sort: [{ field: 'id', dir: 'asc' }] });
+  return { out: JSON.stringify(out).slice(0, 1700) };
+}`,
+    run: async (s) => {
+      const call = async (who, which, id = '1') => {
+        const r = await s.call(who, '/extension', { extension: 'Doc.peek', input: { which, id } });
+        return r.body.ok ? r.body.output.out : r.body.code;
+      };
+      const out = [];
+      for (const which of ['readHidden', 'filterHidden', 'foreignTenant', 'foreignById', 'unexposed', 'traverseOnly', 'notInSelect', 'overBudget', 'sortNotAllowed', 'filterOpNotAllowed', 'unknownKey']) {
+        out.push(`${which}=${(await call('u2', which)).slice(0, 60)}`);
+      }
+      const viaExt = JSON.parse(await call('u2', 'publicSame'));
+      const viaPublic = (await read(s, 'u2', { read: 'Doc', select: ['id', 'org', 'title', 'risk'], sort: [{ field: 'id', dir: 'asc' }] })).body.rows;
+      out.push(`publicSame=${J(viaExt.rows) === J(viaPublic)}`);
+      const foreignId = await s.call('u2', '/extension', { extension: 'Doc.peek', input: { which: 'ran', id: '20' } });
+      const missingId = await s.call('u2', '/extension', { extension: 'Doc.peek', input: { which: 'ran', id: '999' } });
+      out.push(`foreignVsMissingInputId=${J(foreignId.body) === J(missingId.body)}`);
+      return out.join(' | ');
+    },
+  },
+  {
+    id: 'C8-read-extension-other-ops',
+    claim: '읽기 확장의 `ctx.data.aggregate`는 선언한 집계만, 확장 입력에 묶인 값으로만 부를 수 있다. apply·create·http·jobs는 읽기 확장에서 거부된다.',
+    def: `actor Member
+resource Member { fields { id: Id; org: Int } rows read when true }
+access all(a: Member) = true
+resource Doc {
+  fields { id: Id; owner: Member; org: Int; title: Text(1..9) }
+  rows read when owner = actor
+  transition t { from true; allow owner = actor; to org = org }
+  aggregate cnt: Int { input { n: Int }; source Doc; sourceAccess all(actor); where owner = actor and org >= input.n; callerFilter none; rowOutput none; release count }
+  aggregate other: Int { input { n: Int }; source Doc; sourceAccess all(actor); where owner = actor and org >= input.n; callerFilter none; rowOutput none; release count }
+  expose read { select id, title; sort id; budget { rows 5; depth 1; deadline 2s; cost 1000 } }
+  expose apply t { target id; bulk maxRows 1 }
+  expose aggregate cnt
+  expose aggregate other
+  extension read peek { input { which: Text(1..30); n: Int } output { out: Text(0..900) } access Doc.cnt effect none deadline 3s implementation "x.peek" }
+}`,
+    seed: `INSERT INTO $S.member(id,org) VALUES (1,1),(2,1); INSERT INTO $S.doc(id,owner_id,org,title) VALUES (1,1,3,'a'),(2,2,4,'b')`,
+    workers: `export async function peek(input, ctx) {
+  const w = input.which; let out;
+  if (w === 'declared') out = await ctx.data.aggregate('Doc', 'cnt', { n: input.n });
+  else if (w === 'rebound') out = await ctx.data.aggregate('Doc', 'cnt', { n: input.n + 100 });
+  else if (w === 'undeclared') out = await ctx.data.aggregate('Doc', 'other', { n: input.n });
+  else if (w === 'apply') out = await ctx.data.apply('Doc', 't', ['1']);
+  else if (w === 'create') out = await ctx.data.create('Doc', { owner: '1', org: 1, title: 'x' });
+  else if (w === 'jobs') out = await ctx.jobs.run('anything', {}, 'k');
+  return { out: JSON.stringify(out ?? null).slice(0, 800) };
+}`,
+    run: async (s) => {
+      const out = [];
+      for (const which of ['declared', 'rebound', 'undeclared', 'apply', 'create', 'jobs']) {
+        const r = await s.call('u1', '/extension', { extension: 'Doc.peek', input: { which, n: 0 } });
+        out.push(`${which}=${r.body.ok ? r.body.output.out : r.body.code}`);
+      }
+      return out.join(' | ');
+    },
+  },
   // 알려진 한계(문서화된 존재 노출 계열). 고치지 않고 policy.md에 선택지만 적었다.
   {
     id: 'K1-unique-hidden-field',
