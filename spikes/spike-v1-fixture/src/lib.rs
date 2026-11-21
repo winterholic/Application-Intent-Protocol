@@ -11,6 +11,7 @@ pub mod isolation;
 pub mod lexer;
 mod limits;
 pub mod parser;
+mod policy_advice;
 pub mod sema;
 mod string_literal;
 pub mod syntax_card;

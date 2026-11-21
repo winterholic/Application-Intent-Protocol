@@ -268,6 +268,8 @@ async fn rows_of(tx: &tokio_postgres::Transaction<'_>, plan: &Plan) -> Result<Ve
             let code = e.code().map(|c| c.code().to_string()).unwrap_or_default();
             return Err(match code.as_str() {
                 "57014" => Reject { code: "WIRE.DEADLINE_EXCEEDED", msg: format!("{}ms 안에 끝나지 않음", plan.deadline_ms) },
+                // Decimal sum이 선언한 정밀도를 넘으면 plan::measured_subquery가 22012를 낸다. 읽기 계획에는 다른 나눗셈이 없다.
+                "22012" => Reject { code: "WIRE.OUTPUT_INVALID", msg: "집계 합이 선언한 Decimal 정밀도를 넘음".into() },
                 c if c.starts_with("22") => Reject { code: "WIRE.BAD_VALUE", msg: "값 변환 실패".into() },
                 _ => Reject { code: "WIRE.INTERNAL", msg: format!("실행 실패(sqlstate {code})") },
             });

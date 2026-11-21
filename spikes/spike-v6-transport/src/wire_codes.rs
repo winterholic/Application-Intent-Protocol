@@ -195,7 +195,7 @@ pub static REGISTRY: &[Info] = &[
     w("WIRE.OBJECT_STORE_ERROR", Av, Later, "The object store failed to complete the operation.", "Send again after a short delay; report the `x-request-id` if it persists."),
     w("WIRE.OFFSET_EXCEEDED", Li, Never, "`offset` is above the `offset` limit of the budget.", "Page with `after` or lower the offset."),
     w("WIRE.ORIGIN_NOT_ALLOWED", Az, Never, "The browser `Origin` is not in the allowed origins of the service.", "Operator: add the origin to `allowed_origins`."),
-    w("WIRE.OUTPUT_INVALID", Sv, Never, "An extension returned output that does not match its declaration.", "Fix the extension or its `output` declaration."),
+    w("WIRE.OUTPUT_INVALID", Sv, Never, "An extension returned output that does not match its declaration, or a Decimal `sum` aggregate is larger than the `Decimal(p', s)` it declares.", "Fix the extension or its `output` declaration. For a Decimal sum, declare a larger `p'` (the scale must stay that of the summed field; nothing is rounded)."),
     w("WIRE.OUTPUT_TOO_LARGE", Li, Never, "The response would be larger than the output limit.", "Select fewer fields or use a smaller limit."),
     w("WIRE.PAYLOAD_TOO_LARGE", Li, Never, "The request body is larger than the limit.", "Send less."),
     w("WIRE.POLICY_FIELD_NOT_FILTERABLE", Az, Never, "A field with a read policy cannot be used in a filter, a sort or a cursor, because the result would reveal it.", "Use a field without a read policy."),

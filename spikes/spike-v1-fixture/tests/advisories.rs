@@ -105,13 +105,21 @@ fn a_count_without_where_reports_the_public_count_advisory_and_keeps_the_facts()
 }
 
 #[test]
-fn explicit_where_and_facereview_have_no_error_and_only_the_documented_public_counts() {
+fn explicit_where_and_facereview_have_no_error_and_only_the_documented_advisories() {
     let facereview = include_str!("../../../product/tests/fixtures/facereview-mysql/facereview.aip");
     let checked = load_str(facereview, Form::A).expect("FaceReview definition");
     let anchors: Vec<_> = checked.advisories.iter().map(|d| (d.code, d.msg.split('`').nth(1).unwrap_or(""))).collect();
+    // 뒤의 둘은 P1 정책 작성 경고다(p1-sema-notes.md 분류): 관리자가 `is_deleted`를 정해 만든 Video는 자기에게 안 보일 수 있고,
+    // Comment는 `is_deleted`를 채우는 값이 정의에 없다. 둘 다 오류가 아니다.
     assert_eq!(
         anchors,
-        [("DEF.ADVISORY_PUBLIC_COUNT", "watchCount"), ("DEF.ADVISORY_PUBLIC_COUNT", "commentCount"), ("DEF.ADVISORY_PUBLIC_COUNT", "likeCount")]
+        [
+            ("DEF.ADVISORY_PUBLIC_COUNT", "watchCount"),
+            ("DEF.ADVISORY_PUBLIC_COUNT", "commentCount"),
+            ("DEF.ADVISORY_PUBLIC_COUNT", "likeCount"),
+            ("DEF.ADVISORY_WRITE_WIDER_THAN_READ", "Video"),
+            ("DEF.ADVISORY_WRITE_WIDER_THAN_READ", "Comment"),
+        ]
     );
 }
 

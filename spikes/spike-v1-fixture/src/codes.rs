@@ -455,8 +455,8 @@ pub static REGISTRY: &[Info] = &[
     i(
         "DEF.ACCESS_MISMATCH",
         "an access used in a place it was not declared for",
-        "An `access` that names a group key may only guard aggregates that group by that key.",
-        "Declare an access for this aggregate, or give the aggregate the matching `groupKey`.",
+        "`access name = totalOfVisible(R)` guards the aggregates declared in `R` that count rows of another resource grouped by the `groupKey` field pointing back to `R`. An aggregate declared in `Task` that counts `Comment` rows per task (`groupKey task`) uses `totalOfVisible(Task)`: the argument is the resource that declares the aggregate, not the one it counts. The check fails when the argument is another resource or when the aggregate has no `groupKey`.",
+        "Pass the resource that declares the aggregate to `totalOfVisible`, and give the aggregate the `groupKey` of the field that points to it. For an aggregate without a `groupKey`, write a guard access with a parameter instead.",
         "",
     ),
     i(
@@ -662,6 +662,27 @@ pub static REGISTRY: &[Info] = &[
         "A `count` does not apply the source resource's `rows read` policy. With `callerFilter read` the caller's filter is added to the aggregate's own `where`, so a caller could count the rows that match a value in a field of rows it cannot read, one value at a time. When the source has a `rows read` policy, the aggregate's `where` must therefore imply that policy: the whole policy, or one branch of a policy written as `A or B`, appears as an AND term of `where`, written the same way. Before 1.0 this was only the advisory `DEF.ADVISORY_CALLER_FILTER_POLICY` under `--dev-checks`, and only when `where` was missing.",
         "Repeat the source's `rows read` condition in the aggregate's `where`, alone or as an AND term (`where owner = actor and amount > 0`). When the policy is `A or B`, `where B` is enough. Or use `callerFilter none`.",
         "actor Member\naccess allMembers(a: Member) = true\nresource Member {\n  fields { id: Uuid; owner: Member; name: Text(1..100) }\n  rows read when owner = actor\n  aggregate nameCount: Int {\n    source Member\n    sourceAccess allMembers(actor)\n    where owner = actor\n    callerFilter read\n    rowOutput none\n    release count\n  }\n  expose aggregate nameCount\n}\n",
+    ),
+    i(
+        "DEF.ADVISORY_TENANT_UNSCOPED_READ",
+        "a `rows read` that does not tie a tenant field to the actor (advisory)",
+        "Not an error: the definition is accepted. AIP has no automatic tenant isolation (product/SUPPORT.md 13); the organisation boundary is a condition you write in every resource. A field is a tenant field when it has the same name and target as a reference field of the actor resource (`Task.org: Org` next to `Member.org: Org`) and some policy of the definition compares it with the actor (`rows read when org = actor.org`, or `rows read when id = actor.org` on the tenant resource): a field that no policy ties to the actor, such as a role group, is an attribute and is left alone. When the `rows read` of a resource with a tenant field neither compares that field with `actor.<field>` nor ties the row to the actor itself (`owner = actor`, `id = actor.id`), every caller reads the rows of every tenant the policy admits. Every branch of an `or` has to keep the tenant. A policy that contains `exists` and the policy `true` (see DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD) are not judged here.",
+        "Write the tenant condition into the policy: `rows read when org = actor.org and <the rest>`. When every branch of an `or` is meant to stay inside the tenant, write the condition in each branch. If the resource is shared across tenants on purpose, keep the policy and treat the advisory as read.",
+        "actor Member\nresource Org {\n  fields { id: Id; name: Text }\n  rows read when id = actor.org\n}\nresource Member {\n  fields { id: Id; org: Org; name: Text }\n  rows read when org = actor.org\n}\nresource Note {\n  fields { id: Id; org: Org; body: Text; published: Bool }\n  rows read when published\n}\n",
+    ),
+    i(
+        "DEF.ADVISORY_WRITE_WIDER_THAN_READ",
+        "a write that can leave the caller's own view (advisory)",
+        "Not an error: the definition is accepted. Two cases. (1) `expose create` has an `allow` that does not require every AND term of the resource's `rows read`, so a caller can create a row that the same caller then cannot read. A term is not reported when the caller does not choose what it reads (a field the database fills, or the caller alone: `actor.admin`), or when the created row is held to it anyway: a created reference must be readable, so `org = actor.org` is guaranteed when the `org` rows are limited to `actor.org`, and `video.is_deleted = false` when the `rows read` of `Video` contains it. (2) A transition that is exposed with `patch` lets the caller change the tenant field itself, and the rows of the tenant resource are not limited to `actor.<field>`, so a row can be moved to another tenant and out of the caller's view. A transition is applied to the rows the caller can read; `patch` values are not checked against `rows read` afterwards.",
+        "Add the missing term to the `allow` (`allow org = actor.org and ...`), or limit the tenant resource's `rows read` to the caller's own tenant, or remove the tenant field from `patch`. If the caller is meant to hand rows over or to submit rows it cannot read back (an inbox), keep the definition and treat the advisory as read.",
+        "actor Member\nresource Org {\n  fields { id: Id; name: Text }\n  rows read when true\n}\nresource Member {\n  fields { id: Id; org: Org; name: Text }\n  rows read when org = actor.org\n}\nresource Note {\n  fields { id: Id; org: Org; body: Text }\n  rows read when org = actor.org\n  expose create { allow body != \"\"; fields org, body }\n}\n",
+    ),
+    i(
+        "DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD",
+        "a `rows read when true` on rows that belong to a tenant (advisory)",
+        "Not an error: the definition is accepted. `rows read when true` lets every caller read every row. The resource also has a tenant field (same name and target as a reference field of the actor resource, and another policy of the definition compares it with the actor, as described at DEF.ADVISORY_TENANT_UNSCOPED_READ), which usually means the rows are the data of one organisation and every organisation can read them.",
+        "Use `rows read when org = actor.org` (with the field name of the resource). If the rows are public on purpose, such as a catalogue, keep `true` and treat the advisory as read.",
+        "actor Member\nresource Org {\n  fields { id: Id; name: Text }\n  rows read when id = actor.org\n}\nresource Member {\n  fields { id: Id; org: Org; name: Text }\n  rows read when org = actor.org\n}\nresource Note {\n  fields { id: Id; org: Org; body: Text }\n  rows read when true\n}\n",
     ),
     i(
         "DEF.ADVISORY_PUBLIC_COUNT",

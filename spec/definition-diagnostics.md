@@ -577,8 +577,8 @@ a predicate is called with the wrong number of arguments
 
 an access used in a place it was not declared for
 
-- 원인: An `access` that names a group key may only guard aggregates that group by that key.
-- 수정: Declare an access for this aggregate, or give the aggregate the matching `groupKey`.
+- 원인: `access name = totalOfVisible(R)` guards the aggregates declared in `R` that count rows of another resource grouped by the `groupKey` field pointing back to `R`. An aggregate declared in `Task` that counts `Comment` rows per task (`groupKey task`) uses `totalOfVisible(Task)`: the argument is the resource that declares the aggregate, not the one it counts. The check fails when the argument is another resource or when the aggregate has no `groupKey`.
+- 수정: Pass the resource that declares the aggregate to `totalOfVisible`, and give the aggregate the `groupKey` of the field that points to it. For an aggregate without a `groupKey`, write a guard access with a parameter instead.
 
 ### `DEF.BAD_CAPABILITY`
 
@@ -840,6 +840,76 @@ resource Member {
     release count
   }
   expose aggregate nameCount
+}
+```
+
+### `DEF.ADVISORY_TENANT_UNSCOPED_READ`
+
+a `rows read` that does not tie a tenant field to the actor (advisory)
+
+- 원인: Not an error: the definition is accepted. AIP has no automatic tenant isolation (product/SUPPORT.md 13); the organisation boundary is a condition you write in every resource. A field is a tenant field when it has the same name and target as a reference field of the actor resource (`Task.org: Org` next to `Member.org: Org`) and some policy of the definition compares it with the actor (`rows read when org = actor.org`, or `rows read when id = actor.org` on the tenant resource): a field that no policy ties to the actor, such as a role group, is an attribute and is left alone. When the `rows read` of a resource with a tenant field neither compares that field with `actor.<field>` nor ties the row to the actor itself (`owner = actor`, `id = actor.id`), every caller reads the rows of every tenant the policy admits. Every branch of an `or` has to keep the tenant. A policy that contains `exists` and the policy `true` (see DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD) are not judged here.
+- 수정: Write the tenant condition into the policy: `rows read when org = actor.org and <the rest>`. When every branch of an `or` is meant to stay inside the tenant, write the condition in each branch. If the resource is shared across tenants on purpose, keep the policy and treat the advisory as read.
+
+```aip
+actor Member
+resource Org {
+  fields { id: Id; name: Text }
+  rows read when id = actor.org
+}
+resource Member {
+  fields { id: Id; org: Org; name: Text }
+  rows read when org = actor.org
+}
+resource Note {
+  fields { id: Id; org: Org; body: Text; published: Bool }
+  rows read when published
+}
+```
+
+### `DEF.ADVISORY_WRITE_WIDER_THAN_READ`
+
+a write that can leave the caller's own view (advisory)
+
+- 원인: Not an error: the definition is accepted. Two cases. (1) `expose create` has an `allow` that does not require every AND term of the resource's `rows read`, so a caller can create a row that the same caller then cannot read. A term is not reported when the caller does not choose what it reads (a field the database fills, or the caller alone: `actor.admin`), or when the created row is held to it anyway: a created reference must be readable, so `org = actor.org` is guaranteed when the `org` rows are limited to `actor.org`, and `video.is_deleted = false` when the `rows read` of `Video` contains it. (2) A transition that is exposed with `patch` lets the caller change the tenant field itself, and the rows of the tenant resource are not limited to `actor.<field>`, so a row can be moved to another tenant and out of the caller's view. A transition is applied to the rows the caller can read; `patch` values are not checked against `rows read` afterwards.
+- 수정: Add the missing term to the `allow` (`allow org = actor.org and ...`), or limit the tenant resource's `rows read` to the caller's own tenant, or remove the tenant field from `patch`. If the caller is meant to hand rows over or to submit rows it cannot read back (an inbox), keep the definition and treat the advisory as read.
+
+```aip
+actor Member
+resource Org {
+  fields { id: Id; name: Text }
+  rows read when true
+}
+resource Member {
+  fields { id: Id; org: Org; name: Text }
+  rows read when org = actor.org
+}
+resource Note {
+  fields { id: Id; org: Org; body: Text }
+  rows read when org = actor.org
+  expose create { allow body != ""; fields org, body }
+}
+```
+
+### `DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD`
+
+a `rows read when true` on rows that belong to a tenant (advisory)
+
+- 원인: Not an error: the definition is accepted. `rows read when true` lets every caller read every row. The resource also has a tenant field (same name and target as a reference field of the actor resource, and another policy of the definition compares it with the actor, as described at DEF.ADVISORY_TENANT_UNSCOPED_READ), which usually means the rows are the data of one organisation and every organisation can read them.
+- 수정: Use `rows read when org = actor.org` (with the field name of the resource). If the rows are public on purpose, such as a catalogue, keep `true` and treat the advisory as read.
+
+```aip
+actor Member
+resource Org {
+  fields { id: Id; name: Text }
+  rows read when id = actor.org
+}
+resource Member {
+  fields { id: Id; org: Org; name: Text }
+  rows read when org = actor.org
+}
+resource Note {
+  fields { id: Id; org: Org; body: Text }
+  rows read when true
 }
 ```
 
