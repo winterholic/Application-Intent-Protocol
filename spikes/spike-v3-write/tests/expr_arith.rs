@@ -72,6 +72,22 @@ resource Product {
     allow actor != null
     delete
   }
+  transition limited {
+    input { qty: Int(1..100) }
+    from true
+    allow actor != null and input.qty <= 5
+    to stock = stock - input.qty
+  }
+  transition tip {
+    from true
+    allow actor != null
+    to cash = cash + "1.50"
+  }
+  transition tip2 {
+    from true
+    allow actor != null
+    to cash = cash + 2
+  }
   transition both {
     input { qty: Int(1..100) }
     from stock >= input.qty
@@ -90,6 +106,9 @@ resource Product {
   expose apply bump { target id; bulk maxRows 5 }
   expose apply purge { target id; bulk maxRows 5 }
   expose apply both { target id; bulk maxRows 5 }
+  expose apply limited { target id; bulk maxRows 5 }
+  expose apply tip { target id; bulk maxRows 5 }
+  expose apply tip2 { target id; bulk maxRows 5 }
 }
 resource Purchase {
   fields { id: Id; owner: Member; cost: Int(0..100); total: Decimal(12,2); paid: Bool }
@@ -316,12 +335,13 @@ async fn b_f12_a_false_from_is_invalid_state_and_changes_nothing() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn from_with_input_also_filters_where_targets_and_delete_transitions() {
     let (db, s) = (db().await, sqlgen::schema());
-    insert_product(&db, 231, 7).await;
+    insert_product(&db, 231, 777).await;
     insert_product(&db, 232, 3).await;
     // where 대상: from(stock >= qty)을 만족하는 행만 대상이 되고, stock.eq 필터로 하나를 고른다.
-    let by_where = json!({"apply": "Product.take", "target": {"where": [{"field": "stock", "op": "eq", "value": 7}]}, "input": {"qty": 5}});
+    // 같은 표를 쓰는 다른 시험의 행이 걸리지 않도록 겹치지 않는 값(777)을 쓴다.
+    let by_where = json!({"apply": "Product.take", "target": {"where": [{"field": "stock", "op": "eq", "value": 777}]}, "input": {"qty": 5}});
     assert_eq!(code(run(&by_where).await), "OK");
-    assert_eq!((stock(&db, 231).await.as_str(), stock(&db, 232).await.as_str()), ("2", "3"));
+    assert_eq!((stock(&db, 231).await.as_str(), stock(&db, 232).await.as_str()), ("772", "3"));
     // delete 전이도 input을 from에 쓴다.
     let purge = |id: &str, min: i64| json!({"apply": "Product.purge", "target": {"ids": [id]}, "input": {"min": min}});
     assert_eq!(code(run(&purge("232", 4)).await), "WIRE.INVALID_STATE");
@@ -408,4 +428,18 @@ async fn k2_two_orders_paying_from_one_wallet_commit_only_the_one_the_balance_co
     let wallet = db.query_one(&format!("SELECT credits::text, balance::text FROM {s}.wallet WHERE id = 501"), &[]).await.unwrap();
     assert_eq!((wallet.get::<_, String>(0), wallet.get::<_, String>(1)), ("10".into(), "90.00".into()));
     assert_eq!(text(&db, format!("SELECT count(*)::text FROM {s}.purchase WHERE owner_id = 5 AND paid")).await, "1");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn allow_may_compare_input_and_decimal_fields_take_literal_terms() {
+    let (db, s) = (db().await, sqlgen::schema());
+    insert_product(&db, 261, 50).await;
+    let limited = |qty: i64| json!({"apply": "Product.limited", "target": {"ids": ["261"]}, "input": {"qty": qty}});
+    assert_eq!(code(run(&limited(5)).await), "OK");
+    assert_eq!(code(run(&limited(6)).await), "WIRE.FORBIDDEN");
+    assert_eq!(stock(&db, 261).await, "45");
+    // Decimal 필드에 Decimal 리터럴과 정수 리터럴.
+    run(&json!({"apply": "Product.tip", "target": {"ids": ["261"]}})).await.unwrap();
+    run(&json!({"apply": "Product.tip2", "target": {"ids": ["261"]}})).await.unwrap();
+    assert_eq!(text(&db, format!("SELECT cash::text FROM {s}.product WHERE id = 261")).await, "103.50");
 }
