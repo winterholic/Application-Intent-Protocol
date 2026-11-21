@@ -64,8 +64,16 @@ async fn v16_generated_bundle_and_compose_types_and_calls_cross_real_http_and_co
     let control = format!("{dir}/.v16-negative-control.ts");
     fs::write(&control, source.replace("@ts-expect-error", "")).unwrap();
     let negative = tsc(dir, ".v16-negative-control.ts");
-    let reported = String::from_utf8_lossy(&negative.stdout).matches(".v16-negative-control.ts(").count();
-    let markers = source.matches("@ts-expect-error").count();
+    // One error per marked line is enough; a line that tsc reports twice must not hide an unreported one, and the header comment that
+    // names the marker is not a marker.
+    let negative_text = String::from_utf8_lossy(&negative.stdout);
+    let reported = source
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.trim_start().starts_with("// @ts-expect-error"))
+        .filter(|(index, _)| negative_text.contains(&format!(".v16-negative-control.ts({},", index + 2)))
+        .count();
+    let markers = source.lines().filter(|line| line.trim_start().starts_with("// @ts-expect-error")).count();
     if negative.status.success() || reported < markers {
         failures.push(format!("V16 marker removal reported {reported} errors for {markers} markers"));
     }
