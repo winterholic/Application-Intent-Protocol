@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 use spike_v2_read::id_wire::{emit_entity_id, emit_id, encode_rows, parse_id, IdWire, MAX_SAFE_ID};
 use spike_v2_read::plan::{plan_read_with_wire, Caller, Reject};
 use spike_v3_write::{
-    apply_in_with_wire, before_commit_rejection, checks_in, classify_write_error, connection_failed, isolation_sql, lost_before_commit, send_commit,
-    CommitFailure, Knobs,
+    apply_in_with_wire, before_commit_rejection, bundle_in, checks_in, classify_write_error, connection_failed, isolation_sql, lost_before_commit,
+    send_commit, CommitFailure, Knobs,
 };
 use std::time::{Duration, Instant};
 use tokio_postgres::{Client, Transaction};
@@ -134,6 +134,28 @@ fn check_ctx_key(key: &Value) -> Result<(), Reject> {
     }
 }
 
+/// The first refused ctx call was a `CONFLICT` (an optimistic `expect`, a serialization failure or a deadlock) or an `ALREADY_EXISTS` (a unique
+/// constraint) and the extension ended with that same code, unchanged: the call fails with the code itself, not with the opaque
+/// `EXTENSION_ERROR`, so the caller can send the request again (conflict) or tell "already there" from a failing extension. Nothing was
+/// committed. An extension may also end with `CONFLICT` after an `ALREADY_EXISTS` (a first call that lost the race to create a row).
+/// An extension that swallowed the refusal and returned normally does not get here: that call fails as `EXTENSION_ERROR` with the cause.
+fn passed_on_refusal(poisoned: Option<&'static str>, ended_with: Option<&str>) -> Option<Reject> {
+    match (poisoned, ended_with) {
+        (Some("WIRE.CONFLICT"), Some("WIRE.CONFLICT")) => Some(Reject {
+            code: "WIRE.CONFLICT",
+            msg: "동시 쓰기와 충돌(expect 불일치·직렬화 실패): 쓴 것은 모두 취소됨. 같은 요청을 다시 보내면 됨".into(),
+        }),
+        (Some("WIRE.ALREADY_EXISTS"), Some("WIRE.ALREADY_EXISTS")) => Some(Reject {
+            code: "WIRE.ALREADY_EXISTS",
+            msg: "이미 있는 행이라 만들 수 없음(유일 제약): 쓴 것은 모두 취소됨".into(),
+        }),
+        (Some("WIRE.ALREADY_EXISTS"), Some("WIRE.CONFLICT")) => {
+            Some(Reject { code: "WIRE.CONFLICT", msg: "같은 행을 동시에 만든 호출이 먼저 끝남: 다시 보내면 됨".into() })
+        }
+        _ => None,
+    }
+}
+
 /// 실행 효과와 caller의 추가 결과 기록을 함께 커밋하기 위한 private spike 경계.
 pub struct PreparedWrite {
     pub output: Value,
@@ -158,13 +180,17 @@ fn write_invocation<'a>(facts: &'a Value, name: &str, input: &Value, wire: IdWir
     Ok(WriteInvocation { declaration, wire, deadline, expires: Instant::now() + deadline })
 }
 
-/// A write extension may call any declared transition, so its transaction must meet the strictest marker in `access`.
+/// A write extension may call any declared transition or exposed create, so its transaction must meet the strictest marker in `access`.
 pub fn write_needs_serializable(facts: &Value, name: &str) -> bool {
     let Some((resource, extension)) = name.split_once('.') else { return false };
     facts["resources"][resource]["extensions"][extension]["access"].as_object().is_some_and(|access| {
-        access.keys().any(|transition| {
-            let Some((resource, transition)) = transition.split_once('.') else { return false };
-            facts["resources"][resource]["transitions"][transition]["isolation"] == "serializable"
+        access.keys().any(|grant| {
+            let Some((head, rest)) = grant.split_once('.') else { return false };
+            // `create.<Resource>` is the bundle's create, which `bundle_needs_serializable` judges by the same marker.
+            if head == "create" {
+                return facts["resources"][rest]["exposeCreate"]["isolation"] == "serializable";
+            }
+            facts["resources"][head]["transitions"][rest]["isolation"] == "serializable"
         })
     })
 }
@@ -382,21 +408,8 @@ pub async fn invoke_write_action(
                 if Instant::now() > expires {
                     break rej("WIRE.DEADLINE_EXCEEDED", "기한 뒤 완료");
                 }
-                // The extension passed on the refusal of an optimistic `expect` unchanged: the caller may send the request again.
-                if poisoned == Some("WIRE.CONFLICT") && message["error"]["code"] == "WIRE.CONFLICT" {
-                    break rej("WIRE.CONFLICT", "확장이 읽은 뒤 행이 바뀜(expect 불일치): 다시 보내면 됨");
-                }
-                // A create the unique constraint refused: the extension ends with the same code (nothing was committed) so the caller can
-                // tell "already there" from a failing extension. An extension may also end with CONFLICT after it (a first call that lost
-                // the race to create a row), since the caller sends that one again.
-                if poisoned == Some("WIRE.ALREADY_EXISTS") {
-                    match message["error"]["code"].as_str() {
-                        Some("WIRE.ALREADY_EXISTS") => {
-                            break rej("WIRE.ALREADY_EXISTS", "이미 있는 행이라 만들 수 없음(유일 제약): 쓴 것은 모두 취소됨");
-                        }
-                        Some("WIRE.CONFLICT") => break rej("WIRE.CONFLICT", "같은 행을 동시에 만든 호출이 먼저 끝남: 다시 보내면 됨"),
-                        _ => {}
-                    }
+                if let Some(error) = passed_on_refusal(poisoned, message["error"]["code"].as_str()) {
+                    break Err(error);
                 }
                 if let (None, Some(error)) = (poisoned, message.get("error")) {
                     if error["code"] == "WIRE.EXTENSION_REJECTED" {
@@ -561,8 +574,14 @@ async fn run_write_in(
                         Ok(result) => result,
                         Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 읽기가 기한 안에 끝나지 않음"),
                     }
+                } else if m["op"] == "create" {
+                    let left = expires.saturating_duration_since(Instant::now());
+                    match tokio::time::timeout(left, ctx_create_in(tx, facts, &allowed, &m, caller, &knobs, wire)).await {
+                        Ok(result) => result,
+                        Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 쓰기가 기한 안에 끝나지 않음"),
+                    }
                 } else if m["op"] != "apply" {
-                    rej("WIRE.UNSUPPORTED", "PostgreSQL 쓰기 확장 ctx는 apply·read만(create·mongo·redis 미지원)")
+                    rej("WIRE.UNSUPPORTED", "PostgreSQL 쓰기 확장 ctx는 apply·create·read만(mongo·redis 미지원)")
                 } else if !allowed.iter().any(|a| m["name"] == json!(a)) {
                     rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `{}` 쓰기가 없음", m["name"]))
                 } else {
@@ -602,6 +621,9 @@ async fn run_write_in(
                 }
                 if poisoned == Some("WIRE.DB_UNAVAILABLE") {
                     break Err(lost_before_commit());
+                }
+                if let Some(error) = passed_on_refusal(poisoned, m["error"]["code"].as_str()) {
+                    break Err(error);
                 }
                 if let (None, Some(e)) = (poisoned, m.get("error")) {
                     if e["code"] == "WIRE.EXTENSION_REJECTED" {
@@ -668,6 +690,51 @@ async fn ctx_read_in(
     Ok(json!({"rows": encode_rows(rows, &plan.output_type, wire)?}))
 }
 
+/// `ctx.data.create` of a PostgreSQL write extension (access `create.<Resource>`): one row of the caller's exposed create, run as a
+/// one-operation atomic bundle in the extension's own transaction. It is the bundle a client would send, so the field allow-list,
+/// `expose create allow`, `ensure_refs_readable`, DB defaults and unique constraints are the client's; the principal is `caller`.
+/// The key is only checked (see [`check_ctx_key`]): the outer request's idempotency key already covers every call of the extension.
+async fn ctx_create_in(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    allowed: &[String],
+    message: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+    wire: IdWire,
+) -> Result<Value, Reject> {
+    let resource = message["name"].as_str().unwrap_or("");
+    if !allowed.iter().any(|grant| grant.strip_prefix("create.") == Some(resource)) {
+        return rej("WIRE.ACCESS_NOT_DECLARED", "create가 확장 access에 선언되지 않음");
+    }
+    // Like `ctx.data.read`, an encrypted field is not reachable here: this transaction has no sealer, so the value would be stored as plaintext.
+    if has_encrypted_field(facts, resource) {
+        return rej("WIRE.UNSUPPORTED", "암호화 필드가 있는 resource는 PostgreSQL 쓰기 확장 ctx.data.create에서 지원하지 않음");
+    }
+    let request = job_create_request(resource, &message["input"])?;
+    match message["input"].get("key") {
+        None | Some(Value::Null) => {}
+        Some(key) => check_ctx_key(key)?,
+    }
+    let out = bundle_in(tx, facts, &request, caller, knobs, wire).await?;
+    let created = out
+        .created_rows
+        .into_iter()
+        .map(|(resource, id)| {
+            let id = match id {
+                Some(id) => emit_entity_id(id, wire)?,
+                None => Value::Null,
+            };
+            Ok(json!({"resource": resource, "id": id}))
+        })
+        .collect::<Result<Vec<_>, Reject>>()?;
+    Ok(json!({"created": created}))
+}
+
+fn has_encrypted_field(facts: &Value, resource: &str) -> bool {
+    facts["resources"][resource]["fields"].as_object().is_some_and(|fields| fields.values().any(|field| field.get("encrypted").is_some()))
+}
+
 fn declares_encrypted(output_type: &Value) -> bool {
     match output_type {
         Value::Object(object) => object.contains_key("encrypted") || object.values().any(declares_encrypted),
@@ -728,14 +795,15 @@ fn ctx_request(message: &Value, wire: IdWire) -> Result<Value, Reject> {
             target["ids"] = json!(encoded);
         }
     }
-    // A patch transition takes the caller's values and the expected current values (GENERAL-UPDATE); they are not part of the target.
+    // A patch transition takes the caller's values and the expected current values (GENERAL-UPDATE), and a transition with an `input { ... }`
+    // block takes its amounts as `input` (P0-B); none of them is part of the target.
     let mut request = json!({"apply":message["name"]});
     if let Some(object) = target.as_object_mut() {
         match object.remove("key") {
             None | Some(Value::Null) => {}
             Some(key) => check_ctx_key(&key)?,
         }
-        for key in ["values", "expect"] {
+        for key in ["values", "expect", "input"] {
             if let Some(value) = object.remove(key) {
                 request[key] = value;
             }
@@ -756,6 +824,30 @@ mod job_create_tests {
         assert_eq!(request, json!({"atomic": [{"create": "Video", "values": {"title": "t"}}]}));
         for bad in [json!({}), json!({"values": "x"}), json!({"values": {}, "key": "k", "extra": 1}), json!({"key": "k"}), json!("x")] {
             assert_eq!(job_create_request("Video", &bad).unwrap_err().code, "WIRE.BAD_VALUE", "{bad}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod passed_on_refusal_tests {
+    use super::passed_on_refusal;
+
+    #[test]
+    fn a_conflict_or_duplicate_the_extension_ended_with_keeps_its_code() {
+        let code = |poisoned, ended| passed_on_refusal(poisoned, ended).map(|error| error.code);
+        assert_eq!(code(Some("WIRE.CONFLICT"), Some("WIRE.CONFLICT")), Some("WIRE.CONFLICT"));
+        assert_eq!(code(Some("WIRE.ALREADY_EXISTS"), Some("WIRE.ALREADY_EXISTS")), Some("WIRE.ALREADY_EXISTS"));
+        assert_eq!(code(Some("WIRE.ALREADY_EXISTS"), Some("WIRE.CONFLICT")), Some("WIRE.CONFLICT"));
+        // Swallowed (no error at the end), another cause, or ended with a different code: still the opaque extension error with the cause.
+        for (poisoned, ended) in [
+            (Some("WIRE.CONFLICT"), None),
+            (Some("WIRE.CONFLICT"), Some("WIRE.ALREADY_EXISTS")),
+            (Some("WIRE.CONFLICT"), Some("WIRE.EXTENSION_REJECTED")),
+            (Some("WIRE.FORBIDDEN"), Some("WIRE.FORBIDDEN")),
+            (Some("WIRE.ALREADY_EXISTS"), None),
+            (None, Some("WIRE.CONFLICT")),
+        ] {
+            assert_eq!(code(poisoned, ended), None, "{poisoned:?} {ended:?}");
         }
     }
 }

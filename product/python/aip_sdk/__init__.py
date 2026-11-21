@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterator, Optional
 
 __all__ = [
     "connect", "Client", "AipError", "ExtensionRejected", "WriteUnsettled", "ScopeConflict", "extension_rejection", "validate_operation_output", "PROTOCOL",
-    "SDK_IDENTITY",
+    "SDK_IDENTITY", "created",
 ]
 __version__ = "1.0.0"
 # 이 SDK가 말하는 wire protocol. 호환 경계는 major다. scripts/sync-version.mjs가 crates/aip-contract의 PROTOCOL_VERSION에서 쓴다.
@@ -90,6 +90,16 @@ def extension_rejection(result: Any) -> Optional[ExtensionRejected]:
     if not isinstance(app_code, str) or not isinstance(text, str):
         return None
     return ExtensionRejected(app_code, text, _request_id(result) or (result.get("requestId") if isinstance(result.get("requestId"), str) else None), _retry(result))
+
+
+def created(index: int) -> dict:
+    """The row an earlier create of the same bundle made (`{"created": index}`): put it in a create's `refs`
+    (`{"create": "OrderLine", "values": {...}, "refs": {"order": created(0)}}`) or as an apply target
+    (`{"apply": "Order.confirm", "target": created(0)}`). `index` is the position in the operations list, not in
+    the result's `created` list. The server resolves it to the new row's id before anything runs."""
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise AipError("WIRE.BAD_VALUE", "created에는 0 이상의 연산 번호가 필요함")
+    return {"created": index}
 
 
 def _check_token(token: Optional[str]) -> None:
@@ -439,7 +449,8 @@ class Client:
 
     def bundle(self, operations: list, key: Optional[str] = None, retries: int = 2) -> dict:
         """Runs exposed transitions (`{"apply": "R.t", "target": {...}}`) and exposed creates
-        (`{"create": "R", "values": {...}}`) as one atomic request: all succeed or nothing changes. The result is
+        (`{"create": "R", "values": {...}, "refs": {"field": created(i)}}`) as one atomic request: all succeed or nothing
+        changes. A create's `refs` and an apply's `target` may name an earlier create with `created(i)`. The result is
         `{"ok": True, "applied": [{"changed", "unchanged"}...], "created": [{"resource", "id"}...], "tags"}` or a
         rejection. The key, lost-response recovery and `WriteUnsettled` work as for `apply`."""
         if not isinstance(operations, (list, tuple)) or not operations:

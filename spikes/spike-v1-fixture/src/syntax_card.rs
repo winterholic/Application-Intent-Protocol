@@ -51,7 +51,13 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "resource",
         "transition",
         "transition name { from cond; to f = v, g = w; allow cond }  |  transition name { from cond; delete; allow cond }",
-        "상태 전이. from·allow는 항상 필수이고 to, patch, delete 중 하나가 필요하다. 숫자는 f = f + 1처럼만 바꾼다",
+        "상태 전이. from·allow는 항상 필수이고 to, patch, delete 중 하나가 필요하다. 숫자는 `f = f + 1`, `f = f - input.qty`, `f = f + this.g`처럼 자기 필드에 항 하나만 더하거나 뺀다(Int·Decimal, 항은 양수, 곱셈·두 항 이상 없음)",
+    ),
+    (
+        "transition",
+        "input",
+        "input { qty: Int(1..100); amount: Decimal(12,2) }",
+        "호출자가 apply 요청의 `input`으로 넘기는 증감량(Int·Decimal, null 불가, 8개 이하, 선언한 키는 모두 필수). 증감 항은 항상 양수다. Int는 하한 1 이상의 range가 필수이고, Decimal은 0 이하이면 서버가 WIRE.BAD_VALUE로 거절한다. from·allow에서 `input.qty`와 비교하되(field read 정책 필드와 같은 비교식에는 못 쓴다) `to f = f ± input.qty`와 update 효과 값 `f = f ± input.qty`의 항으로만 쓴다. 서버가 잠근 행에서 계산하고 결과가 필드 범위·자릿수를 벗어나면 WIRE.BAD_VALUE로 전체 롤백한다. compose 전이로는 쓸 수 없다",
     ),
     ("resource", "unique", "unique a, b", "유일 제약"),
     (

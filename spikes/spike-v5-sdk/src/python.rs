@@ -177,9 +177,21 @@ pub fn contract_module_python(facts: &Value, wire: IdWire) -> String {
                     apply_fields.push(format!("{key:?}: NotRequired[{prefix}{suffix}]"));
                 }
             }
+            // 증감량 `input`은 선언한 키가 모두 필수다. 선언한 전이의 helper에만 keyword 인자로 생긴다.
+            let mut input_param = String::new();
+            if let Some(fields) = rf["transitions"][action]["input"].as_array() {
+                writeln!(s, "\n{prefix}Input = TypedDict(\"{prefix}Input\", {{").unwrap();
+                for field in fields {
+                    writeln!(s, "    {:?}: {},", field[0].as_str().unwrap(), value_type(facts, field[1].as_str().unwrap())).unwrap();
+                }
+                s.push_str("})\n");
+                apply_fields.push(format!("\"input\": {prefix}Input"));
+                input_param = format!("input: {prefix}Input, ");
+                write!(body, ", \"input\": dict(input)").unwrap();
+            }
             writeln!(s, "\n{prefix}ApplyInput = TypedDict(\"{prefix}ApplyInput\", {{\n    {}\n}})\n", apply_fields.join(",\n    ")).unwrap();
             all_apply_inputs.push(format!("{prefix}ApplyInput"));
-            writeln!(s,"\ndef apply_{}_{}(client: Client, target: {}{params}, *, key: str | None = None) -> dict:\n    return client.apply({{\"apply\": \"{res}.{action}\", \"target\": dict(target){body}}}, key=key)\n",snake(res),snake(action),target_types.join(" | ")).unwrap();
+            writeln!(s,"\ndef apply_{}_{}(client: Client, target: {}{params}, *, {input_param}key: str | None = None) -> dict:\n    return client.apply({{\"apply\": \"{res}.{action}\", \"target\": dict(target){body}}}, key=key)\n",snake(res),snake(action),target_types.join(" | ")).unwrap();
         }
     }
     push_create_and_write_helpers(&mut s, facts);

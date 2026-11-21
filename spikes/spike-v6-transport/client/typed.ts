@@ -2,7 +2,7 @@ import { connect, isIdWire, validResultId, type ApplyOptions } from "./transport
 import { createJobsClient } from "./jobs.ts";
 import { createInfrastructureClient } from "./infrastructure.ts";
 import { createRagClient } from "./rag.ts";
-import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, WriteBinding, CreateContractShape, ComposeContractShape, BundleRequest, BundleResult, ComposeRequest, ComposeResult, PendingWrite, ExtensionContractShape, ExtensionDescriptors, OperationDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
+import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, WriteBinding, CreateContractShape, ComposeContractShape, BundleRequest, BundleBuilder, Created, BundleResult, ComposeRequest, ComposeResult, PendingWrite, ExtensionContractShape, ExtensionDescriptors, OperationDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
 
 export function connectTypedApply<C extends ContractShape<C>, A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}>(base: string, token: string | null, binding: ApplyBinding<C, A> & WriteBinding<Cr, Cp>, fetchImpl: typeof fetch = fetch) {
   const idWire = binding?.idWire;
@@ -23,9 +23,19 @@ function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>
     apply<const K extends keyof A & string>(request: ApplyRequest<A, K> & { readonly apply: K }, options?: ApplyOptions): Promise<ApplyResult<A[K]["idOutput"]>> {
       return client.apply(request, options);
     },
-    /** 서버가 공개한 전이·create를 한 요청에 묶어 원자적으로 실행한다. 전부 성공하거나 아무것도 바뀌지 않는다. */
-    bundle(request: BundleRequest<A, Cr>, options?: ApplyOptions): Promise<BundleResult<A, Cr>> {
-      return client.apply(request, options) as Promise<BundleResult<A, Cr>>;
+    /**
+     * 서버가 공개한 전이·create를 한 요청에 묶어 원자적으로 실행한다. 전부 성공하거나 아무것도 바뀌지 않는다.
+     * 원시 요청(`{ atomic: [...] }`) 또는 빌더 함수를 받는다. 빌더의 `create`가 돌려주는 핸들은 뒤 연산의 `refs`·`target`에 넣어
+     * 서버가 만든 행의 id로 풀게 한다(`bundle(b => { const o = b.create("Order", {...}); b.create("Line", {...}, { order: o }); })`).
+     */
+    bundle(request: BundleRequest<A, Cr> | ((builder: BundleBuilder<A, Cr>) => void), options?: ApplyOptions): Promise<BundleResult<A, Cr>> {
+      let body: BundleRequest<A, Cr>;
+      try {
+        body = typeof request === "function" ? buildBundle<A, Cr>(request) : request;
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      return client.apply(body, options) as Promise<BundleResult<A, Cr>>;
     },
     /** 서버가 공개한 조합(`expose compose`): 대상 목록에 허용된 전이·생성 단계를 조합한다. */
     compose<const K extends keyof Cp & string>(request: ComposeRequest<Cp, K> & { readonly compose: K }, options?: ApplyOptions): Promise<ComposeResult<Cp, K>> {
@@ -34,6 +44,35 @@ function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>
     retryPending(): Promise<readonly PendingOf<A, Cr, Cp>[]> { return client.retryPending() as Promise<readonly PendingOf<A, Cr, Cp>[]>; },
     replaceSession(token: string): Promise<readonly PendingOf<A, Cr, Cp>[]> { return client.replaceSession(token) as Promise<readonly PendingOf<A, Cr, Cp>[]>; },
   };
+}
+
+/** 빌더가 쌓은 연산을 원시 묶음 요청으로 만든다. 핸들은 `{ created: 연산번호 }`로 직렬화되고 이 빌더가 만든 것만 받는다. */
+function buildBundle<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>>(build: (builder: BundleBuilder<A, Cr>) => void): BundleRequest<A, Cr> {
+  const ops: unknown[] = [];
+  const mine = new WeakSet<object>();
+  const wire = (handle: unknown): { created: number } => {
+    if (typeof handle !== "object" || handle === null || !mine.has(handle)) {
+      throw Object.assign(new Error("묶음 빌더가 만든 핸들만 참조로 쓸 수 있다"), { code: "CLIENT.PROTOCOL_ERROR" });
+    }
+    return { created: (handle as Created).created };
+  };
+  const builder = {
+    create(resource: string, values: object, refs?: Record<string, unknown>) {
+      const wired = refs === undefined ? {} : Object.fromEntries(Object.entries(refs).map(([field, handle]) => [field, wire(handle)]));
+      ops.push({ create: resource, values, ...(Object.keys(wired).length === 0 ? {} : { refs: wired }) });
+      const handle = Object.freeze({ created: ops.length - 1 });
+      mine.add(handle);
+      return handle;
+    },
+    apply(request: { readonly target: unknown }) {
+      const target = request.target;
+      const isHandle = typeof target === "object" && target !== null && mine.has(target);
+      ops.push(isHandle ? { ...request, target: wire(target) } : request);
+    },
+  };
+  build(builder as unknown as BundleBuilder<A, Cr>);
+  if (ops.length === 0) throw Object.assign(new Error("묶음에 연산이 하나는 있어야 한다"), { code: "CLIENT.PROTOCOL_ERROR" });
+  return { atomic: ops } as unknown as BundleRequest<A, Cr>;
 }
 
 export type ReadEnvelope<T> = {

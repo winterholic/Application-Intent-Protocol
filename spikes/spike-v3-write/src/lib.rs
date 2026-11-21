@@ -2,7 +2,8 @@
 use serde_json::{json, Map, Value};
 use spike_v2_read::id_wire::{id_array_cast, id_kind, parse_entity_id, parse_typed_id, EntityId, IdWire};
 use spike_v2_read::plan::{Caller, Reject};
-use spike_v2_read::sqlgen::{self, column, table, Ctx, Env};
+use spike_v2_read::sqlgen::{self, column, table, Ctx, Env, Handle};
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio_postgres::{types::ToSql, Client, Transaction};
 
@@ -387,19 +388,20 @@ fn judge_query(
     now: &str,
     locked: bool,
     knobs: &Knobs,
+    input: Option<&ApplyInput>,
 ) -> Result<(String, Vec<Option<String>>), Reject> {
     let rf = &facts["resources"][res];
     let t = &rf["transitions"][tr];
     let mut cx = Ctx::new(facts, actor_id, now);
     cx.lock_reads = !knobs.skip_policy_lock;
-    let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+    let env = Env { this: Some(("t".into(), res.to_string())), input: input_handles(&mut cx, input), ..Default::default() };
     let vis = cx.cond(&rf["rowRead"], &env).map_err(internal)?;
     let allow = cx.cond(&t["allow"], &env).map_err(internal)?;
     let from = cx.cond(&t["from"], &env).map_err(internal)?;
     let mut done = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
         let col = column(facts, res, f).unwrap();
-        if v.get("increment").is_some() {
+        if v.get("increment").is_some() || v.get("arith").is_some() {
             // 증감은 "이미 목표 상태"가 없다. sema가 repeat unchanged와 함께 쓰지 못하게 막는다.
             done.push("FALSE".into());
             continue;
@@ -448,9 +450,10 @@ async fn judge(
     scope: &Value,
     caller: &Caller,
     knobs: &Knobs,
+    input: Option<&ApplyInput>,
 ) -> Result<Judged, Reject> {
     let t = &facts["resources"][res]["transitions"][tr];
-    let (sel, params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &caller.now, true, knobs)?;
+    let (sel, params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &caller.now, true, knobs, input)?;
     let mut rows = typed_query(tx, sel.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
     if knobs.pause_after_lock_ms > 0 {
         tokio::time::sleep(Duration::from_millis(knobs.pause_after_lock_ms)).await;
@@ -465,7 +468,7 @@ async fn judge(
             .map_err(|e| db_err("판정 시각", e))?;
         if clock.get::<_, bool>(1) {
             now_used = clock.get::<_, String>(0);
-            let (again, again_params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &now_used, false, knobs)?;
+            let (again, again_params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &now_used, false, knobs, input)?;
             rows = typed_query(tx, again.as_str(), &again_params).await.map_err(|e| db_err("대상 재판정", e))?;
         }
     }
@@ -527,7 +530,7 @@ async fn update(
     }
     let t = &facts["resources"][res]["transitions"][tr];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
-    let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+    let env = Env { this: Some(("t".into(), res.to_string())), input: input_handles(&mut cx, input), ..Default::default() };
     let mut from = cx.cond(&t["from"], &env).map_err(internal)?;
     if let Some(input) = input {
         for (field, src) in &input.expected {
@@ -543,6 +546,7 @@ async fn update(
         None => None,
     };
     let mut sets = vec![];
+    let mut term_guards = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
         let col = column(facts, res, f).unwrap();
         if let Some(delta) = v.get("increment") {
@@ -550,6 +554,18 @@ async fn update(
             let p = cx.params.bind(Some(delta.to_string()), "bigint");
             // 잠근 행의 현재 값에서 계산하므로 동시 증감이 서로를 덮어쓰지 않는다.
             sets.push(format!("{col} = t.{col} + {p}"));
+            continue;
+        }
+        if let Some(arith) = v.get("arith") {
+            // 항도 잠근 행(`t`)의 값이거나 검증한 input이다. 계산은 같은 UPDATE 문에서 한다(덮어쓰기 없음).
+            let term = arith_term(&mut cx, arith, &env)?;
+            sets.push(format!("{col} = t.{col} {} {term}", arith_op(arith)?));
+            // `this.g` 항은 다른 쓰기 경로가 음수·0을 넣었을 수 있다. 항은 항상 양수여야 하므로 어기면 BAD_VALUE로 전체 롤백한다.
+            // RETURNING의 `t.g`는 갱신 뒤 값이라 문장 시작 스냅숏을 읽는 하위 질의로 갱신 전 값을 본다.
+            if let Some(seg) = arith["term"]["path"]["segs"][0].as_str() {
+                let g = column(facts, res, seg).unwrap();
+                term_guards.push(format!("(SELECT o.{g} FROM {} o WHERE o.id = t.id) <= 0", table(res)));
+            }
             continue;
         }
         sets.push(format!("{col} = {}", cx.value(v, &env).map_err(internal)?));
@@ -568,12 +584,13 @@ async fn update(
     let mut ranged = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
         let range = &facts["resources"][res]["fields"][f]["range"];
-        if let (Some(_), Some(lo), Some(hi)) = (v.get("increment"), range[0].as_i64(), range[1].as_i64()) {
+        if let (true, Some(lo), Some(hi)) = (v.get("increment").is_some() || v.get("arith").is_some(), range[0].as_i64(), range[1].as_i64()) {
             ranged.push(format!("t.{} NOT BETWEEN {lo} AND {hi}", column(facts, res, f).unwrap()));
         }
     }
     let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
     // UPDATE에도 from 조건을 다시 건다. 잠금이 없거나 우회돼도 이미 바뀐 행을 두 번 바꾸지 않는다.
+    ranged.extend(term_guards);
     let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
     let audit_table = AUDIT_TABLE.read().map_err(|_| internal("감사 테이블 잠금"))?.clone();
     let up = match audit_table {
@@ -649,13 +666,14 @@ async fn delete_rows(
     change: &[EntityId],
     caller: &Caller,
     knobs: &Knobs,
+    input: Option<&ApplyInput>,
 ) -> Result<(), Reject> {
     if change.is_empty() {
         return Ok(());
     }
     let t = &facts["resources"][res]["transitions"][tr];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
-    let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+    let env = Env { this: Some(("t".into(), res.to_string())), input: input_handles(&mut cx, input), ..Default::default() };
     let from = cx.cond(&t["from"], &env).map_err(internal)?;
     let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
     let audit_table = AUDIT_TABLE.read().map_err(|_| internal("감사 테이블 잠금"))?.clone();
@@ -801,6 +819,7 @@ async fn effects(
     start: &EffectStart,
     caller: &Caller,
     knobs: &Knobs,
+    input: Option<&ApplyInput>,
 ) -> Result<(), Reject> {
     if change.is_empty() {
         return Ok(());
@@ -811,7 +830,7 @@ async fn effects(
             continue;
         }
         let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
-        let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+        let env = Env { this: Some(("t".into(), res.to_string())), input: input_handles(&mut cx, input), ..Default::default() };
         if let Some(target) = e["update"].as_str() {
             if knobs.seal.is_some() {
                 sealed::reject_sealed_effect(facts, target, e["values"].as_object().unwrap())?;
@@ -822,11 +841,29 @@ async fn effects(
                 conds.push(format!("u.{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
             }
             let use_pre_row = e.get("when").is_some();
-            let value_env = if use_pre_row { Env { this: Some(("pre_t".into(), res.to_string())), ..Default::default() } } else { env.clone() };
+            let value_env = if use_pre_row { Env { this: Some(("pre_t".into(), res.to_string())), input: env.input.clone(), ..Default::default() } } else { env.clone() };
             let mut sets = vec![];
+            // 증감 효과가 바꾼 Int 필드의 선언 범위. 효과 대상 resource에도 DDL CHECK가 없으므로 같은 문장의 RETURNING에서 확인한다.
+            let mut ranged = vec![];
             for (f, v) in e["values"].as_object().unwrap() {
-                sets.push(format!("{} = {}", column(facts, target, f).unwrap(), cx.value(v, &value_env).map_err(internal)?));
+                let col = column(facts, target, f).unwrap();
+                if let Some(arith) = v.get("arith") {
+                    // 앞의 열은 효과 대상 행(`u`)의 현재 값이고 항의 `this`는 전이 대상 행이다.
+                    let term = arith_term(&mut cx, arith, &value_env)?;
+                    sets.push(format!("{col} = u.{col} {} {term}", arith_op(arith)?));
+                    // `this.g` 항은 양수여야 한다. FROM의 전이 행(`t` 또는 `pre_t`)은 이 문장이 바꾸지 않으므로 RETURNING에서 같은 식으로 본다.
+                    if arith["term"].get("path").is_some() {
+                        ranged.push(format!("({term}) <= 0"));
+                    }
+                    let range = &facts["resources"][target]["fields"][f]["range"];
+                    if let (Some(lo), Some(hi)) = (range[0].as_i64(), range[1].as_i64()) {
+                        ranged.push(format!("u.{col} NOT BETWEEN {lo} AND {hi}"));
+                    }
+                    continue;
+                }
+                sets.push(format!("{col} = {}", cx.value(v, &value_env).map_err(internal)?));
             }
+            let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
             let ip = cx.params.bind(Some(id_array(effect_change)), id_array_cast(facts, res));
             let children = if let Some(max) = e.get("maxRows") {
                 let max = max.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many update 상한 오류"))?;
@@ -860,14 +897,18 @@ async fn effects(
                 format!("{} t", table(res))
             };
             let sql = format!(
-                "UPDATE {} u SET {} FROM {from_source} WHERE t.id = ANY({ip}) AND {} RETURNING t.id",
+                "UPDATE {} u SET {} FROM {from_source} WHERE t.id = ANY({ip}) AND {} RETURNING t.id, {out_of_range}",
                 table(target),
                 sets.join(", "),
                 conds.join(" AND ")
             );
             let params = cx.params.values.clone();
-            let mut got: Vec<EntityId> =
-                typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?.iter().map(|r| r.get(0)).collect();
+            let updated = typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?;
+            // 하나라도 범위를 벗어나면 전체 트랜잭션이 롤백된다.
+            if updated.iter().any(|r| r.get::<_, bool>(1)) {
+                return rej("WIRE.BAD_VALUE", "증감 효과 결과가 필드 범위를 벗어남");
+            }
+            let mut got: Vec<EntityId> = updated.iter().map(|r| r.get(0)).collect();
             got.sort();
             if children.is_some_and(|count| count != got.len()) || (children.is_none() && got.as_slice() != effect_change.as_slice()) {
                 return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 갱신 대상이 대상 행마다 하나가 아님"));
@@ -1408,6 +1449,73 @@ pub fn exposed<'a>(facts: &'a Value, name: &str) -> Result<(&'a str, &'a str, &'
 pub struct ApplyInput {
     pub values: Vec<(String, Src)>,
     pub expected: Vec<(String, Src)>,
+    /// 전이가 선언한 `input` 값(이름, 바인드 값, SQL 캐스트). 검증을 마친 값만 들어 있고 `from`·`allow`·증감 항에서만 쓴다.
+    pub args: Vec<(String, String, &'static str)>,
+}
+
+/// `input` 값을 SQL 바인드 매개변수로 묶어 `input.<이름>` 경로가 가리킬 핸들을 만든다.
+fn input_handles(cx: &mut Ctx<'_>, input: Option<&ApplyInput>) -> HashMap<String, Handle> {
+    input
+        .into_iter()
+        .flat_map(|i| i.args.iter())
+        .map(|(name, value, cast)| (name.clone(), Handle::Scalar(cx.params.bind(Some(value.clone()), cast))))
+        .collect()
+}
+
+/// 증감 대입 `f = f ± 항`의 항을 SQL 식으로 만든다. 항은 정수·Decimal 리터럴, 검증한 `input`, 같은 행 필드 중 하나다.
+fn arith_term(cx: &mut Ctx<'_>, arith: &Value, env: &Env) -> Result<String, Reject> {
+    let term = &arith["term"];
+    if let Some(lit) = term.get("lit") {
+        return match lit {
+            Value::Number(n) if n.is_i64() => Ok(cx.params.bind(Some(n.to_string()), "bigint")),
+            Value::String(text) => Ok(cx.params.bind(Some(text.clone()), "numeric")),
+            _ => Err(internal("증감 항 리터럴".to_string())),
+        };
+    }
+    if let Some(name) = term.get("input").and_then(Value::as_str) {
+        return match env.input.get(name) {
+            Some(Handle::Scalar(sql)) => Ok(sql.clone()),
+            _ => Err(internal(format!("input `{name}` 없음"))),
+        };
+    }
+    cx.value(term, env).map_err(internal)
+}
+
+fn arith_op(arith: &Value) -> Result<&'static str, Reject> {
+    match arith["op"].as_str() {
+        Some("+") => Ok("+"),
+        Some("-") => Ok("-"),
+        _ => Err(internal("증감 연산자".to_string())),
+    }
+}
+
+/// 요청의 `input`을 전이 선언에 맞춰 검사한다. 선언한 키는 모두 필요하고(`WIRE.BAD_VALUE`), 선언 밖 키는 `WIRE.FIELD_NOT_EXPOSED`다.
+fn transition_args(facts: &Value, res: &str, tr: &str, request: &Map<String, Value>) -> Result<Vec<(String, String, &'static str)>, Reject> {
+    let declared = facts["resources"][res]["transitions"][tr]["input"].as_array();
+    let Some(declared) = declared else {
+        if request.contains_key("input") {
+            return rej("WIRE.UNKNOWN_KEY", format!("`{res}.{tr}`에는 input 선언이 없음"));
+        }
+        return Ok(vec![]);
+    };
+    let given = request.get("input").and_then(Value::as_object).ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: "input 객체 필요".into() })?;
+    if let Some(unknown) = given.keys().find(|key| !declared.iter().any(|field| field[0] == **key)) {
+        return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{tr}`의 input `{unknown}`는 계약에 없음"));
+    }
+    let mut args = Vec::with_capacity(declared.len());
+    for field in declared {
+        let (name, ty) = (field[0].as_str().unwrap_or(""), field[1].as_str().unwrap_or(""));
+        let value = given.get(name).ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: format!("input `{name}` 누락") })?;
+        let (text, cast) = spike_v2_read::scalar::parse(facts, ty, value)?;
+        spike_v2_read::scalar::validate_range(field, value, "WIRE.BAD_VALUE")?;
+        // 증감 항은 양수만 받는다. Int는 정의가 range 하한 1 이상을 요구하지만 Decimal에는 범위 문법이 없어 여기서 거른다.
+        // 음수·0이면 `-`가 더하기가 되어 호출자가 잔액·재고를 늘릴 수 있다. DB를 만지기 전에 거절한다.
+        if text.starts_with('-') || !text.bytes().any(|b| (b'1'..=b'9').contains(&b)) {
+            return rej("WIRE.BAD_VALUE", format!("input `{name}`은 0보다 커야 함"));
+        }
+        args.push((name.to_string(), text, cast));
+    }
+    Ok(args)
 }
 
 /// 입력 값은 SQL 식이 아니다. 공통 scalar/Id wire 검증을 거친 바인드 값만 받는다.
@@ -1433,6 +1541,7 @@ pub fn apply_input(facts: &Value, res: &str, tr: &str, request: &Map<String, Val
             dest.push((field.clone(), literal(facts, res, field, value, wire)?));
         }
     }
+    input.args = transition_args(facts, res, tr, request)?;
     Ok(input)
 }
 
@@ -1452,8 +1561,9 @@ async fn apply_op(
     caller: &Caller,
     knobs: &Knobs,
     wire: IdWire,
+    created_target: Option<EntityId>,
 ) -> Result<Applied, Reject> {
-    keys(o, &["apply", "target", "values", "expect"], "apply 요청")?;
+    keys(o, &["apply", "target", "values", "expect", "input"], "apply 요청")?;
     let (res, tr, ex) = exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
     refuse_internal(ex, knobs, o)?;
     let input = apply_input(facts, res, tr, o, wire)?;
@@ -1463,17 +1573,21 @@ async fn apply_op(
         // evaluating that literal first would turn the intended refusal into WIRE.INTERNAL.
         sealed::reject_sealed_assignments(facts, res, tr, Some(&input))?;
     }
-    let target = parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
-    let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs).await?;
+    // `target.created`(P0-A)는 묶음이 트랜잭션 전에 풀어 둔 앞 연산의 id다. 그 id를 `id` 대상 하나로 쓴다.
+    let target = match created_target {
+        Some(id) => TargetSpec::Ids(vec![id]),
+        None => parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?,
+    };
+    let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs, Some(&input)).await?;
     let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
     ensure_refs_readable(tx, facts, res, &input.values, &decided, knobs).await?;
     let effect_targets = effect_targets_at_transition_start(tx, facts, res, tr, &j.change, &decided, knobs).await?;
     if facts["resources"][res]["transitions"][tr]["delete"] == true {
-        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs).await?;
-        delete_rows(tx, facts, res, tr, &j.change, &decided, knobs).await?;
+        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs, Some(&input)).await?;
+        delete_rows(tx, facts, res, tr, &j.change, &decided, knobs, Some(&input)).await?;
     } else {
         update(tx, facts, res, tr, &j.change, &decided, knobs, Some(&input)).await?;
-        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs).await?;
+        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs, Some(&input)).await?;
     }
     Ok(Applied { changed: j.change, unchanged: j.unchanged })
 }
@@ -1489,7 +1603,7 @@ async fn apply_inner(
 ) -> Result<Applied, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
     let tx = begin(db, serializable).await?;
-    let a = apply_op(&tx, facts, o, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
+    let a = apply_op(&tx, facts, o, caller, knobs, IdWire::Legacy, None).await.map_err(|e| before_commit_rejection(&tx, e))?;
     run_checks(&tx, facts, caller, knobs).await.map_err(|e| before_commit_rejection(&tx, e))?;
     commit(tx, &ctl, knobs).await?;
     Ok(a)
@@ -1567,8 +1681,9 @@ async fn bundle_once(
     serializable: bool,
 ) -> Result<BundleResult, Reject> {
     let ops = bundle_ops(req)?;
+    let plan = bundle_plan(facts, ops, knobs)?;
     let tx = begin(db, serializable).await?;
-    let out = bundle_run(&tx, facts, ops, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
+    let out = bundle_run(&tx, facts, ops, &plan, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
     run_checks(&tx, facts, caller, knobs).await.map_err(|e| before_commit_rejection(&tx, e))?;
     commit(tx, &ctl, knobs).await?;
     Ok(out)
@@ -1597,13 +1712,110 @@ pub async fn bundle_in(
     knobs: &Knobs,
     wire: IdWire,
 ) -> Result<BundleResult, Reject> {
-    bundle_run(tx, facts, bundle_ops(req)?, caller, knobs, wire).await
+    let ops = bundle_ops(req)?;
+    let plan = bundle_plan(facts, ops, knobs)?;
+    bundle_run(tx, facts, ops, &plan, caller, knobs, wire).await
+}
+
+/// 묶음 연산 하나가 앞 연산의 결과를 어떻게 가리키는지(P0-A). 트랜잭션 전에 `bundle_plan`이 판정해 둔다.
+#[derive(Default)]
+pub struct OpPlan {
+    /// create 연산: (필드, 그 값을 만든 앞 연산 번호). `refs`가 없으면 비어 있다.
+    refs: Vec<(String, usize)>,
+    /// apply 연산: `target.created`가 가리키는 앞 연산 번호.
+    target_created: Option<usize>,
+}
+
+/// `{"created": i}` 하나를 풀어 (연산 번호, 만든 resource)를 돌려준다. 앞 연산의 create여야 하고 `id` 열이 있어야 한다.
+fn resolve_created<'a>(facts: &Value, ops: &'a [Value], at: usize, v: &Value, what: &str) -> Result<(usize, &'a str), Reject> {
+    let obj = v.as_object().ok_or_else(|| bad("created 참조는 {\"created\": 연산번호} 객체"))?;
+    keys(obj, &["created"], what)?;
+    let i = obj
+        .get("created")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: format!("{what}의 created는 0 이상의 정수 연산 번호") })?;
+    // 자기 자신과 뒤 연산은 아직 실행되지 않았다. 앞 연산만 가리킬 수 있다.
+    if i >= at as u64 {
+        return rej("WIRE.BAD_VALUE", format!("{what}의 created {i}는 현재 연산 {at}보다 앞 연산이어야 함"));
+    }
+    let i = i as usize;
+    let source = ops[i].as_object();
+    let Some(res) = source.filter(|m| !m.contains_key("apply")).and_then(|m| m.get("create")).and_then(Value::as_str) else {
+        return rej("WIRE.VALUE_SOURCE_NOT_ALLOWED", format!("{what}의 created {i}는 create 연산이어야 함(만든 행의 id만 가리킬 수 있음)"));
+    };
+    if facts["resources"][res]["exposeCreate"].is_null() {
+        return rej("WIRE.NOT_EXPOSED", format!("`{res}` 생성은 공개되지 않음"));
+    }
+    if facts["resources"][res]["fields"].get("id").is_none() {
+        return rej("WIRE.VALUE_SOURCE_NOT_ALLOWED", format!("`{res}`는 id 열이 없어 created로 가리킬 수 없음"));
+    }
+    Ok((i, res))
+}
+
+/// 묶음의 `refs`와 `target.created`를 DB에 닿기 전에 모두 판정한다(P0-A 규칙 ①~⑥, 검토 A-1).
+/// 결과는 연산마다 하나이고 실행(`bundle_run`)은 이것을 그대로 따른다.
+pub fn bundle_plan(facts: &Value, ops: &[Value], knobs: &Knobs) -> Result<Vec<OpPlan>, Reject> {
+    let mut plan: Vec<OpPlan> = Vec::with_capacity(ops.len());
+    for (at, op) in ops.iter().enumerate() {
+        let m = op.as_object().ok_or(bad("연산은 객체"))?;
+        let mut this = OpPlan::default();
+        if m.contains_key("apply") {
+            let created = m.get("target").and_then(|t| t.as_object()).filter(|t| t.contains_key("created"));
+            if let Some(tg) = created {
+                // 대상 형식은 하나만 쓴다. `created`는 `ids`·`where`와 섞지 않는다.
+                if tg.len() != 1 {
+                    return rej("WIRE.BAD_VALUE", "target.created는 ids·where와 함께 쓸 수 없음");
+                }
+                let name = m.get("apply").and_then(Value::as_str).unwrap_or("");
+                let (res, _tr, ex) = exposed(facts, name)?;
+                refuse_internal(ex, knobs, m)?;
+                // 서버가 열지 않은 `id` 대상 형식이 created 참조로 열리면 안 된다.
+                if !ex["target"].as_array().is_some_and(|forms| forms.iter().any(|f| f == "id")) {
+                    return rej("WIRE.TARGET_NOT_ALLOWED", format!("`{name}`는 id 대상을 열지 않았으므로 target.created를 쓸 수 없음"));
+                }
+                let (i, made) = resolve_created(facts, ops, at, &m["target"], "target.created")?;
+                if made != res {
+                    return rej("WIRE.TYPE_MISMATCH", format!("target.created는 `{made}` 행인데 `{name}`의 대상은 `{res}`"));
+                }
+                this.target_created = Some(i);
+            }
+        } else {
+            if let Some(refs) = m.get("refs") {
+                let res = m.get("create").and_then(Value::as_str).unwrap_or("");
+                let ec = &facts["resources"][res]["exposeCreate"];
+                if ec.is_null() {
+                    return rej("WIRE.NOT_EXPOSED", format!("`{res}` 생성은 공개되지 않음"));
+                }
+                let refs = refs.as_object().ok_or(bad("refs 객체 필요"))?;
+                let allowed: Vec<&str> = ec["fields"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+                let values = m.get("values").and_then(Value::as_object);
+                for (field, v) in refs {
+                    if !allowed.contains(&field.as_str()) {
+                        return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{field}`는 생성 계약에 없음"));
+                    }
+                    if values.is_some_and(|vals| vals.contains_key(field)) {
+                        return rej("WIRE.BAD_VALUE", format!("`{res}.{field}`가 values와 refs에 모두 있음"));
+                    }
+                    let (i, made) = resolve_created(facts, ops, at, v, &format!("refs.{field}"))?;
+                    let ty = facts["resources"][res]["fields"][field.as_str()]["ty"].as_str().unwrap_or("");
+                    let wants = ty.trim_end_matches('?').strip_prefix("Ref<").and_then(|t| t.strip_suffix('>'));
+                    if wants != Some(made) {
+                        return rej("WIRE.TYPE_MISMATCH", format!("`{res}.{field}`({ty})에 `{made}`를 만든 연산의 id를 넣을 수 없음"));
+                    }
+                    this.refs.push((field.clone(), i));
+                }
+            }
+        }
+        plan.push(this);
+    }
+    Ok(plan)
 }
 
 async fn bundle_run(
     tx: &Transaction<'_>,
     facts: &Value,
     ops: &[Value],
+    plan: &[OpPlan],
     caller: &Caller,
     knobs: &Knobs,
     wire: IdWire,
@@ -1618,6 +1830,8 @@ async fn bundle_run(
             let ex = &facts["resources"][res]["exposeApply"][tr];
             match m.get("target").and_then(|t| t.get("ids")).and_then(Value::as_array) {
                 Some(ids) => ids.len(),
+                // `target.created`는 행 하나다. 선언한 bulk 상한으로 세면 상한 계산이 과대해진다.
+                None if m.get("target").is_some_and(|t| t.get("created").is_some()) => 1,
                 None => ex["bulkMaxRows"].as_u64().unwrap_or(1) as usize,
             }
         } else {
@@ -1628,12 +1842,19 @@ async fn bundle_run(
         return rej("WIRE.BULK_LIMIT", format!("묶음의 대상 행 {rows}개 > 상한 {BUNDLE_MAX_ROWS}"));
     }
     let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![] };
-    for op in ops {
+    // 연산 번호 → 그 연산이 만든 행의 id. create가 아니거나 id를 못 돌려준 연산은 None이다(계획 단계가 가리키지 못하게 막았다).
+    let mut made: Vec<Option<EntityId>> = Vec::with_capacity(ops.len());
+    for (at, op) in ops.iter().enumerate() {
         let m = op.as_object().ok_or(bad("연산은 객체"))?;
         if m.contains_key("apply") {
-            out.applied.push(apply_op(tx, facts, m, caller, knobs, wire).await?);
+            let created_target = match plan[at].target_created {
+                Some(i) => Some(made[i].ok_or_else(|| internal("created 참조가 가리키는 연산에 id가 없음"))?),
+                None => None,
+            };
+            out.applied.push(apply_op(tx, facts, m, caller, knobs, wire, created_target).await?);
+            made.push(None);
         } else {
-            keys(m, &["create", "values"], "create 연산")?;
+            keys(m, &["create", "values", "refs"], "create 연산")?;
             let res = m.get("create").and_then(Value::as_str).unwrap_or("");
             let ec = &facts["resources"][res]["exposeCreate"];
             if ec.is_null() {
@@ -1659,10 +1880,18 @@ async fn bundle_run(
                 }
                 row.push((f.clone(), literal(facts, res, f, v, wire)?));
             }
+            // `refs`(P0-A): 앞 연산이 만든 행의 id를 호출자 리터럴과 같은 `Src::Lit`로 바꿔 아래의 같은 경로에 넣는다.
+            // 그래서 만든 행이 호출자에게 안 보이면 `ensure_refs_readable`이 `MISSING_TARGET`으로 막고 create allow도 그대로 평가된다.
+            for (field, i) in &plan[at].refs {
+                let id = made[*i].ok_or_else(|| internal("created 참조가 가리키는 연산에 id가 없음"))?;
+                let referenced = ops[*i]["create"].as_str().unwrap_or("");
+                row.push((field.clone(), Src::Lit(id.to_string(), id_kind(facts, referenced))));
+            }
             ensure_refs_readable(tx, facts, res, &row, caller, knobs).await?;
             let id = create_row(tx, facts, res, &row, caller, knobs).await?;
             out.created += 1;
             out.created_rows.push((res.to_string(), id));
+            made.push(id);
         }
     }
     Ok(out)
@@ -1878,21 +2107,20 @@ async fn compose_exec(
                 } else {
                     ids.clone()
                 };
-                let j = judge(tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs).await?;
-                let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
-                // parameterized actions use bundle.apply, whose values/expect are checked by apply_op.
-                if facts["resources"][res]["transitions"][t].get("patch").is_some()
-                    || facts["resources"][res]["transitions"][t].get("expect").is_some()
-                {
-                    return rej("WIRE.BAD_VALUE", "patch/expect 전이는 values/expect를 제공하는 bundle.apply로 호출해야 함");
+                // parameterized actions use bundle.apply, whose values/expect/input are checked by apply_op.
+                // 판정 SQL이 `input.<이름>`을 풀 수 없으므로 judge보다 먼저 거절한다.
+                if ["patch", "expect", "input"].iter().any(|key| facts["resources"][res]["transitions"][t].get(*key).is_some()) {
+                    return rej("WIRE.BAD_VALUE", "patch/expect/input 전이는 values/expect/input을 제공하는 bundle.apply로 호출해야 함");
                 }
+                let j = judge(tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs, None).await?;
+                let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
                 let effect_targets = effect_targets_at_transition_start(tx, facts, res, t, &j.change, &decided, knobs).await?;
                 if facts["resources"][res]["transitions"][t]["delete"] == true {
-                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs).await?;
-                    delete_rows(tx, facts, res, t, &j.change, &decided, knobs).await?;
+                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs, None).await?;
+                    delete_rows(tx, facts, res, t, &j.change, &decided, knobs, None).await?;
                 } else {
                     update(tx, facts, res, t, &j.change, &decided, knobs, None).await?;
-                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs).await?;
+                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs, None).await?;
                 }
                 out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
             }
@@ -1924,7 +2152,7 @@ async fn compose_exec(
 /// 쓰기 확장(V4)용: 호출자가 가진 트랜잭션 안에서 공개 전이 하나를 실행한다. 커밋은 호출자가 한다.
 pub async fn apply_in(tx: &Transaction<'_>, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs) -> Result<Applied, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
-    apply_op(tx, facts, o, caller, knobs, IdWire::Legacy).await
+    apply_op(tx, facts, o, caller, knobs, IdWire::Legacy, None).await
 }
 
 pub async fn apply_in_with_wire(
@@ -1936,7 +2164,7 @@ pub async fn apply_in_with_wire(
     wire: IdWire,
 ) -> Result<Applied, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
-    apply_op(tx, facts, o, caller, knobs, wire).await
+    apply_op(tx, facts, o, caller, knobs, wire, None).await
 }
 
 /// 쓰기 확장(V4)용: 이 트랜잭션이 쓴 행의 사후조건 검사.

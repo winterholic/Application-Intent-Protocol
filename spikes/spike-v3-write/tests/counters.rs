@@ -45,7 +45,6 @@ fn only_same_field_plus_or_minus_a_constant_is_accepted() {
     for (bad, code) in [
         ("to stock = stock - 1", "to stock = likes - 1"),
         ("to stock = stock - 1", "to stock = stock - 0"),
-        ("to stock = stock - 1", "to stock = stock - likes"),
         ("to stock = stock - 1", "to stock = 1 + stock"),
         ("from stock > 0", "from stock + 1 > 0"),
     ]
@@ -60,6 +59,8 @@ fn only_same_field_plus_or_minus_a_constant_is_accepted() {
     assert!(facts(&nullable).unwrap_err().contains("DEF.TYPE_MISMATCH"));
     let constant = DEF.replacen("to stock = stock - 1\n  }\n  transition like", "to stock = 2000\n  }\n  transition like", 1);
     assert!(facts(&constant).unwrap_err().contains("DEF.BAD_RANGE"), "범위 밖 상수 대입");
+    // P0-B: 같은 행의 non-null 숫자 필드는 이제 항 하나로 쓸 수 있다(고정 정수만 되던 때의 거절이 바뀜).
+    assert!(facts(&DEF.replacen("to stock = stock - 1", "to stock = stock - likes", 1)).is_ok());
     let f = facts(DEF).unwrap();
     assert_eq!(f["resources"]["Product"]["transitions"]["sell"]["to"]["stock"], json!({ "increment": -1 }));
 }

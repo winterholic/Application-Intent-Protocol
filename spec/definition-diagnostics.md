@@ -375,8 +375,8 @@ a name collides with a managed capability
 
 a name reads as both a field and a variable
 
-- 원인: Inside a predicate a parameter and a field of `this` may share a spelling; the checker will not choose for you.
-- 수정: Rename the parameter, or qualify the field with `this.`.
+- 원인: Inside a predicate a parameter and a field of `this` may share a spelling; the checker will not choose for you. The same holds for an `update` effect `f = f ± term` when the transition's own row also has a field `f`.
+- 수정: Rename the parameter, or qualify the field with `this.`. In an `update` effect, `f = f ± term` names the target row's field on the left, so a field of the same name on the transition's own row must be renamed.
 
 ### `DEF.UNKNOWN_TYPE`
 
@@ -460,7 +460,7 @@ the operator is not defined for the type of the field
 
 the types do not fit
 
-- 원인: Both sides of a comparison, an assignment, a predicate argument or an effect value must have the same type; conditions must be Bool. The message shows both types.
+- 원인: Both sides of a comparison, an assignment, a predicate argument or an effect value must have the same type; conditions must be Bool. The message shows both types. An arithmetic assignment `f = f ± term` needs a non-null Int or Decimal target and a non-null term: an Int field takes an Int term, a Decimal(p,s) field takes an Int term or a Decimal term with scale <= s. A transition `input` parameter is Int or Decimal and never nullable.
 - 수정: Change the value or the field so that the types are the same. A literal needs the form of its type (an enum value without quotes, a Text in quotes).
 
 ### `DEF.NULL_COMPARE_NON_NULLABLE`
@@ -516,7 +516,7 @@ resource Price {
 
 a range that cannot be satisfied or a value outside it
 
-- 원인: A range such as `Text(1..100)` needs `lo <= hi`, and values assigned by a transition must lie inside the range of the field.
+- 원인: A range such as `Text(1..100)` needs `lo <= hi`, and values assigned by a transition must lie inside the range of the field. An `Int` `input` of a transition needs a range whose lower bound is at least 1, because an arithmetic term is always positive.
 - 수정: Fix the bounds or the value.
 
 ### `DEF.ID_FIELD_NEEDS_REFERENCE`
@@ -556,8 +556,8 @@ resource Note {
 
 arithmetic outside the one place it is allowed
 
-- 원인: Only the `to` block of a transition may change a number, written `field = field + 1` or `field = field - 1`. Conditions never compute.
-- 수정: Move the arithmetic into a transition, or compare with a literal.
+- 원인: Only a transition `to` (or an `update` effect value) may change a number, written `field = field + term` or `field = field - term` with exactly one term: a positive integer literal, a positive decimal string literal, `input.name`, or a non-null numeric field of the same row (`this.g`). The term is always positive and the direction is the `+` or `-`: a negative or zero literal is refused here, and a negative or zero Decimal `input` or `this.g` value is refused at run time with `WIRE.BAD_VALUE`. Conditions never compute, and there is no `*`, `/`, second term or COALESCE.
+- 수정: Move the arithmetic into a transition assignment with one term, or compare with a literal.
 
 ### `DEF.ARITY_MISMATCH`
 
@@ -603,9 +603,9 @@ a field with a read policy cannot be filtered or sorted
 
 ### `DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION`
 
-a field with a read policy in a transition's `from`, the value of `to`, or under `repeat unchanged`
+a field with a read policy in a transition's `from`, the value of `to`, under `repeat unchanged`, or compared with an `input` value in `allow` or an effect `when`
 
-- 원인: A caller who cannot read the field still sees the outcome of a transition: `WIRE.INVALID_STATE` when `from` is false, `unchanged` when the row already holds the target value, and a copied value when `to` reads the field into a visible one. Each of those would reveal the hidden value, so the definition is rejected. `allow` is the author's authorization rule and a write to a hidden field without `repeat unchanged` reveals nothing, so those stay valid.
+- 원인: A caller who cannot read the field still sees the outcome of a transition: `WIRE.INVALID_STATE` when `from` is false, `unchanged` when the row already holds the target value, and a copied value when `to` reads the field into a visible one. Each of those would reveal the hidden value, so the definition is rejected. The same holds for `f = f ± term` when `f` or the term has a read policy: an out-of-range result would answer whether the hidden value is at least some chosen size. `allow` and an effect `when` may still read a hidden field, but not in one comparison (`cmp` or `in`) together with a caller `input.*` value: the caller could vary the input and find the value at which the answer flips. A write to a hidden field without `repeat unchanged` reveals nothing, so that stays valid.
 - 수정: Express the condition on a field without a read policy, or remove the field's `field ... read when` policy. For a hidden target field, drop `repeat unchanged`.
 
 ### `DEF.POLICY_FIELD_NOT_AGGREGATABLE`
@@ -803,6 +803,13 @@ a write whose condition needs another row to be absent (advisory)
 
 - 원인: Not an error: the definition is accepted. A transition or create whose `allow`/`from` says `not exists ...` is decided on a snapshot, so two requests that change different rows could both pass it. The server therefore runs it in a SERIALIZABLE transaction and retries a collision, which costs more than the plain path.
 - 수정: If the goal is uniqueness or a capacity, declare `unique a, b` or `limit name on X = atMost N where ...` with `invariant name per field`; the database enforces those directly and cheaper. Keep the `not exists` rule when it expresses something those cannot.
+
+### `DEF.ADVISORY_EFFECT_NO_LOWER_BOUND`
+
+an update effect that subtracts from a field with no lower bound (advisory)
+
+- 원인: Not an error: the definition is accepted. An `update ... { f = f - term }` effect changes a row the transition does not lock first. An Int field with a `range` is checked after the update and a result outside the range rolls everything back; a Decimal field has no range, so nothing keeps it from going below zero. Two requests that each pass their own `from` can both commit and leave the target negative.
+- 수정: Declare a `check` on the target resource that reads the field, for example `check balanceNotNegative when balance >= 0`. It is enforced before commit with `WIRE.CHECK_FAILED`.
 
 ### `DEF.ADVISORY_UNUSED_PREDICATE`
 

@@ -308,7 +308,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
     if let Some((x, xs)) = get(o, "transitions") {
         for (n, v, vs) in obj(x, xs, "transitions")? {
             let to = obj(v, *vs, "transition")?;
-            keys(to, &["from", "to", "delete", "patch", "expect", "allow", "repeat", "effects"], "transition")?;
+            keys(to, &["from", "to", "delete", "input", "patch", "expect", "allow", "repeat", "effects"], "transition")?;
             let (f, fs) = get(to, "from")
                 .ok_or_else(|| Diag::new("DEF.MISSING_ITEM", format!("transition `{n}`에 `from` 필요(필수. 조건 없이 허용하려면 \"true\")"), *vs))?;
             let (a, asp) = req(to, "allow", *vs, "transition")?;
@@ -321,6 +321,10 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
             }
             r.transitions.push(Transition {
                 name: n.clone(),
+                input: match get(to, "input") {
+                    Some((p, ps)) => params(p, ps)?,
+                    None => vec![],
+                },
                 patch,
                 expect: names("expect")?,
                 from: expr(f, fs, "from")?,

@@ -538,6 +538,7 @@ impl Session<'_> {
     }
 
     async fn judge(&mut self, res: &str, tr: &str, target: &TargetSpec, bulk: i64, scope: &Value, caller: &Caller) -> Result<Judged, Reject> {
+        refuse_limited_arithmetic(self.facts, res, tr)?;
         let t = self.facts["resources"][res]["transitions"][tr].clone();
         let (sql, params) = self.judge_query(res, tr, target, bulk, scope, caller.actor_id, &caller.now, true)?;
         let mut rows = self.rows("대상 조회", &sql, &params).await?;
@@ -1182,6 +1183,7 @@ impl Session<'_> {
         if has_conditional_update_effect(facts, res, tr) {
             return rej("WIRE.ADAPTER_UNSUPPORTED", "MySQL 어댑터는 conditional update effect when을 아직 지원하지 않음");
         }
+        refuse_limited_arithmetic(facts, res, tr)?;
         spike_v3_write::refuse_internal(ex, &self.knobs, o)?;
         let input = spike_v3_write::apply_input(facts, res, tr, o, wire)?;
         let target = spike_v3_write::parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
@@ -1339,6 +1341,22 @@ impl Session<'_> {
         }
         Ok(())
     }
+}
+
+/// P0-B limited arithmetic (`input` blocks, `f = f ± term`) is a PostgreSQL-only form in 1.0. A fact of this shape must never
+/// reach the MySQL SQL generator, which would not know how to evaluate it.
+fn uses_limited_arithmetic(facts: &Value, res: &str, tr: &str) -> bool {
+    let t = &facts["resources"][res]["transitions"][tr];
+    t.get("input").is_some()
+        || t["to"].as_object().into_iter().flat_map(|to| to.values()).any(|v| v.get("arith").is_some())
+        || t["effects"].as_array().into_iter().flatten().any(|e| e["values"].as_object().into_iter().flat_map(|v| v.values()).any(|v| v.get("arith").is_some()))
+}
+
+fn refuse_limited_arithmetic(facts: &Value, res: &str, tr: &str) -> Result<(), Reject> {
+    if uses_limited_arithmetic(facts, res, tr) {
+        return rej("WIRE.UNSUPPORTED", format!("MySQL 어댑터는 `{res}.{tr}`의 input·제한 산술(`f = f ± 항`)을 지원하지 않음. PostgreSQL에서만 쓸 수 있음"));
+    }
+    Ok(())
 }
 
 /// MySQL write does not yet evaluate update-effect `when`. Refuse only transitions that use it so a
@@ -1614,8 +1632,23 @@ pub async fn handle_status(driver: &MysqlDriver, body: &Value, caller: &Caller, 
 
 #[cfg(test)]
 mod conditional_effect_tests {
-    use super::has_conditional_update_effect;
+    use super::{has_conditional_update_effect, refuse_limited_arithmetic};
     use serde_json::json;
+
+    /// X-F1: the PostgreSQL-only P0-B facts are refused before any SQL is built; existing increments still pass.
+    #[test]
+    fn mysql_refuses_input_and_limited_arithmetic_facts() {
+        let facts = json!({"resources":{"Item":{"transitions":{
+            "take":{"input":[["qty","Int",[1,9]]],"to":{"stock":{"arith":{"op":"-","term":{"input":"qty"}}}}},
+            "reserve":{"to":{"stock":{"arith":{"op":"-","term":{"path":{"root":"this","segs":["reserved"]}}}}}},
+            "settle":{"to":{},"effects":[{"update":"Wallet","values":{"cash":{"arith":{"op":"-","term":{"lit":"1.00"}}}}}]},
+            "sell":{"to":{"stock":{"increment":-1}}}
+        }}}});
+        for name in ["take", "reserve", "settle"] {
+            assert_eq!(refuse_limited_arithmetic(&facts, "Item", name).unwrap_err().code, "WIRE.UNSUPPORTED", "{name}");
+        }
+        assert!(refuse_limited_arithmetic(&facts, "Item", "sell").is_ok());
+    }
 
     #[test]
     fn mysql_refuses_only_transitions_with_conditional_update_effects() {

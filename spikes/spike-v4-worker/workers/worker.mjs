@@ -29,12 +29,13 @@ function makeCtx(token, job) {
     data: {
       aggregate: (res, name, input) => call("aggregate", `${res}.${name}`, input),
       // 쓰기 확장: 공개 전이를 서버 트랜잭션 안에서 부른다. 커밋은 서버가 한다.
-      apply: (res, name, ids, key, values, expect) =>
+      apply: (res, name, ids, key, values, expect, input) =>
         call("apply", `${res}.${name}`, {
           ids: ids.map(String),
           ...(key === undefined ? {} : { key }),
           ...(values === undefined ? {} : { values }),
           ...(expect === undefined ? {} : { expect }),
+          ...(input === undefined ? {} : { input }),
         }),
       // durable job과 MySQL 쓰기 확장: 공개 read 요청을 호출자(job 주체)의 정책으로 실행한다.
       read: (query) => call("read", query?.read, query),

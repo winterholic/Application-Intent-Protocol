@@ -42,7 +42,8 @@ type ApplyTarget<A extends ApplyActionShape> =
   | ("id" extends A["targets"] ? { readonly ids: readonly A["idInput"][]; readonly where?: never } : never)
   | ("where" extends A["targets"] ? { readonly where: readonly ApplyWhere<A>[]; readonly ids?: never } : never);
 type ApplyInput<A> = (A extends { readonly values: infer V } ? { readonly values: V } : { readonly values?: never })
-  & (A extends { readonly expect: infer E } ? { readonly expect: E } : { readonly expect?: never });
+  & (A extends { readonly expect: infer E } ? { readonly expect: E } : { readonly expect?: never })
+  & (A extends { readonly input: infer I } ? { readonly input: I } : { readonly input?: never });
 export type ApplyRequest<A extends ApplyContractShape<A>, K extends keyof A & string = keyof A & string> = {
   [Name in K]: { readonly apply: Name; readonly target: ApplyTarget<A[Name]> } & ApplyInput<A[Name]>
 }[K];
@@ -63,8 +64,42 @@ export type CreateValues<S extends CreateShape> =
 export type CreateOp<Cr extends CreateContractShape<Cr>, K extends keyof Cr & string = keyof Cr & string> = {
   [N in K]: { readonly create: N; readonly values: CreateValues<Cr[N]> }
 }[K];
+/**
+ * 같은 묶음 앞 create가 만든 행(P0-A). wire에서는 `{"created": 연산번호}`이고 서버가 그 행의 id로 풀어 `refs`와 apply 대상에 넣는다.
+ * `R`은 만든 resource라서 그 resource를 가리키는 참조 필드(`Id<"R">`)와 그 resource의 전이 대상에만 맞는다.
+ */
+export interface Created<R extends string = string> { readonly created: number; readonly __resource?: R }
+/** 필드 타입 `T`가 `Id<"R">`(null 허용)일 때의 `R`. 그 외 타입(문자열, 숫자, wire가 legacy라 구별이 없는 id)은 never다. */
+type RefTarget<T> = [NonNullable<T>] extends [infer N]
+  ? N extends { readonly __resource?: infer R extends string } ? (string extends R ? never : R) : never
+  : never;
+/** create 연산이 `refs`로 받을 수 있는 필드: 참조 필드 이름 → 그 필드가 가리키는 resource의 `Created`. */
+export type CreateRefs<S extends CreateShape> = {
+  readonly [F in keyof S["fields"] & string as [RefTarget<S["fields"][F]>] extends [never] ? never : F]?: Created<RefTarget<S["fields"][F]>>;
+};
+type ResourceOf<Name extends string> = Name extends `${infer R}.${string}` ? R : never;
+/** 앞에서 만든 행을 대상으로 부르는 전이. 그 전이의 resource를 만든 연산의 핸들만 맞고, 서버가 `id` 대상을 열어 둔 전이만 받는다. */
+export type BundleApplyRequest<A extends ApplyContractShape<A>, K extends keyof A & string = keyof A & string> = {
+  [Name in K]: { readonly apply: Name; readonly target: ApplyTarget<A[Name]> | ("id" extends A[Name]["targets"] ? Created<ResourceOf<Name>> : never) } & ApplyInput<A[Name]>
+}[K];
+/** `refs`를 쓰는 create의 원시 형식. 참조로 채운 필드는 `values`에서 빼도 된다(필수 필드 검사는 서버가 한다). */
+export type CreateOpWithRefs<Cr extends CreateContractShape<Cr>, K extends keyof Cr & string = keyof Cr & string> = {
+  [N in K]: { readonly create: N; readonly values: Partial<CreateValues<Cr[N]>>; readonly refs: CreateRefs<Cr[N]> }
+}[K];
 /** 한 요청에 묶는 공개 동작: 서버가 선언한 `expose apply` 전이와 `expose create`만 고를 수 있다. 하나 이상. */
-export type BundleOp<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>> = ApplyRequest<A> | CreateOp<Cr>;
+export type BundleOp<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>> = BundleApplyRequest<A> | CreateOp<Cr> | CreateOpWithRefs<Cr>;
+/**
+ * 묶음 빌더(`client.bundle(b => { ... })`). 연산은 호출 순서대로 쌓이고 `create`가 돌려주는 핸들을 뒤 연산의 `refs`·`target`에 넣는다.
+ * 핸들은 이 빌더가 만든 것만 받는다. 요청은 빌더가 끝난 뒤 한 번에 보내진다.
+ */
+export interface BundleBuilder<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>> {
+  create<const N extends keyof Cr & string, const Rf extends CreateRefs<Cr[N]> = {}>(
+    resource: N,
+    values: Omit<CreateValues<Cr[N]>, keyof Rf>,
+    refs?: Rf,
+  ): Created<N>;
+  apply<const K extends keyof A & string>(request: BundleApplyRequest<A, K> & { readonly apply: K }): void;
+}
 export type BundleRequest<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}> = {
   readonly atomic: readonly [BundleOp<A, Cr>, ...BundleOp<A, Cr>[]];
 };
