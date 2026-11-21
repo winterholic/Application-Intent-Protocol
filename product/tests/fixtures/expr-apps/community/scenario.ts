@@ -115,6 +115,7 @@ await scenario("count-vs-sum-visibility-contract", async () => {
   const read = async (c: typeof mia) => (await c.read({ read: "Post", select: ["id", "reactionCount", "scoreSum"], filter: [{ field: "id", op: "eq", value: p }] })).rows[0] as unknown as { reactionCount: number; scoreSum: number | null };
   const forNoah = await read(noah);
   const forMod = await read(mod);
+  console.log(`INFO count-vs-sum: 반응 2건(5점 mia, 3점 noah) -> noah 시점 count=${forNoah.reactionCount} sum=${forNoah.scoreSum}, 운영자 시점 count=${forMod.reactionCount} sum=${forMod.scoreSum}`);
   // count는 원본 rows read를 적용하지 않아 모두의 반응을 센다. sum은 호출자가 읽을 수 있는 행만 합산한다.
   assert.equal(forNoah.reactionCount, 2);
   assert.equal(forNoah.scoreSum, 3, `sum은 본인 반응만: ${JSON.stringify(forNoah)}`);
