@@ -383,8 +383,8 @@ resource Order {
  fields { id: Id; member: Member; paid: Bool; shipped: Bool }
  transition pay { allow member = actor; from paid = false; to paid = true; notify member "order.paid" }
  transition ship { allow member = actor; from shipped = false; to shipped = true }
- expose apply pay { target id }
- expose apply ship { target id }
+ expose apply pay { target id; bulk maxRows 5 }
+ expose apply ship { target id; bulk maxRows 5 }
 }
 operation job fulfil {
   input { event: Text(1..4096) }
