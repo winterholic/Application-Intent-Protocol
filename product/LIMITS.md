@@ -1,6 +1,6 @@
 # 표현력 한계와 확장 우회
 
-AIP 1.0의 선언(`.aip`)은 읽기, 필터·정렬·페이지, 관계, 행·필드 권한, 상태 전이, 부분 수정, 원자 묶음을 서버 코드 없이 표현한다. 아래 E1~E7은 실제 앱에서 확인한 표현력 제약과 현재 경로다. E1·E2·E7은 PostgreSQL 제품 경로에서 개선됐다. 남은 제약에는 공식 서버 확장(`extension write`)이나 명시적인 호출 순서를 사용한다. 어떤 기능이 1.0 지원인지는 [지원 범위](SUPPORT.md)를 본다.
+AIP 1.0의 선언(`.aip`)은 읽기, 필터·정렬·페이지, 관계, 행·필드 권한, 상태 전이, 부분 수정, 원자 묶음을 서버 코드 없이 표현한다. 아래 E1~E9는 실제 앱에서 확인한 표현력 제약과 현재 경로다. E1·E2·E7은 PostgreSQL 제품 경로에서 개선됐다. 남은 제약에는 공식 서버 확장(`extension write`)이나 명시적인 호출 순서를 사용한다. 어떤 기능이 1.0 지원인지는 [지원 범위](SUPPORT.md)를 본다.
 
 이 한계는 두 앱을 새로 설계해 끝까지 구현하면서 찾았다(다중 사용자 할일 공유, 테넌트별 재고·주문). 앱마다 확장 코드는 22~24줄이었고 서버 Controller·DTO·Service·Repository 코드는 없었다. 아래 예시 중 "실행"으로 표시한 것은 이 문서를 쓰며 실제 PostgreSQL 17과 `aip service serve`로 돌린 것이고, "check"는 `aip service check`만 통과시킨 것이다.
 
@@ -13,6 +13,8 @@ AIP 1.0의 선언(`.aip`)은 읽기, 필터·정렬·페이지, 관계, 행·필
 | E5 | cursor 페이지는 nullable 정렬과 함께 못 쓴다 | offset 페이지 | 실행(오류), check(우회) |
 | E6 | 전이의 `from`은 필수다 | `from true` | check |
 | E7 | PostgreSQL 쓰기 확장의 원자 생성 | `access create.<Resource>`와 `ctx.data.create` | HTTP·PostgreSQL |
+| E8 | 확장 입력에 배열 타입이 없다 | `Json`으로 받고 확장이 모양을 검증한다 | 실행(오류), 소비자 앱 변형 B |
+| E9 | 묶음의 연산 순서가 잠금 순서다 | 같은 행을 갱신하는 연산을 묶음 앞에 둔다 | PostgreSQL 동시 시험 |
 
 ## 우회에 쓰는 확장의 모양
 
@@ -161,6 +163,16 @@ transition setStock { allow actor != null; from true; patch stock; expect stock 
 `access create.<Resource>`와 해당 리소스의 `expose create`를 선언하면 `ctx.data.create(resource, values)`를 부를 수 있다. 서버는 호출자의 정책으로 공개 create 경로를 실행하며, 생성 결과 ID를 확장 안의 다음 읽기·전이·생성에서 사용할 수 있다. 암호화 필드가 있는 리소스는 `WIRE.UNSUPPORTED`다. [관리형 실행](MANAGED-EXECUTION.md)에서 트랜잭션, 거절, 멱등 키 규칙을 확인할 수 있다.
 
 주문·재고의 [확장 예제](tests/fixtures/expr-apps/orders/extensions/shopb.mjs)는 서버에서 합계를 계산한 뒤 주문과 줄 생성, 재고 차감, 합계 확정을 한 호출에서 처리한다. [실행 기록](../plan-docs/expressiveness-1.0/consumer-apps.md).
+
+## E8. 확장 입력에 배열 타입이 없다
+
+확장의 `input`에는 `List<Int>`나 `Int[]` 같은 배열 타입을 쓸 수 없다(`output`은 확인하지 않았다). 정의 검사가 파싱 오류로 거부한다. 한 호출에서 주문 줄 여러 개를 받으려면 `Json` 필드로 받고 확장이 모양과 값을 직접 검증해야 한다(`Json`은 서버가 내용을 검사하지 않는다). 주문·재고 [확장 예제](tests/fixtures/expr-apps/orders/extensions/shopb.mjs)(변형 B)는 이 때문에 한 호출에 상품 하나만 받는다. 여러 줄이 필요하면 E1의 `bundle`(`refs`)로 줄을 연산마다 만드는 쪽이 선언만으로 된다. 근거는 [소비자 앱 실행 기록 F14](../plan-docs/expressiveness-1.0/consumer-apps.md)다.
+
+## E9. 묶음의 연산 순서가 잠금 순서다
+
+`bundle`은 `atomic` 배열 순서대로 연산을 실행하고 각 연산의 대상 행을 그 시점에 잠근다. 따라서 배열 순서가 곧 잠금 순서이고, 같은 행을 건드리는 묶음이 동시에 오면 순서에 따라 서로 기다릴 수 있다. 주문 줄 생성(FK가 상품 행을 참조)을 재고 차감(`take`)보다 먼저 두는 묶음 6건을 동시에 보낸 실행에서, 잠금 모드 조정 전에는 PostgreSQL `deadlock detected`가 나고 6건이 모두 `WIRE.DEADLINE_EXCEEDED`였다. 조정 뒤(`824cc0e1`, `dc68e4e6`)에는 줄 먼저와 `take` 먼저 두 순서 모두 2건 성공, 4건 `WIRE.INVALID_STATE`, 최종 재고 0으로 끝났다.
+
+지침: **같은 행을 갱신하는 연산(재고 차감처럼 경쟁이 몰리는 전이)을 묶음 앞에 두고, 그 행을 참조하는 create를 뒤에 둔다.** 모든 요청이 같은 순서로 잠그면 교착 자체가 생기지 않는다. 시험한 것은 위 주문·재고 시나리오 하나이므로 다른 모양의 묶음에서도 수렴한다는 보장은 아니다. `compose` 연산은 대상 수만큼 행을 잠그므로 대상이 많은 묶음일수록 교착 가능성이 커진다. 서버는 교착(`40P01`)을 서버가 소유하는 선언형 트랜잭션에서 최대 3회 다시 실행한다([지원 범위](SUPPORT.md) 11번). 근거는 [소비자 앱 실행 기록 8.2절과 11절](../plan-docs/expressiveness-1.0/consumer-apps.md)이다.
 
 ## 구분자 규칙(자주 틀리는 점)
 

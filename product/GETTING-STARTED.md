@@ -180,7 +180,7 @@ kill %1 && psql "$AIP_DATABASE_URL" -c 'DROP SCHEMA aip_demo CASCADE'
 ```
 
 - 1.0이 지원하는 범위와 조건: [1.0 지원 범위](SUPPORT.md). 호환 약속과 업그레이드 때 달라지는 진단: [호환 표](../COMPATIBILITY.md).
-- 선언만으로 안 되는 요구(가변량 증감, 계산 집계, 부모·자식 동시 생성 등)와 확장 우회: [표현력 한계와 확장 우회](LIMITS.md).
+- 부모·자식 동시 생성(`bundle`의 `refs`)과 입력량 증감(`input`)은 선언만으로 된다(PostgreSQL). 계산 집계, nullable 정렬과 cursor, 확장 입력의 배열처럼 선언만으로 안 되는 요구와 확장 우회: [표현력 한계와 확장 우회](LIMITS.md).
 - 정의 문법: [`spec/definition-syntax.md`](../spec/definition-syntax.md). 진단 코드는 `aip explain-code DEF.<코드>`.
 - 정의를 바꿔 배포: [변경 배포와 기존 데이터 이관](OPERATIONS.md#변경-배포와-기존-데이터-이관).
 - 서버 확장(Node·Python), durable job, 파일, 이벤트: [관리형 실행](MANAGED-EXECUTION.md)과 [서버 인프라](INFRASTRUCTURE.md).

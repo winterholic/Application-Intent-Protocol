@@ -7,7 +7,7 @@
 ### Added
 - `release-candidate` workflow: 필수 workflow 전부를 경로 필터 없이 한 SHA에서 실행하고 모두 `success`일 때만 통과하는 집계 job (`.github/workflows/release-candidate.yml`).
 - `SECURITY.md`, `CONTRIBUTING.md`, 이 파일.
-- 문서: [1.0 지원 범위](product/SUPPORT.md)(지원 11, 조건부 7, 제외 1, PostgreSQL 17 한정, 공개 count, 계약 헤더 오류 코드), [표현력 한계와 확장 우회](product/LIMITS.md)(E1~E7), COMPATIBILITY의 1.0 호환 약속과 정의 검사 변경.
+- 문서: [1.0 지원 범위](product/SUPPORT.md)(지원 11, 조건부 7, 제외 1, PostgreSQL 17 한정, 공개 count, 계약 헤더 오류 코드), [표현력 한계와 확장 우회](product/LIMITS.md)(E1~E9), COMPATIBILITY의 1.0 호환 약속과 정의 검사 변경.
 
 ### Changed
 - `tools/verify.sh`의 엔진 clippy·test 목록에 `spike-v11-dev-checks`를 추가했다(제품 `load` 경로가 호출하는 엔진).
