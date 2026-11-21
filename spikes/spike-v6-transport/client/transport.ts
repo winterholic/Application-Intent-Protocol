@@ -46,6 +46,8 @@ const UNSETTLED = new Set(["WIRE.COMMIT_UNKNOWN", "WIRE.INTERNAL"]);
 const NOT_EXECUTED = new Set(["WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH", "WIRE.CONTRACT_REQUIRED", "WIRE.ORIGIN_NOT_ALLOWED", "WIRE.REQUEST_TIMEOUT", "WIRE.DB_UNAVAILABLE", "WIRE.WORKER_BUSY", "WIRE.DEADLINE_EXCEEDED", "WIRE.CONFLICT"]);
 
 export class WriteUnsettled extends Error {
+  /** spec/client-errors.md의 레지스트리 코드. Python SDK의 같은 이름 예외와 같은 값이다. */
+  readonly code = "CLIENT.WRITE_UNSETTLED";
   key: string;
   request: unknown;
   /** 서버가 마지막으로 답한 요청의 ID. 한 번도 응답을 받지 못했으면 없다. */
@@ -62,6 +64,7 @@ export class WriteUnsettled extends Error {
 
 export class ScopeConflict extends Error {
   name = "ScopeConflict";
+  readonly code = "CLIENT.SCOPE_CONFLICT";
 }
 
 type Pending = { request: unknown; attempts: number; outcome?: any; lastRequestId?: string; lastRetry?: RetryGuidance };

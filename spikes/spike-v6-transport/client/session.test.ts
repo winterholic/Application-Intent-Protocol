@@ -63,6 +63,15 @@ test("다른 사용자·잘못된 토큰은 원래 연결과 복구 정보를 �
   assert.ok(seen.every((token) => token === "old"));
 });
 
+// spec/client-errors.md: SDK가 스스로 올리는 오류는 모두 `code`를 가진다. Python의 WriteUnsettled·ScopeConflict는 가지는데 TypeScript만 빠져 있었다.
+test("WriteUnsettled와 ScopeConflict는 client-errors 레지스트리의 code를 가진다", async () => {
+  const client = connect("http://spike.invalid", "old", backend(async () => {
+    throw new TypeError("lost");
+  }));
+  await assert.rejects(client.apply(request, { key: "one", retries: 0 }), (e: any) => e instanceof WriteUnsettled && e.code === "CLIENT.WRITE_UNSETTLED");
+  await assert.rejects(client.replaceSession("other"), (e: any) => e.name === "ScopeConflict" && e.code === "CLIENT.SCOPE_CONFLICT");
+});
+
 test("교체 뒤 도착한 이전 세대 읽기는 캐시와 호출자에게 반환하지 않음", async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
