@@ -31,9 +31,13 @@ function command(program, args, stage, cwd) {
 // `aip service check` lists the extensions and operations the definition implements in a worker. A manifest without an
 // `extensions` section (or without the module file) would otherwise package fine and fail only at the operator's preflight.
 function verifyWorkerExtensions(checkOutput, contract) {
+  // 종료 코드 0인 check의 출력은 항상 `workers` 객체를 가진 JSON이다. 읽지 못하면 확장 검증을 건너뛰지 않고 멈춘다(fail-closed).
   let workers;
-  try { workers = JSON.parse(checkOutput).workers; } catch { return; }
-  if (!workers?.required) return;
+  try { workers = JSON.parse(checkOutput)?.workers; } catch { workers = undefined; }
+  if (typeof workers !== "object" || workers === null || Array.isArray(workers)) {
+    fail("CHECK_OUTPUT_INVALID", "aip service check의 성공 출력을 JSON으로 읽을 수 없거나 workers가 없습니다. 확장 검증을 건너뛸 수 없어 패키징을 멈춥니다", "definition-check");
+  }
+  if (!workers.required) return;
   const names = workers.extensions.map(item => item.name).join(", ");
   const extensions = contract.app.extensions;
   if (!extensions) fail("EXTENSIONS_MISSING", `정의가 worker 확장을 선언했지만 manifest에 extensions가 없습니다: ${names}`, "definition-check");

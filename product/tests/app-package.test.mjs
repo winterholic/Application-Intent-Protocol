@@ -59,7 +59,7 @@ function fixture(t, overrides = {}, options = {}) {
     }
     if (stage === "bindings") { put(args[args.indexOf("--out") + 1], 'import { AipClient } from "@aip/sdk";\n'); return ''; }
     if (stage === "engine-version") return `aip ${workspaceVersion()}\n`;
-    if (stage === "definition-check") return options.checkOutput ?? '{}\n';
+    if (stage === "definition-check") return options.checkOutput ?? '{"ok":true,"workers":{"required":false,"extensions":[]}}\n';
     throw new Error(`unexpected command ${program} ${stage}`);
   };
   return { base, root, app, out, put, manifest, commands, run };
@@ -222,6 +222,22 @@ test("worker extensions that match the manifest package, and config.example.json
   const config = JSON.parse(readFileSync(join(f.out, "config.example.json"), "utf8"));
   assert.deepEqual(config.workers, { directory: "./app/workers", language: "node", enable_writes: true, isolation: "auto" });
 });
+
+// plan-docs/hardening-1.0/diagnostics-contract.md 5.4절 소비자 규칙: `aip service check`의 성공 출력을 읽지 못하면 검증을 건너뛰지 않고 실패한다(fail-closed).
+// 예전에는 JSON 파싱 실패가 조용히 return이라 확장 누락이 운영자의 preflight까지 넘어갔다.
+for (const [label, checkOutput] of [
+  ["empty output", ""],
+  ["text before the JSON", `warning: something\n${workersRequired()}`],
+  ["truncated JSON", workersRequired().slice(0, 40)],
+  ["a JSON array", "[]"],
+  ["JSON without a workers object", "{}"],
+]) {
+  test(`an unreadable definition check result stops packaging instead of skipping the worker check (${label})`, async (t) => {
+    const f = fixture(t, { extensions: undefined, dependencies: undefined }, { checkOutput });
+    await assert.rejects(build(f), e => e.code === "CHECK_OUTPUT_INVALID" && e.stage === "definition-check");
+    assert.equal(existsSync(f.out), false, "an unchecked package must not be left behind");
+  });
+}
 
 test("an app without extensions gets no workers block", async (t) => {
   const f = fixture(t, { extensions: undefined, dependencies: undefined }, { checkOutput: JSON.stringify({ ok: true, workers: { required: false, extensions: [] } }) });
