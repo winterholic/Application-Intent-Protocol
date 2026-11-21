@@ -546,6 +546,57 @@ pub async fn listen_with_prototype_launch(
     .await
 }
 
+/// Test-only prototype server with an explicit deployment fence and response-loss switch.
+#[cfg(feature = "test-db")]
+#[allow(clippy::too_many_arguments)]
+pub async fn listen_with_prototype_deployment_launch(
+    facts: Value,
+    wire: IdWire,
+    address: SocketAddr,
+    db_url: String,
+    extensions: Option<ReadExtensions>,
+    options: ServerOptions,
+    enable_write: bool,
+    worker_launch: WorkerLaunchConfig,
+    deployment: Option<DeploymentFence>,
+    fault_injection: bool,
+) -> io::Result<Server> {
+    options.validate()?;
+    if enable_write && extensions.is_none() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "WRITE extensions require configured workers"));
+    }
+    let extensions =
+        extensions.map(|config| if enable_write { config.validate_with_writes(&facts, wire) } else { config.validate(&facts, wire) }).transpose()?;
+    let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, wire).into());
+    listen_with_fingerprint(
+        facts,
+        wire,
+        address,
+        Runtime {
+            infrastructure: crate::infrastructure::Infrastructure { worker_launch, ..crate::infrastructure::Infrastructure::default() },
+            db_pool: None,
+            admission: None,
+            realtime_slots: tokio::sync::Semaphore::new(32),
+            realtime_preauth: tokio::sync::Semaphore::new(32),
+            object_slots: tokio::sync::Semaphore::new(4),
+            db_url,
+            broker: None,
+            enable_file_uploads: false,
+            fault_injection,
+            extensions,
+            write_extensions: enable_write,
+            extension_slots: tokio::sync::Semaphore::new(4),
+            principal_slots: crate::slots::PrincipalSlotSet::unlimited(),
+            options,
+            authenticator: None,
+            deployment,
+            otlp: None,
+        },
+        fingerprint,
+    )
+    .await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn listen_with_authenticator(
     facts: Value,
