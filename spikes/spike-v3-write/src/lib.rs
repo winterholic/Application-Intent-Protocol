@@ -546,6 +546,7 @@ async fn update(
         None => None,
     };
     let mut sets = vec![];
+    let mut term_guards = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
         let col = column(facts, res, f).unwrap();
         if let Some(delta) = v.get("increment") {
@@ -559,6 +560,12 @@ async fn update(
             // 항도 잠근 행(`t`)의 값이거나 검증한 input이다. 계산은 같은 UPDATE 문에서 한다(덮어쓰기 없음).
             let term = arith_term(&mut cx, arith, &env)?;
             sets.push(format!("{col} = t.{col} {} {term}", arith_op(arith)?));
+            // `this.g` 항은 다른 쓰기 경로가 음수·0을 넣었을 수 있다. 항은 항상 양수여야 하므로 어기면 BAD_VALUE로 전체 롤백한다.
+            // RETURNING의 `t.g`는 갱신 뒤 값이라 문장 시작 스냅숏을 읽는 하위 질의로 갱신 전 값을 본다.
+            if let Some(seg) = arith["term"]["path"]["segs"][0].as_str() {
+                let g = column(facts, res, seg).unwrap();
+                term_guards.push(format!("(SELECT o.{g} FROM {} o WHERE o.id = t.id) <= 0", table(res)));
+            }
             continue;
         }
         sets.push(format!("{col} = {}", cx.value(v, &env).map_err(internal)?));
@@ -583,6 +590,7 @@ async fn update(
     }
     let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
     // UPDATE에도 from 조건을 다시 건다. 잠금이 없거나 우회돼도 이미 바뀐 행을 두 번 바꾸지 않는다.
+    ranged.extend(term_guards);
     let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
     let audit_table = AUDIT_TABLE.read().map_err(|_| internal("감사 테이블 잠금"))?.clone();
     let up = match audit_table {
@@ -843,6 +851,10 @@ async fn effects(
                     // 앞의 열은 효과 대상 행(`u`)의 현재 값이고 항의 `this`는 전이 대상 행이다.
                     let term = arith_term(&mut cx, arith, &value_env)?;
                     sets.push(format!("{col} = u.{col} {} {term}", arith_op(arith)?));
+                    // `this.g` 항은 양수여야 한다. FROM의 전이 행(`t` 또는 `pre_t`)은 이 문장이 바꾸지 않으므로 RETURNING에서 같은 식으로 본다.
+                    if arith["term"].get("path").is_some() {
+                        ranged.push(format!("({term}) <= 0"));
+                    }
                     let range = &facts["resources"][target]["fields"][f]["range"];
                     if let (Some(lo), Some(hi)) = (range[0].as_i64(), range[1].as_i64()) {
                         ranged.push(format!("u.{col} NOT BETWEEN {lo} AND {hi}"));
@@ -1496,6 +1508,11 @@ fn transition_args(facts: &Value, res: &str, tr: &str, request: &Map<String, Val
         let value = given.get(name).ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: format!("input `{name}` 누락") })?;
         let (text, cast) = spike_v2_read::scalar::parse(facts, ty, value)?;
         spike_v2_read::scalar::validate_range(field, value, "WIRE.BAD_VALUE")?;
+        // 증감 항은 양수만 받는다. Int는 정의가 range 하한 1 이상을 요구하지만 Decimal에는 범위 문법이 없어 여기서 거른다.
+        // 음수·0이면 `-`가 더하기가 되어 호출자가 잔액·재고를 늘릴 수 있다. DB를 만지기 전에 거절한다.
+        if text.starts_with('-') || !text.bytes().any(|b| (b'1'..=b'9').contains(&b)) {
+            return rej("WIRE.BAD_VALUE", format!("input `{name}`은 0보다 커야 함"));
+        }
         args.push((name.to_string(), text, cast));
     }
     Ok(args)

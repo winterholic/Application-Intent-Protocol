@@ -19,7 +19,7 @@ resource Product {
     to stock = stock - input.qty
   }
   transition pay {
-    input { amount: Decimal(12,2); note: Int }
+    input { amount: Decimal(12,2); note: Int(1..9) }
     from cash >= input.amount
     allow owner = actor
     to cash = cash - input.amount
@@ -55,7 +55,7 @@ fn the_contract_types_declare_input_with_its_range_only_for_transitions_that_dec
 #[test]
 fn b_s5_definitions_without_input_do_not_mention_it_and_the_fingerprint_moves_only_with_input() {
     let legacy = SPEC.replace("input { qty: Int(1..100) }\n    from stock >= input.qty", "from true").replace("stock - input.qty", "stock - 1");
-    let legacy = legacy.replace("input { amount: Decimal(12,2); note: Int }\n    from cash >= input.amount", "from true").replace("cash - input.amount", "cash - 1");
+    let legacy = legacy.replace("input { amount: Decimal(12,2); note: Int(1..9) }\n    from cash >= input.amount", "from true").replace("cash - input.amount", "cash - 1");
     let facts_legacy = facts(&legacy);
     for wire in [IdWire::SafeNumber, IdWire::DecimalString, IdWire::Legacy] {
         let ts = contract_ts_with_apply(&facts_legacy, wire);
@@ -68,7 +68,7 @@ fn b_s5_definitions_without_input_do_not_mention_it_and_the_fingerprint_moves_on
     }
     // 입력 선언(타입·범위·이름)과 항 사용이 지문에 반영되고, 정책(allow)만 바뀐 것은 반영되지 않는다.
     let fp = contract_fingerprint_with_apply(&facts(SPEC), IdWire::DecimalString);
-    for changed in [SPEC.replace("Int(1..100)", "Int(1..101)"), SPEC.replace("qty: Int(1..100)", "units: Int(1..100)").replace("input.qty", "input.units"), SPEC.replace("note: Int", "note: Int; extra: Int")] {
+    for changed in [SPEC.replace("Int(1..100)", "Int(1..101)"), SPEC.replace("qty: Int(1..100)", "units: Int(1..100)").replace("input.qty", "input.units"), SPEC.replace("note: Int(1..9)", "note: Int(1..9); extra: Int(1..9)")] {
         assert_ne!(contract_fingerprint_with_apply(&facts(&changed), IdWire::DecimalString), fp);
     }
     let policy_only = SPEC.replace("allow owner = actor\n    to stock = stock - input.qty", "allow actor != null\n    to stock = stock - input.qty");
@@ -172,6 +172,6 @@ else:
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     // input이 없는 정의의 Python 계약에는 Input 타입이 없다.
     let plain = contract_module_python(&facts(&SPEC.replace("input { qty: Int(1..100) }\n    from stock >= input.qty", "from true").replace("stock - input.qty", "stock - 1")
-        .replace("input { amount: Decimal(12,2); note: Int }\n    from cash >= input.amount", "from true").replace("cash - input.amount", "cash - 1")), IdWire::DecimalString);
+        .replace("input { amount: Decimal(12,2); note: Int(1..9) }\n    from cash >= input.amount", "from true").replace("cash - input.amount", "cash - 1")), IdWire::DecimalString);
     assert!(!plain.contains("input"), "{plain}");
 }

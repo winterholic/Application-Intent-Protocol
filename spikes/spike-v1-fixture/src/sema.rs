@@ -91,6 +91,11 @@ fn valid_date(s: &str) -> bool {
     (1..=days).contains(&day)
 }
 
+/// 형식이 맞는 Decimal 문자열이 0보다 큰지. 음수와 `0.00`은 증감 항이 될 수 없다.
+fn decimal_is_positive(s: &str) -> bool {
+    !s.starts_with('-') && s.bytes().any(|b| (b'1'..=b'9').contains(&b))
+}
+
 fn valid_decimal(s: &str, precision: u8, scale: u8) -> bool {
     if s.len() > 41 || !s.is_ascii() {
         return false;
@@ -534,6 +539,14 @@ impl<'a> Ctx<'a> {
             _ => false,
         };
         let shape = "증감 대입은 `f = f + 항` 또는 `f = f - 항`(항은 하나: 0이 아닌 정수 리터럴, \"Decimal 리터럴\", `input.이름`, 같은 행의 `this.필드`)만";
+        // 효과의 앞 `f`는 효과 대상 행의 필드다. 전이 행에도 같은 이름이 있으면 읽는 사람이 전이 행으로 오해하므로 받지 않는다.
+        if effect && same && self.res.get(this_res).is_some_and(|t| t.fields.iter().any(|x| x.name == f)) {
+            return Err(Diag::new(
+                "DEF.AMBIGUOUS_NAME",
+                format!("update 효과의 `{f}`는 갱신 대상 행의 필드인데 전이 행(`{this_res}`)에도 같은 이름이 있음. 항의 맨 이름과 `this.`는 전이 행에서만 풀린다. 필드 이름을 구분한다"),
+                sp,
+            ));
+        }
         if !same {
             let hint = if effect { "update 효과의 왼쪽 항은 갱신하는 필드 자신의 맨 이름이어야 함. " } else { "" };
             return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("{hint}{shape}"), sp));
@@ -556,7 +569,11 @@ impl<'a> Ctx<'a> {
         self.reject_encrypted_path(target, f, sp)?;
         let (term, tt) = match r {
             Expr::Int(0) => return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp)),
+            Expr::Int(n) if *n < 0 => return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("항은 양수만 받는다(방향은 `+`·`-`로 정한다). {shape}"), sp)),
             Expr::Int(n) => (json!({ "lit": n }), TT::new(Ty::Int)),
+            Expr::Str(value) if !decimal_is_positive(value) && matches!(ft.ty, Ty::Decimal(..)) => {
+                return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("항은 양수만 받는다(방향은 `+`·`-`로 정한다). {shape}"), sp));
+            }
             Expr::Str(value) => match &ft.ty {
                 Ty::Decimal(precision, scale) if valid_decimal(value, *precision, *scale) => {
                     (json!({ "lit": value }), TT::new(Ty::Decimal(*precision, *scale)))
@@ -854,6 +871,85 @@ impl<'a> Ctx<'a> {
                 format!("{what}가 field read 정책이 있는 `{h}`를 읽을 수 없음(결과로 가려진 값이 추론됨). 가려지지 않은 필드로 조건을 쓴다"),
                 sp,
             );
+        }
+    }
+
+    /// 효과로 값을 줄이는 대상 필드에 하한 보장이 없으면 알린다. Int는 `range` 사후 검사가 하한을 지키지만 Decimal에는 범위가 없다.
+    /// 하한을 지키는 쪽은 대상 resource의 `check`(커밋 전 `WIRE.CHECK_FAILED`)다. 없으면 동시 두 전이가 함께 커밋해 음수가 될 수 있다.
+    fn advise_effect_lower_bound(&mut self, resource: &str, f: &str, op: &str, span: Span) {
+        fn mentions(root: &Expr, f: &str) -> bool {
+            let mut stack = vec![root];
+            while let Some(expr) = stack.pop() {
+                match expr {
+                    Expr::Path(path, _) if path.last().is_some_and(|x| x == f) => return true,
+                    Expr::Or(values) | Expr::And(values) | Expr::Call(_, values, _) => stack.extend(values),
+                    Expr::Not(value) | Expr::Exists(_, value, _) => stack.push(value),
+                    Expr::Cmp(_, l, r) | Expr::Arith(_, l, r, _) => {
+                        stack.push(l);
+                        stack.push(r);
+                    }
+                    Expr::In(l, values) => {
+                        stack.push(l);
+                        stack.extend(values);
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+        let Some(target) = self.res.get(resource).copied() else { return };
+        let ranged = target.fields.iter().any(|x| x.name == f && x.ty.name == "Int" && x.ty.range.is_some());
+        if op == "-" && !ranged && !target.checks.iter().any(|(_, e, _)| mentions(e, f)) {
+            self.advisory(
+                "DEF.ADVISORY_EFFECT_NO_LOWER_BOUND",
+                format!("update 효과가 `{resource}.{f}`를 줄이지만 하한을 지키는 `check`(예: `check {f}NotNegative when {f} >= 0`)가 `{resource}`에 없음. 동시 두 전이가 함께 커밋하면 음수가 될 수 있다"),
+                span,
+            );
+        }
+    }
+
+    /// `allow`·효과 `when`의 한 비교식(`cmp`·`in`)이 `input.*`과 field read 정책 필드를 함께 읽으면 막는다.
+    /// 호출자가 고른 값을 가려진 값과 견주면 `WIRE.FORBIDDEN`(또는 거절)과 성공의 경계로 가려진 값을 이분 탐색할 수 있다.
+    /// 서버가 고른 상수와의 비교(한 비트)나 서로 다른 비교식의 `and`는 기존대로 허용한다. `from`은 이미 모든 hidden read를 막는다.
+    fn reject_hidden_input_compare(&mut self, v: &Value, res: &str, what: &str, sp: Span) {
+        let mut hits = vec![];
+        self.hidden_input_compares(v, res, &mut hits);
+        hits.sort();
+        hits.dedup();
+        for h in hits {
+            self.d(
+                "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                format!("{what}가 호출자의 `input`과 field read 정책이 있는 `{h}`를 같은 비교식에서 읽을 수 없음(성공·거절의 경계로 가려진 값이 추론됨)"),
+                sp,
+            );
+        }
+    }
+
+    fn hidden_input_compares(&self, v: &Value, cur: &str, out: &mut Vec<String>) {
+        fn has_input(v: &Value) -> bool {
+            match v {
+                Value::Object(o) => {
+                    o.get("path").is_some_and(|p| p["root"].as_str().is_some_and(|r| r.starts_with("input."))) || o.values().any(has_input)
+                }
+                Value::Array(a) => a.iter().any(has_input),
+                _ => false,
+            }
+        }
+        match v {
+            Value::Object(o) => {
+                if (o.contains_key("cmp") || o.contains_key("in")) && has_input(v) {
+                    self.hidden_reads(v, cur, out);
+                }
+                for (key, x) in o {
+                    // exists 안쪽의 where는 그 resource 기준으로 읽는다.
+                    match (key.as_str(), o.get("exists").and_then(Value::as_str)) {
+                        ("where", Some(inner)) => self.hidden_input_compares(x, inner, out),
+                        _ => self.hidden_input_compares(x, cur, out),
+                    }
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| self.hidden_input_compares(x, cur, out)),
+            _ => {}
         }
     }
 
@@ -1218,6 +1314,9 @@ impl<'a> Ctx<'a> {
             }
             let allow = self.bool_of(&t.allow, &tsc);
             let allow = self.run(allow);
+            if let Some(allow) = &allow {
+                self.reject_hidden_input_compare(allow, &r.name, &format!("transition `{}`의 allow", t.name), t.span);
+            }
             let mut to = Map::new();
             let mut counters = false;
             for (f, val) in &t.to {
@@ -1581,6 +1680,17 @@ impl<'a> Ctx<'a> {
                 self.d("DEF.TYPE_MISMATCH", format!("transition `{}`의 input `{n}`은 null이 아닌 Int 또는 Decimal만, `{}`", t.name, ty.show()), t.span);
             }
         }
+        // 증감 항은 양수만 받는다. 음수나 0이 들어오면 `-`가 더하기가 되어 호출자가 잔액·재고를 늘릴 수 있다.
+        // Int는 정의가 `range` 하한 1 이상을 고정하고, Decimal은 범위 문법이 없어 런타임이 `> 0`을 검사한다.
+        for (n, ty) in &t.input {
+            if matches!(ty.name.as_str(), "Int") && ty.range.is_none_or(|(lo, _)| lo < 1) {
+                self.d(
+                    "DEF.BAD_RANGE",
+                    format!("transition `{}`의 Int input `{n}`은 하한 1 이상의 range가 필요(`{n}: Int(1..100)`). 증감 항은 양수만 받는다", t.name),
+                    t.span,
+                );
+            }
+        }
         (typed, json)
     }
 
@@ -1642,6 +1752,7 @@ impl<'a> Ctx<'a> {
                                 if let Some(term) = val["arith"].get("term") {
                                     cx.reject_hidden_reads(term, &r.name, &format!("update `{resource}.{f}`의 항"), *span);
                                 }
+                                cx.advise_effect_lower_bound(resource, f, op, *span);
                                 out.insert(f.clone(), val);
                             }
                             continue;
@@ -1665,6 +1776,9 @@ impl<'a> Ctx<'a> {
                 let value_scope = Scope { allow_latest: true, latest_target: Some(resource.clone()), ..sc.clone() };
                 let m = typed(matches, "조건", &value_scope, true, self);
                 let when = when.as_ref().and_then(|condition| self.run(self.bool_of(condition, sc)));
+                if let Some(when) = &when {
+                    self.reject_hidden_input_compare(when, &r.name, &format!("update `{resource}` 효과의 when"), *span);
+                }
                 let v = typed(values, "값", &value_scope, false, self);
                 if m.is_empty() || v.is_empty() {
                     self.d("DEF.MISSING_ITEM", "update 효과에는 찾을 조건과 바꿀 값이 필요", *span);

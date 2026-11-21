@@ -39,13 +39,13 @@ resource Product {
     to cash = cash - input.amount
   }
   transition topup {
-    input { points: Int }
+    input { points: Int(1..100) }
     from true
     allow actor != null
     to cash = cash + input.points
   }
   transition grow {
-    input { n: Int }
+    input { n: Int(1..100) }
     from true
     allow actor != null
     to big = big + input.n
@@ -67,7 +67,7 @@ resource Product {
     to stock = stock + 1
   }
   transition purge {
-    input { min: Int }
+    input { min: Int(1..1000) }
     from stock >= input.min
     allow actor != null
     delete
@@ -120,6 +120,29 @@ resource Purchase {
     update Wallet where owner = this.owner { credits = credits - this.cost; balance = balance - this.total }
   }
   expose apply pay { target id; bulk maxRows 5 }
+}
+resource Safe {
+  fields { id: Id; owner: Member; balance: Decimal(12,2) }
+  rows read when true
+  check balanceNotNegative when balance >= "0.00"
+}
+resource Bill {
+  fields { id: Id; owner: Member; total: Decimal(12,2); paid: Bool }
+  rows read when true
+  transition payPlain {
+    from paid = false
+    allow actor != null
+    to paid = true
+    update Wallet where owner = this.owner { balance = balance - this.total }
+  }
+  transition paySafe {
+    from paid = false
+    allow actor != null
+    to paid = true
+    update Safe where owner = this.owner { balance = balance - this.total }
+  }
+  expose apply payPlain { target id; bulk maxRows 5 }
+  expose apply paySafe { target id; bulk maxRows 5 }
 }
 "#;
 
@@ -282,7 +305,8 @@ async fn b_f10_input_range_type_and_decimal_digits_are_checked_before_the_databa
     for bad in [json!(0), json!(101), json!(-1), json!("3"), json!(1.5), json!(null), json!(true), json!(9223372036854775808u64)] {
         assert_eq!(code(run(&take(&[202], bad.clone())).await), "WIRE.BAD_VALUE", "{bad}");
     }
-    for amount in [json!("1.234"), json!("abc"), json!(1.25), json!(12), json!(null), json!("1e2"), json!("12345678901.00")] {
+    // B-1: 음수·0 Decimal 항(`-`가 더하기가 되는 경로)도 DB 전에 거절한다.
+    for amount in [json!("1.234"), json!("abc"), json!(1.25), json!(12), json!(null), json!("1e2"), json!("12345678901.00"), json!("-12.50"), json!("-0.01"), json!("0.00"), json!("0")] {
         let req = json!({"apply": "Product.pay", "target": {"ids": ["202"]}, "input": {"amount": amount}});
         assert_eq!(code(run(&req).await), "WIRE.BAD_VALUE", "{amount}");
     }
@@ -442,4 +466,101 @@ async fn allow_may_compare_input_and_decimal_fields_take_literal_terms() {
     run(&json!({"apply": "Product.tip", "target": {"ids": ["261"]}})).await.unwrap();
     run(&json!({"apply": "Product.tip2", "target": {"ids": ["261"]}})).await.unwrap();
     assert_eq!(text(&db, format!("SELECT cash::text FROM {s}.product WHERE id = 261")).await, "103.50");
+}
+
+/// B-1(차단): 음수 Decimal 입력으로 잔액을 늘리는 반례(`cash - "-100.00"`)와 0 입력은 DB를 만지기 전에 거절된다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b1_negative_or_zero_amounts_never_turn_a_subtraction_into_an_addition() {
+    let (db, s) = (db().await, sqlgen::schema());
+    insert_product(&db, 941, 10).await;
+    for amount in ["-100.00", "0.00"] {
+        let req = json!({"apply": "Product.pay", "target": {"ids": ["941"]}, "input": {"amount": amount}});
+        let rejected = run(&req).await.unwrap_err();
+        assert_eq!(rejected.0, "WIRE.BAD_VALUE", "{amount}: {}", rejected.1);
+    }
+    assert_eq!(text(&db, format!("SELECT cash::text FROM {s}.product WHERE id = 941")).await, "100.00");
+    // Int은 정의가 range 하한 1을 고정한다(0, 음수는 BAD_VALUE). `+` 방향의 음수도 같다.
+    for qty in [0, -5] {
+        assert_eq!(code(run(&json!({"apply": "Product.restock", "target": {"ids": ["941"]}, "input": {"qty": qty}})).await), "WIRE.BAD_VALUE");
+    }
+    assert_eq!(stock(&db, 941).await, "10");
+    // 양수는 그대로 통한다.
+    let ok = json!({"apply": "Product.pay", "target": {"ids": ["941"]}, "input": {"amount": "0.01"}});
+    assert_eq!(code(run(&ok).await), "OK");
+    assert_eq!(text(&db, format!("SELECT cash::text FROM {s}.product WHERE id = 941")).await, "99.99");
+}
+
+/// B-1(2): `this.g` 항은 다른 쓰기 경로가 음수·0을 넣었을 수 있으므로 서버가 실행 중 양수를 확인하고, 어기면 전체를 롤백한다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b1_this_field_terms_must_be_positive_at_run_time_in_to_and_in_effects() {
+    let (db, s) = (db().await, sqlgen::schema());
+    insert_product(&db, 951, 50).await;
+    for reserved in [-3, 0] {
+        db.batch_execute(&format!("UPDATE {s}.product SET reserved = {reserved} WHERE id = 951")).await.unwrap();
+        let rejected = run(&json!({"apply": "Product.reserve", "target": {"ids": ["951"]}})).await.unwrap_err();
+        assert_eq!(rejected.0, "WIRE.BAD_VALUE", "reserved={reserved}: {}", rejected.1);
+        assert_eq!(stock(&db, 951).await, "50");
+    }
+    db.batch_execute(&format!("UPDATE {s}.product SET reserved = 4 WHERE id = 951")).await.unwrap();
+    assert_eq!(code(run(&json!({"apply": "Product.reserve", "target": {"ids": ["951"]}})).await), "OK");
+    assert_eq!(stock(&db, 951).await, "46");
+    // 효과: 주문 합계가 음수이면 지갑을 늘리게 되므로 거절하고 주문도 `paid`로 바뀌지 않는다.
+    db.batch_execute(&format!(
+        "INSERT INTO {s}.member (id) VALUES (6) ON CONFLICT DO NOTHING; \
+         INSERT INTO {s}.wallet (id, owner_id, credits, balance) VALUES (601, 6, 50, 100.00); \
+         INSERT INTO {s}.purchase (id, owner_id, cost, total, paid) VALUES (601, 6, 5, -25.00, false)"
+    ))
+    .await
+    .unwrap();
+    let caller6 = Caller { actor_id: Some(6), now: "2026-11-21T00:00:00Z".into() };
+    let mut conn = connect_with_url(DB).await.unwrap();
+    let rejected = apply(&mut conn, &*facts().await, &json!({"apply": "Purchase.pay", "target": {"ids": ["601"]}}), &caller6, &Knobs::default()).await.unwrap_err();
+    assert_eq!(rejected.code, "WIRE.BAD_VALUE", "{}", rejected.msg);
+    assert_eq!(text(&db, format!("SELECT balance::text FROM {s}.wallet WHERE id = 601")).await, "100.00");
+    assert_eq!(text(&db, format!("SELECT paid::text FROM {s}.purchase WHERE id = 601")).await, "false");
+}
+
+/// B-4: Decimal에는 range가 없다. 대상에 `check balance >= 0`이 있으면 동시 두 주문 중 하나가 `WIRE.CHECK_FAILED`로 롤백되고,
+/// 없으면(음성 시험) 두 주문이 모두 커밋되어 음수가 된다. 그래서 정의 검사는 하한 `check`가 없으면 개발 조언을 낸다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b4_decimal_lower_bound_comes_from_a_check_not_from_the_arithmetic() {
+    let (db, s) = (db().await, sqlgen::schema());
+    db.batch_execute(&format!(
+        "INSERT INTO {s}.member (id) VALUES (7), (8) ON CONFLICT DO NOTHING; \
+         INSERT INTO {s}.safe (id, owner_id, balance) VALUES (701, 7, 15.00); \
+         INSERT INTO {s}.wallet (id, owner_id, credits, balance) VALUES (801, 8, 0, 15.00); \
+         INSERT INTO {s}.bill (id, owner_id, total, paid) VALUES (701, 7, 10.00, false), (702, 7, 10.00, false), (801, 8, 10.00, false), (802, 8, 10.00, false)"
+    ))
+    .await
+    .unwrap();
+    let pay = |apply: &str, id: i64| json!({"apply": format!("Bill.{apply}"), "target": {"ids": [id.to_string()]}});
+    let guarded = race(vec![pay("paySafe", 701), pay("paySafe", 702)], 7).await;
+    assert_eq!(tally(&guarded), BTreeMap::from([("OK", 1), ("WIRE.CHECK_FAILED", 1)]), "{guarded:?}");
+    assert_eq!(text(&db, format!("SELECT balance::text FROM {s}.safe WHERE id = 701")).await, "5.00");
+    // 음성: check가 없는 Wallet.balance는 두 주문이 모두 통과해 음수가 된다.
+    let plain = race(vec![pay("payPlain", 801), pay("payPlain", 802)], 8).await;
+    assert_eq!(tally(&plain), BTreeMap::from([("OK", 2)]), "{plain:?}");
+    assert_eq!(text(&db, format!("SELECT balance::text FROM {s}.wallet WHERE id = 801")).await, "-5.00");
+}
+
+/// B-6 / K-5: 같은 지갑을 가리키는 두 주문을 한 번에 결제하면 효과 대상이 하나뿐이라 갱신 유실이 생기므로 전체를 취소한다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn k5_bulk_transition_with_two_rows_for_one_effect_target_is_refused_not_lost() {
+    let (db, s) = (db().await, sqlgen::schema());
+    db.batch_execute(&format!(
+        "INSERT INTO {s}.member (id) VALUES (9) ON CONFLICT DO NOTHING; \
+         INSERT INTO {s}.wallet (id, owner_id, credits, balance) VALUES (901, 9, 90, 100.00); \
+         INSERT INTO {s}.purchase (id, owner_id, cost, total, paid) VALUES (901, 9, 10, 30.00, false), (902, 9, 10, 20.00, false)"
+    ))
+    .await
+    .unwrap();
+    let facts = facts().await;
+    let mut conn = connect_with_url(DB).await.unwrap();
+    let caller9 = Caller { actor_id: Some(9), now: "2026-11-21T00:00:00Z".into() };
+    let both = json!({"apply": "Purchase.pay", "target": {"ids": ["901", "902"]}});
+    let rejected = apply(&mut conn, &facts, &both, &caller9, &Knobs::default()).await.unwrap_err();
+    assert_eq!(rejected.code, "WIRE.EFFECT_TARGET_MISSING", "{}", rejected.msg);
+    let wallet = db.query_one(&format!("SELECT credits::text, balance::text FROM {s}.wallet WHERE id = 901"), &[]).await.unwrap();
+    assert_eq!((wallet.get::<_, String>(0), wallet.get::<_, String>(1)), ("90".into(), "100.00".into()));
+    assert_eq!(text(&db, format!("SELECT count(*)::text FROM {s}.purchase WHERE owner_id = 9 AND paid")).await, "0");
 }
