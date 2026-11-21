@@ -1275,10 +1275,12 @@ async fn create_row(
         cols.push(col);
     }
     // 생략 필드도 allow가 볼 후보 행에 있어야 한다. 테이블 행 타입이 각 NULL의 SQL 타입을 결정한다.
+    let mut omitted = Vec::new();
     for (field, _) in facts["resources"][target]["fields"].as_object().unwrap() {
         if field != "id" && !values.iter().any(|(provided, _)| provided == field) {
             let col = column(facts, target, field).unwrap();
             exprs.push(format!("(NULL::{}).{col} AS {col}", table(target)));
+            omitted.push(field.as_str());
         }
     }
     if exprs.is_empty() {
@@ -1286,7 +1288,11 @@ async fn create_row(
     }
     let venv = Env { this: Some(("v".into(), target.to_string())), ..Default::default() };
     let external = !facts["externalStorage"].is_null();
-    let allow = if external { "TRUE".into() } else { cx.cond(&ec["allow"], &venv).map_err(internal)? };
+    // 외부 저장소는 DB 기본값이 INSERT 뒤에 채워져서, allow가 생략한 기본값 필드를 읽으면 INSERT 뒤에야 판정할 수 있다. 그 필드를
+    // 읽지 않는 allow는 후보 행으로 INSERT 전에 판정한다. 아니면 권한이 없는 호출자가 유일 제약 충돌(ALREADY_EXISTS)과 거절(FORBIDDEN)의
+    // 차이로 호출자가 읽을 수 없는 행의 값을 확인할 수 있다.
+    let allow =
+        if external && allow_reads_omitted(&ec["allow"], &omitted) { "TRUE".into() } else { cx.cond(&ec["allow"], &venv).map_err(internal)? };
     let insert_cols = if cols.is_empty() { String::new() } else { format!(" ({})", cols.join(", ")) };
     // 비공개 관계 테이블은 `id` 열이 없을 수 있다. 그런 행은 id를 돌려줄 수 없다.
     let has_id = facts["resources"][target]["fields"].get("id").is_some();
@@ -1317,6 +1323,31 @@ async fn create_row(
         }
     }
     Ok(id)
+}
+
+/// allow(facts)가 `omitted` 필드(생략한 필드)를 읽는지. `this` 전체를 술어에 넘기면 본문을 보지 않고 읽는 것으로 본다.
+/// exists 안쪽의 `this`는 안쪽 행이라 새 행의 필드가 아니다.
+fn allow_reads_omitted(v: &Value, omitted: &[&str]) -> bool {
+    if omitted.is_empty() {
+        return false;
+    }
+    match v {
+        Value::Object(o) => {
+            if o.contains_key("exists") {
+                return false;
+            }
+            if let Some(p) = o.get("path") {
+                return p["root"] == "this"
+                    && match p["segs"].as_array().and_then(|s| s.first()).and_then(Value::as_str) {
+                        Some(first) => omitted.contains(&first),
+                        None => true,
+                    };
+            }
+            o.values().any(|x| allow_reads_omitted(x, omitted))
+        }
+        Value::Array(a) => a.iter().any(|x| allow_reads_omitted(x, omitted)),
+        _ => false,
+    }
 }
 
 /// 이 트랜잭션이 `res` 테이블을 바꿨는지 판정한다. `xmin = pg_current_xact_id()`는 인덱스가 없어 전체 스캔이므로(O-25),
