@@ -1074,6 +1074,91 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// 호출자가 값을 정하는 필드: 전이의 `patch`, `input`을 항으로 쓰는 `to`·update 효과의 증감 대입.
+    fn caller_written_fields(&self, resource: &str) -> BTreeSet<String> {
+        fn mentions_input(root: &Expr) -> bool {
+            let mut stack = vec![root];
+            while let Some(expr) = stack.pop() {
+                match expr {
+                    Expr::Path(path, _) if path.first().is_some_and(|x| x == "input") => return true,
+                    Expr::Arith(_, l, r, _) | Expr::Cmp(_, l, r) => stack.extend([&**l, &**r]),
+                    _ => {}
+                }
+            }
+            false
+        }
+        let mut out = BTreeSet::new();
+        for owner in self.res.values() {
+            for t in &owner.transitions {
+                if owner.name == resource {
+                    out.extend(t.patch.iter().map(|(f, _)| f.clone()));
+                    out.extend(t.to.iter().filter(|(_, v)| mentions_input(v)).map(|(f, _)| f.clone()));
+                }
+                for e in &t.effects {
+                    if let Effect::Update { resource: target, values, .. } = e {
+                        if target == resource {
+                            out.extend(values.iter().filter(|(_, v)| mentions_input(v)).map(|(f, _)| f.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `check`는 커밋 전에 저장된 행 전체로 평가된다. 호출자가 정하는 필드와 가려진 필드를 한 check가 함께 읽으면 호출자가 값을 바꿔 가며
+    /// `WIRE.CHECK_FAILED`의 경계로 가려진 값을 이분 탐색한다. 가려진 필드가 모두 호출자가 쓰는 필드이면 호출자는 값을 이미 안다.
+    fn reject_hidden_check_compare(&mut self, name: &str, v: &Value, r: &Resource, sp: Span) {
+        fn own_fields(v: &Value, out: &mut BTreeSet<String>, whole_row: &mut bool) {
+            match v {
+                Value::Object(o) => {
+                    if o.contains_key("exists") {
+                        // 안쪽의 `this`는 안쪽 행이다. 바깥 행 값은 술어 인자로만 들어온다.
+                        return;
+                    }
+                    if let Some(p) = o.get("path") {
+                        if p["root"] == "this" {
+                            match p["segs"].as_array().and_then(|s| s.first()).and_then(Value::as_str) {
+                                Some(first) => {
+                                    out.insert(first.to_string());
+                                }
+                                None => *whole_row = true,
+                            }
+                        }
+                        return;
+                    }
+                    o.values().for_each(|x| own_fields(x, out, whole_row));
+                }
+                Value::Array(a) => a.iter().for_each(|x| own_fields(x, out, whole_row)),
+                _ => {}
+            }
+        }
+        let mut hits = vec![];
+        self.hidden_reads(v, &r.name, &mut hits);
+        if hits.is_empty() {
+            return;
+        }
+        let written = self.caller_written_fields(&r.name);
+        let mut read = BTreeSet::new();
+        let mut whole_row = false;
+        own_fields(v, &mut read, &mut whole_row);
+        let caller_value_read = if whole_row { !written.is_empty() } else { read.iter().any(|f| written.contains(f)) };
+        let own_hidden_written_only = hits.iter().all(|h| h.strip_prefix(&format!("{}.", r.name)).is_some_and(|f| written.contains(f)));
+        if caller_value_read && !own_hidden_written_only {
+            hits.sort();
+            hits.dedup();
+            for h in hits {
+                self.d(
+                    "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                    format!(
+                        "check `{name}`가 호출자가 쓰는 필드(patch·input 증감)와 field read 정책이 있는 `{h}`를 함께 읽을 수 없음(`WIRE.CHECK_FAILED`의 경계로 가려진 값이 추론됨)"
+                    ),
+                    sp,
+                );
+            }
+        }
+    }
+
     /// 술어 본문이 읽는 field read 정책 필드. 매개변수 경로(`var.d`)는 매개변수 타입의 resource에서, `exists` 안쪽은 그 resource에서 따라간다.
     /// 술어끼리 부르는 호출도 따라간다(순환은 `stack`으로 끊는다).
     fn predicate_hidden_reads(&self, name: &str, stack: &mut Vec<String>, out: &mut Vec<String>) {
@@ -1834,6 +1919,7 @@ impl<'a> Ctx<'a> {
             }
             let v = self.bool_of(e, &sc);
             if let Some(v) = self.run(v) {
+                self.reject_hidden_check_compare(n, &v, r, *sp);
                 ck.insert(n.clone(), v);
             }
         }

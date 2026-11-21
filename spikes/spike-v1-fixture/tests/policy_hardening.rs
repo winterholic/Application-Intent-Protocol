@@ -170,3 +170,22 @@ fn create_allow_cannot_compare_caller_values_with_a_hidden_field() {
     // exists 안쪽의 `this`는 안쪽 행이라 호출자가 고른 값이 아니다.
     accepted(&create("exists Doc where owner.score >= 3"));
 }
+
+/// PG17 serve 재현: `check c when risk <= cap`과 `patch cap`으로 호출자가 cap을 바꿔 가며 WIRE.CHECK_FAILED의 경계에서
+/// 가려진 risk(7)를 복원했다. check는 커밋 전에 저장된 행 전체로 평가돼서 호출자가 정하는 값과 가려진 필드를 한 조건에서 견준다.
+#[test]
+fn a_check_cannot_compare_a_hidden_field_with_a_caller_written_field() {
+    let with = |check: &str, transition: &str| doc(&format!("check c when {check}\n{transition}"), "expose apply t { target id; bulk maxRows 1 }");
+    let patch = |f: &str| format!("transition t {{ from true; allow actor != null; patch {f} }}");
+    rejected(&with("risk <= cap", &patch("cap")));
+    // 참조 이동 뒤의 가려진 필드와 술어 안의 비교도 같다.
+    rejected(&with("owner.score >= cap", &patch("cap")));
+    rejected(&format!("predicate within(d: Doc) = d.risk <= d.cap\n{}", with("within(this)", &patch("cap"))));
+    // 증감 항이 `input`이면 호출자가 정하는 값이다.
+    rejected(&with("risk <= cap", "transition t { input { n: Int(1..9) } from true; allow actor != null; to cap = cap + input.n }"));
+    // 호출자가 쓰지 못하는 필드와의 비교, 가려지지 않은 필드끼리의 비교, 가려진 필드 자신만 쓰는 patch는 기존대로 된다.
+    accepted(&with("risk <= cap", "transition t { from true; allow actor != null; to cap = cap + 1 }"));
+    accepted(&with("org <= cap", &patch("cap")));
+    accepted(&with("risk >= 0", &patch("risk")));
+    accepted(&with("risk <= 100", &patch("cap")));
+}
