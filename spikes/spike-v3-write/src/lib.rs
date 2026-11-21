@@ -2,7 +2,8 @@
 use serde_json::{json, Map, Value};
 use spike_v2_read::id_wire::{id_array_cast, id_kind, parse_entity_id, parse_typed_id, EntityId, IdWire};
 use spike_v2_read::plan::{Caller, Reject};
-use spike_v2_read::sqlgen::{self, column, table, Ctx, Env};
+use spike_v2_read::sqlgen::{self, column, table, Ctx, Env, Handle};
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio_postgres::{types::ToSql, Client, Transaction};
 
@@ -387,19 +388,20 @@ fn judge_query(
     now: &str,
     locked: bool,
     knobs: &Knobs,
+    input: Option<&ApplyInput>,
 ) -> Result<(String, Vec<Option<String>>), Reject> {
     let rf = &facts["resources"][res];
     let t = &rf["transitions"][tr];
     let mut cx = Ctx::new(facts, actor_id, now);
     cx.lock_reads = !knobs.skip_policy_lock;
-    let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+    let env = Env { this: Some(("t".into(), res.to_string())), input: input_handles(&mut cx, input), ..Default::default() };
     let vis = cx.cond(&rf["rowRead"], &env).map_err(internal)?;
     let allow = cx.cond(&t["allow"], &env).map_err(internal)?;
     let from = cx.cond(&t["from"], &env).map_err(internal)?;
     let mut done = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
         let col = column(facts, res, f).unwrap();
-        if v.get("increment").is_some() {
+        if v.get("increment").is_some() || v.get("arith").is_some() {
             // 증감은 "이미 목표 상태"가 없다. sema가 repeat unchanged와 함께 쓰지 못하게 막는다.
             done.push("FALSE".into());
             continue;
@@ -448,9 +450,10 @@ async fn judge(
     scope: &Value,
     caller: &Caller,
     knobs: &Knobs,
+    input: Option<&ApplyInput>,
 ) -> Result<Judged, Reject> {
     let t = &facts["resources"][res]["transitions"][tr];
-    let (sel, params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &caller.now, true, knobs)?;
+    let (sel, params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &caller.now, true, knobs, input)?;
     let mut rows = typed_query(tx, sel.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
     if knobs.pause_after_lock_ms > 0 {
         tokio::time::sleep(Duration::from_millis(knobs.pause_after_lock_ms)).await;
@@ -465,7 +468,7 @@ async fn judge(
             .map_err(|e| db_err("판정 시각", e))?;
         if clock.get::<_, bool>(1) {
             now_used = clock.get::<_, String>(0);
-            let (again, again_params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &now_used, false, knobs)?;
+            let (again, again_params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &now_used, false, knobs, input)?;
             rows = typed_query(tx, again.as_str(), &again_params).await.map_err(|e| db_err("대상 재판정", e))?;
         }
     }
@@ -527,7 +530,7 @@ async fn update(
     }
     let t = &facts["resources"][res]["transitions"][tr];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
-    let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+    let env = Env { this: Some(("t".into(), res.to_string())), input: input_handles(&mut cx, input), ..Default::default() };
     let mut from = cx.cond(&t["from"], &env).map_err(internal)?;
     if let Some(input) = input {
         for (field, src) in &input.expected {
@@ -552,6 +555,12 @@ async fn update(
             sets.push(format!("{col} = t.{col} + {p}"));
             continue;
         }
+        if let Some(arith) = v.get("arith") {
+            // 항도 잠근 행(`t`)의 값이거나 검증한 input이다. 계산은 같은 UPDATE 문에서 한다(덮어쓰기 없음).
+            let term = arith_term(&mut cx, arith, &env)?;
+            sets.push(format!("{col} = t.{col} {} {term}", arith_op(arith)?));
+            continue;
+        }
         sets.push(format!("{col} = {}", cx.value(v, &env).map_err(internal)?));
     }
     if let Some(input) = input {
@@ -568,7 +577,7 @@ async fn update(
     let mut ranged = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
         let range = &facts["resources"][res]["fields"][f]["range"];
-        if let (Some(_), Some(lo), Some(hi)) = (v.get("increment"), range[0].as_i64(), range[1].as_i64()) {
+        if let (true, Some(lo), Some(hi)) = (v.get("increment").is_some() || v.get("arith").is_some(), range[0].as_i64(), range[1].as_i64()) {
             ranged.push(format!("t.{} NOT BETWEEN {lo} AND {hi}", column(facts, res, f).unwrap()));
         }
     }
@@ -649,13 +658,14 @@ async fn delete_rows(
     change: &[EntityId],
     caller: &Caller,
     knobs: &Knobs,
+    input: Option<&ApplyInput>,
 ) -> Result<(), Reject> {
     if change.is_empty() {
         return Ok(());
     }
     let t = &facts["resources"][res]["transitions"][tr];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
-    let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+    let env = Env { this: Some(("t".into(), res.to_string())), input: input_handles(&mut cx, input), ..Default::default() };
     let from = cx.cond(&t["from"], &env).map_err(internal)?;
     let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
     let audit_table = AUDIT_TABLE.read().map_err(|_| internal("감사 테이블 잠금"))?.clone();
@@ -801,6 +811,7 @@ async fn effects(
     start: &EffectStart,
     caller: &Caller,
     knobs: &Knobs,
+    input: Option<&ApplyInput>,
 ) -> Result<(), Reject> {
     if change.is_empty() {
         return Ok(());
@@ -811,7 +822,7 @@ async fn effects(
             continue;
         }
         let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
-        let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+        let env = Env { this: Some(("t".into(), res.to_string())), input: input_handles(&mut cx, input), ..Default::default() };
         if let Some(target) = e["update"].as_str() {
             if knobs.seal.is_some() {
                 sealed::reject_sealed_effect(facts, target, e["values"].as_object().unwrap())?;
@@ -822,11 +833,25 @@ async fn effects(
                 conds.push(format!("u.{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
             }
             let use_pre_row = e.get("when").is_some();
-            let value_env = if use_pre_row { Env { this: Some(("pre_t".into(), res.to_string())), ..Default::default() } } else { env.clone() };
+            let value_env = if use_pre_row { Env { this: Some(("pre_t".into(), res.to_string())), input: env.input.clone(), ..Default::default() } } else { env.clone() };
             let mut sets = vec![];
+            // 증감 효과가 바꾼 Int 필드의 선언 범위. 효과 대상 resource에도 DDL CHECK가 없으므로 같은 문장의 RETURNING에서 확인한다.
+            let mut ranged = vec![];
             for (f, v) in e["values"].as_object().unwrap() {
-                sets.push(format!("{} = {}", column(facts, target, f).unwrap(), cx.value(v, &value_env).map_err(internal)?));
+                let col = column(facts, target, f).unwrap();
+                if let Some(arith) = v.get("arith") {
+                    // 앞의 열은 효과 대상 행(`u`)의 현재 값이고 항의 `this`는 전이 대상 행이다.
+                    let term = arith_term(&mut cx, arith, &value_env)?;
+                    sets.push(format!("{col} = u.{col} {} {term}", arith_op(arith)?));
+                    let range = &facts["resources"][target]["fields"][f]["range"];
+                    if let (Some(lo), Some(hi)) = (range[0].as_i64(), range[1].as_i64()) {
+                        ranged.push(format!("u.{col} NOT BETWEEN {lo} AND {hi}"));
+                    }
+                    continue;
+                }
+                sets.push(format!("{col} = {}", cx.value(v, &value_env).map_err(internal)?));
             }
+            let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
             let ip = cx.params.bind(Some(id_array(effect_change)), id_array_cast(facts, res));
             let children = if let Some(max) = e.get("maxRows") {
                 let max = max.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many update 상한 오류"))?;
@@ -860,14 +885,18 @@ async fn effects(
                 format!("{} t", table(res))
             };
             let sql = format!(
-                "UPDATE {} u SET {} FROM {from_source} WHERE t.id = ANY({ip}) AND {} RETURNING t.id",
+                "UPDATE {} u SET {} FROM {from_source} WHERE t.id = ANY({ip}) AND {} RETURNING t.id, {out_of_range}",
                 table(target),
                 sets.join(", "),
                 conds.join(" AND ")
             );
             let params = cx.params.values.clone();
-            let mut got: Vec<EntityId> =
-                typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?.iter().map(|r| r.get(0)).collect();
+            let updated = typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?;
+            // 하나라도 범위를 벗어나면 전체 트랜잭션이 롤백된다.
+            if updated.iter().any(|r| r.get::<_, bool>(1)) {
+                return rej("WIRE.BAD_VALUE", "증감 효과 결과가 필드 범위를 벗어남");
+            }
+            let mut got: Vec<EntityId> = updated.iter().map(|r| r.get(0)).collect();
             got.sort();
             if children.is_some_and(|count| count != got.len()) || (children.is_none() && got.as_slice() != effect_change.as_slice()) {
                 return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 갱신 대상이 대상 행마다 하나가 아님"));
@@ -1408,6 +1437,68 @@ pub fn exposed<'a>(facts: &'a Value, name: &str) -> Result<(&'a str, &'a str, &'
 pub struct ApplyInput {
     pub values: Vec<(String, Src)>,
     pub expected: Vec<(String, Src)>,
+    /// 전이가 선언한 `input` 값(이름, 바인드 값, SQL 캐스트). 검증을 마친 값만 들어 있고 `from`·`allow`·증감 항에서만 쓴다.
+    pub args: Vec<(String, String, &'static str)>,
+}
+
+/// `input` 값을 SQL 바인드 매개변수로 묶어 `input.<이름>` 경로가 가리킬 핸들을 만든다.
+fn input_handles(cx: &mut Ctx<'_>, input: Option<&ApplyInput>) -> HashMap<String, Handle> {
+    input
+        .into_iter()
+        .flat_map(|i| i.args.iter())
+        .map(|(name, value, cast)| (name.clone(), Handle::Scalar(cx.params.bind(Some(value.clone()), cast))))
+        .collect()
+}
+
+/// 증감 대입 `f = f ± 항`의 항을 SQL 식으로 만든다. 항은 정수·Decimal 리터럴, 검증한 `input`, 같은 행 필드 중 하나다.
+fn arith_term(cx: &mut Ctx<'_>, arith: &Value, env: &Env) -> Result<String, Reject> {
+    let term = &arith["term"];
+    if let Some(lit) = term.get("lit") {
+        return match lit {
+            Value::Number(n) if n.is_i64() => Ok(cx.params.bind(Some(n.to_string()), "bigint")),
+            Value::String(text) => Ok(cx.params.bind(Some(text.clone()), "numeric")),
+            _ => Err(internal("증감 항 리터럴".to_string())),
+        };
+    }
+    if let Some(name) = term.get("input").and_then(Value::as_str) {
+        return match env.input.get(name) {
+            Some(Handle::Scalar(sql)) => Ok(sql.clone()),
+            _ => Err(internal(format!("input `{name}` 없음"))),
+        };
+    }
+    cx.value(term, env).map_err(internal)
+}
+
+fn arith_op(arith: &Value) -> Result<&'static str, Reject> {
+    match arith["op"].as_str() {
+        Some("+") => Ok("+"),
+        Some("-") => Ok("-"),
+        _ => Err(internal("증감 연산자".to_string())),
+    }
+}
+
+/// 요청의 `input`을 전이 선언에 맞춰 검사한다. 선언한 키는 모두 필요하고(`WIRE.BAD_VALUE`), 선언 밖 키는 `WIRE.FIELD_NOT_EXPOSED`다.
+fn transition_args(facts: &Value, res: &str, tr: &str, request: &Map<String, Value>) -> Result<Vec<(String, String, &'static str)>, Reject> {
+    let declared = facts["resources"][res]["transitions"][tr]["input"].as_array();
+    let Some(declared) = declared else {
+        if request.contains_key("input") {
+            return rej("WIRE.UNKNOWN_KEY", format!("`{res}.{tr}`에는 input 선언이 없음"));
+        }
+        return Ok(vec![]);
+    };
+    let given = request.get("input").and_then(Value::as_object).ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: "input 객체 필요".into() })?;
+    if let Some(unknown) = given.keys().find(|key| !declared.iter().any(|field| field[0] == **key)) {
+        return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{tr}`의 input `{unknown}`는 계약에 없음"));
+    }
+    let mut args = Vec::with_capacity(declared.len());
+    for field in declared {
+        let (name, ty) = (field[0].as_str().unwrap_or(""), field[1].as_str().unwrap_or(""));
+        let value = given.get(name).ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: format!("input `{name}` 누락") })?;
+        let (text, cast) = spike_v2_read::scalar::parse(facts, ty, value)?;
+        spike_v2_read::scalar::validate_range(field, value, "WIRE.BAD_VALUE")?;
+        args.push((name.to_string(), text, cast));
+    }
+    Ok(args)
 }
 
 /// 입력 값은 SQL 식이 아니다. 공통 scalar/Id wire 검증을 거친 바인드 값만 받는다.
@@ -1433,6 +1524,7 @@ pub fn apply_input(facts: &Value, res: &str, tr: &str, request: &Map<String, Val
             dest.push((field.clone(), literal(facts, res, field, value, wire)?));
         }
     }
+    input.args = transition_args(facts, res, tr, request)?;
     Ok(input)
 }
 
@@ -1453,7 +1545,7 @@ async fn apply_op(
     knobs: &Knobs,
     wire: IdWire,
 ) -> Result<Applied, Reject> {
-    keys(o, &["apply", "target", "values", "expect"], "apply 요청")?;
+    keys(o, &["apply", "target", "values", "expect", "input"], "apply 요청")?;
     let (res, tr, ex) = exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
     refuse_internal(ex, knobs, o)?;
     let input = apply_input(facts, res, tr, o, wire)?;
@@ -1464,16 +1556,16 @@ async fn apply_op(
         sealed::reject_sealed_assignments(facts, res, tr, Some(&input))?;
     }
     let target = parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
-    let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs).await?;
+    let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs, Some(&input)).await?;
     let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
     ensure_refs_readable(tx, facts, res, &input.values, &decided, knobs).await?;
     let effect_targets = effect_targets_at_transition_start(tx, facts, res, tr, &j.change, &decided, knobs).await?;
     if facts["resources"][res]["transitions"][tr]["delete"] == true {
-        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs).await?;
-        delete_rows(tx, facts, res, tr, &j.change, &decided, knobs).await?;
+        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs, Some(&input)).await?;
+        delete_rows(tx, facts, res, tr, &j.change, &decided, knobs, Some(&input)).await?;
     } else {
         update(tx, facts, res, tr, &j.change, &decided, knobs, Some(&input)).await?;
-        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs).await?;
+        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs, Some(&input)).await?;
     }
     Ok(Applied { changed: j.change, unchanged: j.unchanged })
 }
@@ -1878,21 +1970,20 @@ async fn compose_exec(
                 } else {
                     ids.clone()
                 };
-                let j = judge(tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs).await?;
-                let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
-                // parameterized actions use bundle.apply, whose values/expect are checked by apply_op.
-                if facts["resources"][res]["transitions"][t].get("patch").is_some()
-                    || facts["resources"][res]["transitions"][t].get("expect").is_some()
-                {
-                    return rej("WIRE.BAD_VALUE", "patch/expect 전이는 values/expect를 제공하는 bundle.apply로 호출해야 함");
+                // parameterized actions use bundle.apply, whose values/expect/input are checked by apply_op.
+                // 판정 SQL이 `input.<이름>`을 풀 수 없으므로 judge보다 먼저 거절한다.
+                if ["patch", "expect", "input"].iter().any(|key| facts["resources"][res]["transitions"][t].get(*key).is_some()) {
+                    return rej("WIRE.BAD_VALUE", "patch/expect/input 전이는 values/expect/input을 제공하는 bundle.apply로 호출해야 함");
                 }
+                let j = judge(tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs, None).await?;
+                let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
                 let effect_targets = effect_targets_at_transition_start(tx, facts, res, t, &j.change, &decided, knobs).await?;
                 if facts["resources"][res]["transitions"][t]["delete"] == true {
-                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs).await?;
-                    delete_rows(tx, facts, res, t, &j.change, &decided, knobs).await?;
+                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs, None).await?;
+                    delete_rows(tx, facts, res, t, &j.change, &decided, knobs, None).await?;
                 } else {
                     update(tx, facts, res, t, &j.change, &decided, knobs, None).await?;
-                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs).await?;
+                    effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs, None).await?;
                 }
                 out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
             }

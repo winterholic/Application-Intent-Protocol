@@ -24,6 +24,19 @@ pub fn contract_ts_with_apply(facts: &Value, wire: IdWire) -> String {
                     s.push_str("    };\n");
                 }
             }
+            // 증감량으로 넘기는 값. 선언한 전이에만 나오므로 input이 없는 정의의 계약 지문은 그대로다.
+            if let Some(fields) = rf["transitions"][action]["input"].as_array() {
+                s.push_str("    input: {\n");
+                for field in fields {
+                    let (name, ty) = (field[0].as_str().unwrap(), field[1].as_str().unwrap());
+                    let range = match field[2].as_array().map(|r| (r[0].as_i64(), r[1].as_i64())) {
+                        Some((Some(lo), Some(hi))) => format!(" /** {lo}..{hi} */"),
+                        _ => String::new(),
+                    };
+                    writeln!(s, "      {name}: {};{range}", ts_type(facts, ty)).unwrap();
+                }
+                s.push_str("    };\n");
+            }
             let mut targets: Vec<_> = ex["target"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
             targets.sort();
             targets.dedup();
@@ -60,6 +73,11 @@ pub fn contract_ts_with_apply(facts: &Value, wire: IdWire) -> String {
                         .collect();
                     descriptor.insert(key.into(), Value::Object(fields));
                 }
+            }
+            if let Some(fields) = rf["transitions"][action]["input"].as_array() {
+                let fields: serde_json::Map<String, Value> =
+                    fields.iter().map(|field| (field[0].as_str().unwrap().to_string(), serde_json::json!({"ty":field[1],"range":field[2]}))).collect();
+                descriptor.insert("input".into(), Value::Object(fields));
             }
             if !descriptor.is_empty() {
                 inputs.insert(format!("{res}.{action}"), Value::Object(descriptor));

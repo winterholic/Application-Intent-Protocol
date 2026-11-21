@@ -45,7 +45,7 @@
 | `field` | `field name read when condition` | 필드별 읽기 조건. 조건이 거짓인 행에서 select하면 null이고 출력 타입은 nullable이다(열이 필수여도). 이 필드는 filter·sort·집계에 쓸 수 없다 |
 | `expose` | `expose read {..} \| expose apply T {..} \| expose create {..} \| expose compose {..} \| expose aggregate name` | 호출자에게 여는 것. 쓰지 않은 것은 열리지 않는다 |
 | `aggregate` | `aggregate name: Int { source R; sourceAccess a; groupKey ref; release count }` | 행별 또는 단독 집계 |
-| `transition` | `transition name { from cond; to f = v, g = w; allow cond }  \|  transition name { from cond; delete; allow cond }` | 상태 전이. from·allow는 항상 필수이고 to, patch, delete 중 하나가 필요하다. 숫자는 f = f + 1처럼만 바꾼다 |
+| `transition` | `transition name { from cond; to f = v, g = w; allow cond }  \|  transition name { from cond; delete; allow cond }` | 상태 전이. from·allow는 항상 필수이고 to, patch, delete 중 하나가 필요하다. 숫자는 `f = f + 1`, `f = f - input.qty`, `f = f + this.g`처럼 자기 필드에 항 하나만 더하거나 뺀다(Int·Decimal, 곱셈·두 항 이상 없음) |
 | `unique` | `unique a, b` | 유일 제약 |
 | `check` | `check name when condition` | 쓰기 뒤 행이 만족해야 하는 조건 |
 | `invariant` | `invariant limitName per refField [deferred]` | limit을 참조 필드별로 적용한다(유일 인덱스로 집행) |
@@ -114,6 +114,7 @@
 | `from` | `from condition` | 전이를 시작할 수 있는 행의 조건. 필수다(patch만 있는 전이도 마찬가지이며 `DEF.MISSING_ITEM`). 어느 행에나 허용하려면 `from true` |
 | `to` | `to f = v, g = g + 1` | 바뀌는 값. 대입은 쉼표로 구분한다(세미콜론은 `to`와 `from`·`allow` 같은 다른 항목 사이에만 쓴다) |
 | `delete` | `delete` | 대상 행 물리 삭제. to·patch·expect·repeat unchanged와 함께 쓸 수 없다 |
+| `input` | `input { qty: Int(1..100); amount: Decimal(12,2) }` | 호출자가 apply 요청의 `input`으로 넘기는 증감량(Int·Decimal, null 불가, 8개 이하, 선언한 키는 모두 필수). from·allow에서 `input.qty`와 비교하고 `to f = f ± input.qty`와 update 효과 값 `f = f ± input.qty`의 항으로만 쓴다. 서버가 잠근 행에서 계산하고 결과가 필드 범위·자릿수를 벗어나면 WIRE.BAD_VALUE로 전체 롤백한다. compose 전이로는 쓸 수 없다 |
 | `patch` | `patch title, content` | 호출자의 values에서 수정할 수 있는 필드. 타입·범위는 fields와 같으며 누락은 유지, null은 nullable만. 기본키·to 대입과 중복 불가 |
 | `expect` | `expect version` | 호출자의 expect에서 모두 제공해야 하는 이전 값. 인가 뒤 잠근 행과 NULL-safe 비교하며 불일치는 WIRE.CONFLICT. version 증감 to와 조합하면 낙관적 잠금 |
 | `allow` | `allow condition` | 누가 부를 수 있는지 |

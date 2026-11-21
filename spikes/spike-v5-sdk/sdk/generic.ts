@@ -42,7 +42,8 @@ type ApplyTarget<A extends ApplyActionShape> =
   | ("id" extends A["targets"] ? { readonly ids: readonly A["idInput"][]; readonly where?: never } : never)
   | ("where" extends A["targets"] ? { readonly where: readonly ApplyWhere<A>[]; readonly ids?: never } : never);
 type ApplyInput<A> = (A extends { readonly values: infer V } ? { readonly values: V } : { readonly values?: never })
-  & (A extends { readonly expect: infer E } ? { readonly expect: E } : { readonly expect?: never });
+  & (A extends { readonly expect: infer E } ? { readonly expect: E } : { readonly expect?: never })
+  & (A extends { readonly input: infer I } ? { readonly input: I } : { readonly input?: never });
 export type ApplyRequest<A extends ApplyContractShape<A>, K extends keyof A & string = keyof A & string> = {
   [Name in K]: { readonly apply: Name; readonly target: ApplyTarget<A[Name]> } & ApplyInput<A[Name]>
 }[K];

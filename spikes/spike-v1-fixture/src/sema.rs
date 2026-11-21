@@ -157,6 +157,8 @@ struct Scope {
 const UNRESOLVED: &str = "DEF.UNRESOLVED_NAME";
 /// `expose apply`가 한 요청에서 다룰 수 있는 행 수의 상한.
 const MAX_BULK_ROWS: i64 = 10_000;
+/// 전이 하나가 받는 `input` 매개변수의 상한.
+const MAX_TRANSITION_INPUTS: usize = 8;
 const MAX_POLICY_EXPANDED_DEPTH: usize = 64;
 const MAX_POLICY_EXPANDED_NODES: usize = 16_384;
 const MAX_POLICY_PATH_SEGMENTS: usize = 64;
@@ -516,25 +518,90 @@ impl<'a> Ctx<'a> {
         self.ex(e, sc)
     }
 
-    /// `f = f + n`/`f = f - n`. 대상 행 자신의 Int 필드를 정의에 적힌 상수만큼만 바꾼다.
-    /// 호출자 값이나 다른 필드를 섞으면 전이가 서버 정의 밖의 계산이 되므로 받지 않는다.
-    fn counter(&self, f: &str, ft: &TT, op: &str, l: &Expr, r: &Expr, sp: Span) -> Result<Value, Diag> {
-        if ft.ty != Ty::Int || ft.nullable {
-            return Err(Diag::new("DEF.TYPE_MISMATCH", format!("증감 대입은 null이 아닌 Int 필드만, `{f}`는 `{}`", ft.show()), sp));
+    /// `f = f + 항`/`f = f - 항`. 잠근 행(전이 `to`) 또는 update 효과 대상 행 자신의 Int·Decimal 필드에 항 하나만 더하거나 뺀다.
+    /// 항은 정수 리터럴(0 제외), Decimal 문자열 리터럴, `input.p`, 전이 대상 행의 같은 resource non-null 숫자 필드(`this.g`)뿐이다.
+    /// 곱셈·나눗셈·두 항 이상·COALESCE는 받지 않는다. 계산은 서버가 잠근 행에서 하고 호출자는 증감량만 정한다.
+    /// 정수 리터럴을 Int 필드에 쓰는 기존 형태는 계속 `{"increment": n}`으로 낸다(기존 정의의 facts 불변).
+    #[allow(clippy::too_many_arguments)]
+    fn arith(&self, target: &str, this_res: &str, f: &str, ft: &TT, op: &str, l: &Expr, r: &Expr, sp: Span, sc: &Scope, effect: bool) -> Result<Value, Diag> {
+        let target_ok = !ft.nullable && matches!(ft.ty, Ty::Int | Ty::Decimal(_, _));
+        if !target_ok {
+            return Err(Diag::new("DEF.TYPE_MISMATCH", format!("증감 대입은 null이 아닌 Int·Decimal 필드만, `{f}`는 `{}`", ft.show()), sp));
         }
         let same = match l {
+            Expr::Path(segs, _) if effect => segs.len() == 1 && segs[0] == f,
             Expr::Path(segs, _) => (segs.len() == 1 && segs[0] == f) || (segs.len() == 2 && segs[0] == "this" && segs[1] == f),
             _ => false,
         };
-        let n = match r {
-            Expr::Int(n) => *n,
-            _ => 0,
-        };
-        if !same || n == 0 {
-            return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("증감 대입은 `{f} = {f} + 정수` 또는 `{f} = {f} - 정수`(0 제외)만"), sp));
+        let shape = "증감 대입은 `f = f + 항` 또는 `f = f - 항`(항은 하나: 0이 아닌 정수 리터럴, \"Decimal 리터럴\", `input.이름`, 같은 행의 `this.필드`)만";
+        if !same {
+            let hint = if effect { "update 효과의 왼쪽 항은 갱신하는 필드 자신의 맨 이름이어야 함. " } else { "" };
+            return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("{hint}{shape}"), sp));
         }
-        let delta = if op == "-" { n.checked_neg().ok_or_else(|| Diag::new("DEF.BAD_RANGE", "증감 값 범위", sp))? } else { n };
-        Ok(json!({ "increment": delta }))
+        if let (Expr::Int(n), Ty::Int, false) = (r, &ft.ty, effect) {
+            if *n == 0 {
+                return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp));
+            }
+            let delta = if op == "-" { n.checked_neg().ok_or_else(|| Diag::new("DEF.BAD_RANGE", "증감 값 범위", sp))? } else { *n };
+            return Ok(json!({ "increment": delta }));
+        }
+        // 이하는 새 형태다. 가려진 필드는 결과 범위 오류로 값이 추론되므로 대상에도 항에도 쓰지 못한다.
+        if self.res.get(target).is_some_and(|t| t.field_read.iter().any(|x| x.0 == f)) {
+            return Err(Diag::new(
+                "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                format!("`{f}`에는 field read 정책이 있어 가변 증감(`input`·필드·Decimal 항)의 대상이 될 수 없음(범위 오류로 값이 추론됨)"),
+                sp,
+            ));
+        }
+        self.reject_encrypted_path(target, f, sp)?;
+        let (term, tt) = match r {
+            Expr::Int(0) => return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp)),
+            Expr::Int(n) => (json!({ "lit": n }), TT::new(Ty::Int)),
+            Expr::Str(value) => match &ft.ty {
+                Ty::Decimal(precision, scale) if valid_decimal(value, *precision, *scale) => {
+                    (json!({ "lit": value }), TT::new(Ty::Decimal(*precision, *scale)))
+                }
+                Ty::Decimal(..) => {
+                    return Err(Diag::new("DEF.BAD_VALUE", format!("`{}` 형식의 문자열 리터럴 필요", ft.show()), span_of(r)));
+                }
+                _ => return Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{f}`({})에 Decimal 항을 쓸 수 없음", ft.show()), span_of(r))),
+            },
+            Expr::Path(segs, psp) => {
+                let (v, tt) = self.path(segs, *psp, sc)?;
+                let root = v["path"]["root"].as_str().unwrap_or("");
+                let walked = v["path"]["segs"].as_array().map_or(0, Vec::len);
+                if let Some(name) = root.strip_prefix("input.").filter(|_| walked == 0) {
+                    (json!({ "input": name }), tt)
+                } else if root == "this" && walked == 1 {
+                    let own = v["path"]["segs"][0].as_str().unwrap_or("");
+                    if !effect && own == f {
+                        return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("`{f} = {f} ± {f}`는 곱셈과 같아 받지 않음. {shape}"), sp));
+                    }
+                    if self.res.get(this_res).is_some_and(|t| t.field_read.iter().any(|x| x.0 == own)) {
+                        return Err(Diag::new(
+                            "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                            format!("증감 항 `{own}`에는 field read 정책이 있어 쓸 수 없음(결과로 가려진 값이 추론됨)"),
+                            sp,
+                        ));
+                    }
+                    (json!({ "path": v["path"] }), tt)
+                } else {
+                    return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp));
+                }
+            }
+            _ => return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp)),
+        };
+        let fits = match (&ft.ty, &tt.ty) {
+            (Ty::Int, Ty::Int) => true,
+            (Ty::Decimal(..), Ty::Int) => true,
+            (Ty::Decimal(_, scale), Ty::Decimal(_, term_scale)) => term_scale <= scale,
+            _ => false,
+        };
+        if tt.nullable || !fits {
+            let why = if tt.nullable { "null이 될 수 없는 항만 쓸 수 있음" } else { "Int 필드에는 Int 항, Decimal(p,s) 필드에는 Int 항 또는 소수 자릿수가 s 이하인 Decimal 항만 쓸 수 있음" };
+            return Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{f}`({}) {op} `{}`: {why}", ft.show(), tt.show()), sp));
+        }
+        Ok(json!({ "arith": { "op": op, "term": term } }))
     }
 
     fn bool_of(&self, e: &Expr, sc: &Scope) -> Result<Value, Diag> {
@@ -555,7 +622,7 @@ impl<'a> Ctx<'a> {
             }
             Expr::Not(x) => Ok((json!({ "not": self.bool_of(x, sc)? }), b)),
             Expr::Arith(_, _, _, sp) => {
-                Err(Diag::new("DEF.ARITH_NOT_ALLOWED", "산술식은 transition `to`의 `필드 = 필드 ± 정수`에서만 쓸 수 있음", *sp))
+                Err(Diag::new("DEF.ARITH_NOT_ALLOWED", "산술식은 transition `to`와 update 효과 값의 `필드 = 필드 ± 항`(항 하나)에서만 쓸 수 있음", *sp))
             }
             Expr::Cmp(op, l, r) => {
                 let (lv, lt, rv, rt) = if matches!(l.as_ref(), Expr::Str(_)) {
@@ -1141,12 +1208,15 @@ impl<'a> Ctx<'a> {
 
         let mut tr = Map::new();
         for t in &r.transitions {
-            let from = self.bool_of(&t.from, &sc);
+            // `input`은 이 전이의 from·allow와 증감 항에서만 보인다. 전이마다 따로 선언하므로 전이 범위 scope를 만든다.
+            let (tinput, input_json) = self.transition_input(t);
+            let tsc = Scope { input: tinput, ..sc.clone() };
+            let from = self.bool_of(&t.from, &tsc);
             let from = self.run(from);
             if let Some(from) = &from {
                 self.reject_hidden_reads(from, &r.name, &format!("transition `{}`의 from", t.name), t.span);
             }
-            let allow = self.bool_of(&t.allow, &sc);
+            let allow = self.bool_of(&t.allow, &tsc);
             let allow = self.run(allow);
             let mut to = Map::new();
             let mut counters = false;
@@ -1159,11 +1229,22 @@ impl<'a> Ctx<'a> {
                     self.d("DEF.UNKNOWN_FIELD", format!("transition 대상 필드 `{f}` 없음"), t.span);
                     continue;
                 };
-                if let Expr::Arith(op, l, r, sp) = val {
-                    if let Some(v) = self.run(self.counter(f, &ft, op, l, r, *sp)) {
+                if let Expr::Arith(op, l, rhs, sp) = val {
+                    if let Some(v) = self.run(self.arith(&r.name, &r.name, f, &ft, op, l, rhs, *sp, &tsc, false)) {
+                        if let Some(term) = v["arith"].get("term") {
+                            self.reject_hidden_reads(term, &r.name, &format!("transition `{}`의 to `{f}` 항", t.name), t.span);
+                        }
                         counters = true;
                         to.insert(f.clone(), v);
                     }
+                    continue;
+                }
+                if matches!(val, Expr::Path(segs, _) if segs.first().map(String::as_str) == Some("input")) {
+                    self.d(
+                        "DEF.UNSUPPORTED",
+                        format!("transition `{}`: `input` 값을 `{f}`에 그대로 대입할 수 없음. 호출자 값은 `patch`로 받고 `input`은 `{f} = {f} ± input.이름`의 항으로만 씀", t.name),
+                        t.span,
+                    );
                     continue;
                 }
                 let range = r.fields.iter().find(|x| &x.name == f).and_then(|x| x.ty.range);
@@ -1210,7 +1291,7 @@ impl<'a> Ctx<'a> {
             };
             let mut effects = vec![];
             for e in &t.effects {
-                if let Some(v) = self.effect(r, e, &sc) {
+                if let Some(v) = self.effect(r, e, &sc, &tsc) {
                     effects.push(v);
                 }
             }
@@ -1234,6 +1315,10 @@ impl<'a> Ctx<'a> {
             let mut declaration = json!({ "from": from, "to": to, "allow": allow, "repeat": repeat, "effects": effects });
             if t.delete {
                 declaration["delete"] = json!(true);
+            }
+            // 새 키는 input을 선언한 전이에만 나온다(기존 정의의 facts·지문 불변).
+            if !t.input.is_empty() {
+                declaration["input"] = input_json;
             }
             for (key, names) in [("patch", &t.patch), ("expect", &t.expect)] {
                 let mut fields = std::collections::BTreeSet::new();
@@ -1359,8 +1444,8 @@ impl<'a> Ctx<'a> {
                     if !r.transitions.iter().any(|x| &x.name == t) {
                         self.d("DEF.UNKNOWN_SYMBOL", format!("compose 전이 `{t}` 없음"), *sp);
                     }
-                    if r.transitions.iter().any(|x| &x.name == t && (!x.patch.is_empty() || !x.expect.is_empty())) {
-                        self.d("DEF.UNSUPPORTED", "compose의 전이 단계는 patch/expect 입력을 제공하지 않는다. 이 전이는 bundle.apply로 묶는다", *sp);
+                    if r.transitions.iter().any(|x| &x.name == t && (!x.patch.is_empty() || !x.expect.is_empty() || !x.input.is_empty())) {
+                        self.d("DEF.UNSUPPORTED", "compose의 전이 단계는 patch/expect/input 입력을 제공하지 않는다. 이 전이는 bundle.apply로 묶는다", *sp);
                     }
                     if r.expose_apply.iter().any(|x| &x.transition == t && x.internal) {
                         self.d("DEF.UNSUPPORTED", "compose는 internal 전이를 부를 수 없다(compose는 공개 호출이다)", *sp);
@@ -1485,7 +1570,21 @@ impl<'a> Ctx<'a> {
         Value::Object(o)
     }
 
-    fn effect(&mut self, r: &Resource, e: &Effect, sc: &Scope) -> Option<Value> {
+    /// 전이의 `input` 선언을 검사한다. Int·Decimal non-null만, 8개 이하다(증감량 외의 값은 `patch`로 받는다).
+    fn transition_input(&mut self, t: &Transition) -> (Vec<(String, TT)>, Value) {
+        if t.input.len() > MAX_TRANSITION_INPUTS {
+            self.d("DEF.UNSUPPORTED", format!("transition `{}`의 input은 {MAX_TRANSITION_INPUTS}개 이하", t.name), t.span);
+        }
+        let (typed, json) = self.params(&t.input);
+        for (n, ty) in &typed {
+            if ty.nullable || !matches!(ty.ty, Ty::Int | Ty::Decimal(_, _)) {
+                self.d("DEF.TYPE_MISMATCH", format!("transition `{}`의 input `{n}`은 null이 아닌 Int 또는 Decimal만, `{}`", t.name, ty.show()), t.span);
+            }
+        }
+        (typed, json)
+    }
+
+    fn effect(&mut self, r: &Resource, e: &Effect, sc: &Scope, tsc: &Scope) -> Option<Value> {
         match e {
             Effect::Create { resource, values, span } => {
                 let Some(target) = self.res.get(resource.as_str()).copied() else {
@@ -1537,6 +1636,16 @@ impl<'a> Ctx<'a> {
                             cx.d("DEF.UNKNOWN_FIELD", format!("`{resource}`에 필드 `{f}` 없음"), *span);
                             continue;
                         };
+                        // `f = f ± 항`: 앞의 f는 갱신 대상 행의 현재 값이고 항의 맨 이름·`this.`는 전이 대상 행이다.
+                        if let (false, Expr::Arith(op, l, rhs, sp)) = (match_value, v) {
+                            if let Some(val) = cx.run(cx.arith(resource, &r.name, f, &ft, op, l, rhs, *sp, &Scope { allow_latest: false, ..tsc.clone() }, true)) {
+                                if let Some(term) = val["arith"].get("term") {
+                                    cx.reject_hidden_reads(term, &r.name, &format!("update `{resource}.{f}`의 항"), *span);
+                                }
+                                out.insert(f.clone(), val);
+                            }
+                            continue;
+                        }
                         let res = cx.expect(v, value_scope, Some(&ft)).and_then(|(val, vt)| {
                             if same_target(&vt.ty, &ft.ty) && (match_value || !vt.nullable || ft.nullable) {
                                 Ok(val)

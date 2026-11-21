@@ -504,6 +504,7 @@ impl Parser {
                     self.expect_sym("{")?;
                     let (mut from, mut to, mut allow, mut repeat) = (None, vec![], None, None);
                     let (mut patch, mut expect) = (vec![], vec![]);
+                    let mut input = vec![];
                     let mut delete = false;
                     let mut effects = vec![];
                     let mut tseen = BTreeSet::new();
@@ -551,6 +552,7 @@ impl Parser {
                                 }
                                 effects.push(Effect::Delete { resource, max_rows, matches, span: ksp });
                             }
+                            "input" => input = self.params_block()?,
                             "patch" => patch = self.ident_list()?,
                             "expect" => expect = self.ident_list()?,
                             "allow" => allow = Some(self.expr()?),
@@ -608,7 +610,7 @@ impl Parser {
                                     }
                                     let f = self.ident()?;
                                     self.expect_sym("=")?;
-                                    values.push((f, self.unary()?));
+                                    values.push((f, self.additive()?));
                                 }
                                 effects.push(Effect::Update { resource, max_rows, when, matches, values, span: ksp });
                             }
@@ -629,7 +631,7 @@ impl Parser {
                     }
                     match (from, allow) {
                         (Some(from), Some(allow)) if delete || !to.is_empty() || !patch.is_empty() => {
-                            r.transitions.push(Transition { name, patch, expect, from, to, delete, allow, repeat, effects, span: sp })
+                            r.transitions.push(Transition { name, input, patch, expect, from, to, delete, allow, repeat, effects, span: sp })
                         }
                         (from, allow) => {
                             let mut missing = vec![];

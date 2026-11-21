@@ -81,7 +81,7 @@ pub const BLOCK_KEYS: &[(&str, &[&str])] = &[
     ("traverse", &["select", "sort", "limit"]),
     ("aggregate", &["input", "source", "sourceAccess", "groupKey", "where", "callerFilter", "rowOutput", "release"]),
     ("extension", &["input", "output", "access", "effect", "deadline", "implementation", "internal"]),
-    ("transition", &["from", "to", "delete", "patch", "expect", "allow", "repeat"]),
+    ("transition", &["from", "to", "delete", "input", "patch", "expect", "allow", "repeat"]),
     ("transition effect", &["create", "update", "delete", "notify"]),
     ("expose apply", &["target", "bulk", "sameScope", "internal"]),
     ("expose create", &["allow", "fields"]),
@@ -381,7 +381,7 @@ pub static REGISTRY: &[Info] = &[
     i(
         "DEF.TYPE_MISMATCH",
         "the types do not fit",
-        "Both sides of a comparison, an assignment, a predicate argument or an effect value must have the same type; conditions must be Bool. The message shows both types.",
+        "Both sides of a comparison, an assignment, a predicate argument or an effect value must have the same type; conditions must be Bool. The message shows both types. An arithmetic assignment `f = f ± term` needs a non-null Int or Decimal target and a non-null term: an Int field takes an Int term, a Decimal(p,s) field takes an Int term or a Decimal term with scale <= s. A transition `input` parameter is Int or Decimal and never nullable.",
         "Change the value or the field so that the types are the same. A literal needs the form of its type (an enum value without quotes, a Text in quotes).",
         "",
     ),
@@ -433,8 +433,8 @@ pub static REGISTRY: &[Info] = &[
     i(
         "DEF.ARITH_NOT_ALLOWED",
         "arithmetic outside the one place it is allowed",
-        "Only the `to` block of a transition may change a number, written `field = field + 1` or `field = field - 1`. Conditions never compute.",
-        "Move the arithmetic into a transition, or compare with a literal.",
+        "Only a transition `to` (or an `update` effect value) may change a number, written `field = field + term` or `field = field - term` with exactly one term: a non-zero integer literal, a decimal string literal, `input.name`, or a non-null numeric field of the same row (`this.g`). Conditions never compute, and there is no `*`, `/`, second term or COALESCE.",
+        "Move the arithmetic into a transition assignment with one term, or compare with a literal.",
         "",
     ),
     i(
@@ -483,7 +483,7 @@ pub static REGISTRY: &[Info] = &[
     i(
         "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
         "a field with a read policy in a transition's `from`, the value of `to`, or under `repeat unchanged`",
-        "A caller who cannot read the field still sees the outcome of a transition: `WIRE.INVALID_STATE` when `from` is false, `unchanged` when the row already holds the target value, and a copied value when `to` reads the field into a visible one. Each of those would reveal the hidden value, so the definition is rejected. `allow` is the author's authorization rule and a write to a hidden field without `repeat unchanged` reveals nothing, so those stay valid.",
+        "A caller who cannot read the field still sees the outcome of a transition: `WIRE.INVALID_STATE` when `from` is false, `unchanged` when the row already holds the target value, and a copied value when `to` reads the field into a visible one. Each of those would reveal the hidden value, so the definition is rejected. The same holds for `f = f ± term` when `f` or the term has a read policy: an out-of-range result would answer whether the hidden value is at least some chosen size. `allow` is the author's authorization rule and a write to a hidden field without `repeat unchanged` reveals nothing, so those stay valid.",
         "Express the condition on a field without a read policy, or remove the field's `field ... read when` policy. For a hidden target field, drop `repeat unchanged`.",
         "",
     ),

@@ -142,6 +142,8 @@ pub struct Aggregate {
 #[derive(Debug, Clone)]
 pub struct Transition {
     pub name: String,
+    /// 호출자가 증감량으로 넘기는 값(Int·Decimal만). `from`·`allow` 비교와 `f = f ± input.p`의 항으로만 쓴다.
+    pub input: Params,
     /// 호출자가 값을 지정할 수 있는 필드. 타입·범위는 resource fields를 재사용한다.
     pub patch: Vec<(String, Span)>,
     /// 잠근 행과 NULL-safe 비교할 호출자의 이전 값. 선언된 키는 모두 필수다.
@@ -286,6 +288,6 @@ pub enum Expr {
         otherwise: Option<Box<Expr>>,
         span: Span,
     },
-    /// `+`/`-`. 의미 검사는 전이 `to`의 `필드 = 같은 필드 ± 정수`만 받는다.
+    /// `+`/`-`. 의미 검사는 전이 `to`와 update 효과 값의 `필드 = 같은 필드 ± 항 하나`만 받는다.
     Arith(&'static str, Box<Expr>, Box<Expr>, Span),
 }
