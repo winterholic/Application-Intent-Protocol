@@ -1,0 +1,22 @@
+D1-from-predicate                  REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D2-to-predicate-copy               REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D3-actor-hidden-input              REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D4-check-hidden-patch              REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D5-samescope-hidden                REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D6-aggregate-input-hidden          REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D7-create-allow-predicate          REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D8-create-allow-ref-hop            REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D9-compose-copy                    REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D10-effect-copy                    REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D11-access-guard                   REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D12-operation-allow                REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+C1-tenant-existence                create ref=same apply=same mixed targets=same filter owner.eq=same note owner=same patch ref=same
+C2-bundle-created-refs             refs=WIRE.MISSING_TARGET target.created=WIRE.MISSING_TARGET
+C3-extension-ctx                   readHidden(1)={"rows":[{"id":"1","org":1,"risk":null}] | filterHidden(1)=WIRE.EXTENSION_ERROR | readForeign(1)={"rows":[]} | readNotGranted(1)=WIRE.EXTENSION_ERROR | applyInternal(2)=WIRE.EXTENSION_ERROR | applyAllowed(1)=WIRE.EXTENSION_ERROR | applyAllowed(2)={"changed":["2"],"unchanged":[]}
+C4-internal-and-auth               apply=WIRE.NOT_EXPOSED bundle=WIRE.NOT_EXPOSED compose=WIRE.NOT_EXPOSED badToken=WIRE.UNAUTHENTICATED
+C5-cursor-filter-sort              after+risk=WIRE.BAD_CURSOR sort risk=WIRE.SORT_NOT_ALLOWED filter risk=WIRE.FILTER_NOT_ALLOWED filter owner=foreign member rows=[]
+C6-idempotency-key-scope           u1=ok v1 same body=WIRE.MISSING_TARGET (not a replay of u1's changed:[1]: true) v1 other body=ok
+K1-unique-hidden-field             code=1:ok code=4242:WIRE.ALREADY_EXISTS
+K2-literal-increment-hidden-range  successes before BAD_VALUE=37 => hidden risk was 63
+K3-fk-delete-hidden-child          parent-with-hidden-child=WIRE.REFERENCE_CONFLICT plain-parent=ok
+21 scenarios
