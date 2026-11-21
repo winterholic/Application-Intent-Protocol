@@ -25,21 +25,21 @@ Core의 자동 tenant 격리, search, publishable, consent, subscribe 같은 기
 | # | 기능 | 판정 | 조건과 한계 |
 | --- | --- | --- | --- |
 | 1 | 정의 검사(`aip service check`) | 지원 | 다섯 작성 형식(`.aip`, `.e.ts`, `.e.py`, `.h.ts`, `.h.py`). 선택적 개발 조언 `--dev-checks`는 조건부 |
-| 2 | 스키마·타입 | 지원 | Int, Text, Bool, Id/Uuid, Decimal(p,s), Time, Date, Email, Url, enum, Json. **Float 없음.** Decimal은 집계(`sum`)에 쓸 수 없다 |
+| 2 | 스키마·타입 | 지원 | Int, Text, Bool, Id/Uuid, Decimal(p,s), Time, Date, Email, Url, enum, Json. **Float 없음.** |
 | 3 | resource·relation·constraint | 조건부 | 관계 읽기만 제품 HTTP 시험이 있다. FK 거부, unique, limit, invariant의 실DB 근거는 엔진 단위 시험이다 |
-| 4 | 선언형 읽기·표준 쓰기 | 지원 | 필터 허용 목록, 정렬, cursor·offset 페이지, to-one·to-many 관계, `count`/`sum`/`min`/`max`. `avg`, 관련 필드 정렬·필터, 다중 `groupKey` 같은 표현은 선언만으로 안 된다([표현력 한계](LIMITS.md)) |
+| 4 | 선언형 읽기·표준 쓰기 | 지원 | 필터 허용 목록, 정렬, cursor·offset 페이지, to-one·to-many 관계, `count`/`sum`/`min`/`max`. PostgreSQL의 `sum`은 단일 Decimal 필드를 지원한다. 결과의 scale은 원본과 같고 precision은 원본 이상이어야 한다. `avg`, 관련 필드 정렬·필터, 다중 `groupKey` 같은 표현은 선언만으로 안 된다([표현력 한계](LIMITS.md)) |
 | 5 | partial update(null과 누락 구분) | 지원 | `patch`와 `expect`. 선언한 필드만 고칠 수 있다 |
 | 6 | 계약 HTTP | 지원 | `/read`, `/apply`, `/status`, `/capabilities`, 오류 코드 [`spec/wire-errors.md`](../spec/wire-errors.md). 헤더 오류 코드는 아래 "계약 헤더 오류 코드" |
 | 7 | 생성 binding(TypeScript, Python) | 지원 | `aip service gen`. Python 생성 타입은 공개 apply 입력과 helper가 중심이다 |
 | 8 | JWT·principal | 지원 | **RS256 `at+jwt` 프로필 한정.** 실제 외부 IdP 계정과의 연결은 조건부(운영자가 확인한다) |
 | 9 | row/field policy | 조건부 | `rows read`, `field … read`, 전이 `allow`. **`count`는 `rows read`를 상속하지 않는다**(`sum`·`min`·`max`는 상속). 아래 "공개 count" |
 | 10 | server validation | 지원 | 입력 타입·범위·필터 허용 목록을 서버가 매 요청 검사한다 |
-| 11 | 트랜잭션 | 지원 | PostgreSQL. 부재(absence)에 의존하는 쓰기는 SERIALIZABLE로 최대 3회 재실행 |
+| 11 | 트랜잭션 | 지원 | PostgreSQL. 부재(absence)에 의존하는 쓰기는 SERIALIZABLE. 서버가 소유하는 선언형 SQL 트랜잭션은 안전하게 다시 실행할 수 있는 직렬화 실패·교착을 최대 3회 재시도한다. 동기 쓰기 확장은 호출자가 같은 key로 다시 보낸다 |
 | 12 | idempotency·`COMMIT_UNKNOWN` | 지원 | **단일 DB 트랜잭션 한정.** 외부 효과(메일, 결제 호출)는 멱등이 보장되지 않는다 |
 | 13 | tenant 자동 격리 | **제외** | 제품 경로에 구현이 없다(Core PoC에만 있다). 조직 경계는 `rows read when org = actor.org`처럼 정의에 직접 쓰고 모든 정책에 반복해야 한다. 이 명시 패턴 자체는 조건부로 동작한다 |
 | 14 | fingerprint(계약 지문) | 지원 | 지문이 다르면 `WIRE.CONTRACT_MISMATCH`. 구버전 클라이언트 동시 지원은 없다 |
 | 15 | 초기화·migration | 조건부 | **PostgreSQL 한정.** 롤백은 백업 복원뿐이며 역방향 migration은 없다. 대형 테이블 무중단 변경은 범위 밖 |
-| 16 | Node/Python 확장 | 조건부 | 확장 ABI는 확정 전이다(결정 OI-X2). Linux Bubblewrap 격리는 CI가 있다. **macOS Seatbelt 격리는 CI 없이 수동 검증이다.** PostgreSQL 쓰기 확장은 `ctx.data.read`와 `ctx.data.apply`만 지원한다 |
+| 16 | Node/Python 확장 | 조건부 | 확장 ABI는 확정 전이다(결정 OI-X2). Linux Bubblewrap 격리는 CI가 있다. **macOS Seatbelt 격리는 CI 없이 수동 검증이다.** PostgreSQL 쓰기 확장은 허용 목록 안에서 `ctx.data.read`, `ctx.data.apply`, `ctx.data.create`를 지원한다. 암호화 리소스의 확장 create는 제외다 |
 | 17 | durable job | 조건부 | **PostgreSQL job store만.** MySQL job store는 출시 묶음에 없다 |
 | 18 | 진단·관측 | 조건부 | OTLP, 감사 기록, trace는 엔진 시험까지 확인했다. 대시보드와 SLO는 제공하지 않는다 |
 | 19 | 설치 SDK·패키지 | 조건부 | 버전은 Cargo workspace 한 곳에서 파생해 CLI·TypeScript SDK·Python SDK가 같다(`1.0.0`). 이름은 `product/release.config.json`을 따른다. Windows는 지원하지 않는다([플랫폼](INSTALL.md#지원-플랫폼과-최소-요구)) |

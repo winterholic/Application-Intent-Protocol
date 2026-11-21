@@ -158,12 +158,20 @@ composed = client.compose("Project", ["11"], [{"transition": "archive"},
 
 | 항목 | 규칙 |
 |---|---|
-| 요청 | `{atomic:[{apply,target}\|{create,values}]}`(묶음), `{compose,targets:{ids},steps}`(조합). 생성 계약에 없는 create·필드·전이·값 출처는 타입에서 막히고 서버도 `WIRE.NOT_EXPOSED`·`WIRE.FIELD_NOT_EXPOSED`·`WIRE.STEP_NOT_ALLOWED`·`WIRE.VALUE_SOURCE_NOT_ALLOWED`로 거절한다 |
-| 결과 | `{ok:true, applied:[{changed,unchanged}], created:[{resource,id}], tags}`. 같은 키 재생은 `replayed:true`와 저장된 `created`를 돌려주고 행을 다시 만들지 않는다 |
+| 요청 | `{atomic:[{apply,target,input?}\|{create,values,refs?}\|{compose,targets,steps}]}`(묶음), `{compose,targets:{ids},steps}`(조합). 생성 계약에 없는 create·필드·전이·값 출처는 타입에서 막히고 서버도 `WIRE.NOT_EXPOSED`·`WIRE.FIELD_NOT_EXPOSED`·`WIRE.STEP_NOT_ALLOWED`·`WIRE.VALUE_SOURCE_NOT_ALLOWED`로 거절한다 |
+| 결과 | `{ok:true, applied:[{changed,unchanged}], created:[{resource,id}], tags}`. compose 연산이 있는 묶음은 `ops: [{kind, applied: [start,end], created: [start,end]}]`도 돌려준다. 범위의 끝은 포함하지 않는다. 같은 키 재생은 `replayed:true`와 저장된 `created`를 돌려주고 행을 다시 만들지 않는다 |
 | 크기 상한 | 묶음 연산 20개, 묶음·조합이 건드리는 대상 행 1000개, 조합 단계 10개. 넘으면 `WIRE.BULK_LIMIT`. 값은 생성 계약의 `bundleLimits`에도 실린다 |
 | 참조 값 | create의 Ref 값은 호출자가 읽을 수 있는 행이어야 한다(D-A17). 안 보이는 행은 없는 행과 같은 `WIRE.MISSING_TARGET`이다 |
 | 타입 | TypeScript는 생성 binding의 `CreateContract`·`ComposeContract`로 값·id·`item` 출처를 검사한다. Python SDK는 정적 타입이 없고 서버가 검사한다. 성공 결과의 모양이 틀리면 둘 다 확정으로 보지 않고 같은 키로 다시 확인한다 |
-| 한계 | 계약이 create·compose를 공개하지 않고 전이만 있으면 `retryPending()` 결과 타입은 전이 하나의 것 그대로다. 그 계약에서 `bundle()`을 쓰면 pending 결과를 `applied` 유무로 좁혀 읽는다. 연산 사이로 값을 넘기는 일반 조합은 없다(`compose`의 `item`만). create는 Url·Time 필드를 받지 않는다 |
+| 한계 | 계약이 create·compose를 공개하지 않고 전이만 있으면 `retryPending()` 결과 타입은 전이 하나의 것 그대로다. 그 계약에서 `bundle()`을 쓰면 pending 결과를 `applied` 유무로 좁혀 읽는다. 단계의 결과 전달은 앞 create의 ID로 제한된다. `compose` 안쪽에서 전이의 `input`·`patch`·`expect`를 공급할 수 없다. create는 Url·Time 필드를 받지 않는다 |
+
+### 앞에서 만든 행 사용
+
+TypeScript에서는 `client.bundle((b) => { ... }, { key })`의 `b.create(resource, values)`가 만든 행의 핸들을 돌려준다. 뒤 create의 세 번째 인자에 `{ field: handle }`을 전달한다. 예를 들어 `b.create("OrderLine", values, { order })`는 앞에서 만든 Order의 ID를 `order` 필드에 넣는다. 직접 연산 배열을 구성하면 create에 `refs: { order: { created: 0 } }`를, ID를 대상으로 여는 전이에 `target: { created: 0 }`를 쓴다. 번호는 결과 `created` 배열이 아니라 0부터 시작하는 요청의 연산 위치다.
+
+Python에서는 `from aip_sdk import created`로 가져온 `created(0)`을 같은 위치에 넣을 수 있다. 두 경로 모두 앞의 공개 create만 참조하며 필드·전이의 리소스 타입과 행 가시성은 서버가 검사한다. 같은 키로 결과를 재생하면 처음에 만든 ID를 돌려준다.
+
+`compose` 연산을 `bundle`에 넣으면 다른 apply·create와 트랜잭션을 공유한다. 조합 내부의 `item`은 해당 조합이 읽은 행을 가리킨다. 조합이 만든 행에는 바깥 묶음의 `refs`나 `target.created`를 연결할 수 없다. 전이에 검증된 입력을 전달하려면 묶음의 별도 apply 연산에 `input`을 넣는다.
 
 ## 계약 헤더와 실패 응답
 
