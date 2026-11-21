@@ -15,10 +15,14 @@ fn failure(code: &str) -> Value {
 }
 
 /// COMMIT 전 단계의 DB 오류. 연결을 잃었다면 커밋된 것이 없어 같은 키로 다시 보내도 안전하다(DB_UNAVAILABLE).
+/// 직렬화 실패·교착(40001·40P01)은 트랜잭션 전체가 rollback됐으므로 같은 키로 다시 보내도 되는 `WIRE.CONFLICT`다.
+/// PostgreSQL은 SERIALIZABLE에서 읽기·쓰기 의존을 알아챈 첫 문장(결과 기록 UPDATE일 수도 있다)에서 이 오류를 낸다.
 /// 그 밖의 오류는 기존대로 내부 오류다.
 fn before_commit_failure(error: &tokio_postgres::Error) -> Value {
     if connection_failed(error) {
         failure(spike_v3_write::lost_before_commit().code)
+    } else if error.code().is_some_and(|code| matches!(code.code(), "40001" | "40P01")) {
+        super::err(spike_v3_write::serialization_conflict("확장 쓰기"))
     } else {
         failure("WIRE.INTERNAL")
     }
