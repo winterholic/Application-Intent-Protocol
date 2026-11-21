@@ -45,6 +45,8 @@ jobs:
     uses: ./.github/workflows/sdk-semantic-e2e.yml
   semantic-conformance:
     uses: ./.github/workflows/semantic-conformance.yml
+  macos-platform-tests:
+    uses: ./.github/workflows/macos-platform-tests.yml
 
   required:
     name: required (all workflows green on this SHA)
@@ -64,6 +66,7 @@ jobs:
       - object-storage
       - sdk-semantic-e2e
       - semantic-conformance
+      - macos-platform-tests
     runs-on: ubuntu-24.04
     steps:
       # A skipped or cancelled workflow is not a pass: only `success` counts.

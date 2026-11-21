@@ -401,9 +401,16 @@ async fn apply_attempt(
     if let Err(error) = tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[&format!("{principal}:{key}")]).await {
         return err(classify_write_error("멱등 잠금", error));
     }
-    if let Ok(Some(row)) =
-        tx.query_opt(format!("SELECT request, result::text FROM {s}.aip_idem WHERE principal = $1 AND key = $2").as_str(), &[&principal, &key]).await
+    // 조회 오류를 버리면 이미 중단된 트랜잭션에서 다음 문장이 25P02로 실패해 재시도 가능한 충돌이 WIRE.INTERNAL로 바뀐다.
+    let stored = match tx
+        .query_opt(format!("SELECT request, result::text FROM {s}.aip_idem WHERE principal = $1 AND key = $2").as_str(), &[&principal, &key])
+        .await
     {
+        Ok(stored) => stored,
+        Err(error) if spike_v3_write::connection_failed(&error) => return lost_before_commit(),
+        Err(error) => return err(classify_write_error("멱등 조회", error)),
+    };
+    if let Some(row) = stored {
         let (stored_req, result): (String, String) = (row.get(0), row.get(1));
         let matches = match encryption::stored_request_matches(facts, &stored_req, req, s, principal, key) {
             Ok(matches) => matches,

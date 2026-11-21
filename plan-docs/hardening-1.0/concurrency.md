@@ -10,6 +10,8 @@
 | 구분 | 건수 | 내용 |
 | --- | --- | --- |
 | 결함, 수정함 | 3 | 줄 생성 뒤의 compose·`target.where` 전이 교착(78894ef4), SERIALIZABLE 확장의 직렬화 실패가 `WIRE.INTERNAL`로 샘(cff81a17), 확장 요청이 worker slot보다 DB 연결을 먼저 잡아 느린 DB에서 `WORKER_BUSY` 상한이 무력화됨(4.3절) |
+| 결함, 후속 수정 | 1 | `/apply`가 멱등 key 조회 오류를 버려 재시도 가능한 충돌이 `WIRE.INTERNAL`로 바뀜(8.4절) |
+| CI 공백, 후속 수정 | 1 | macOS 전용으로 막힌 시험이 Linux CI에서 돌지 않아 4.3절의 회귀가 통과함(8절) |
 | 설계 결정 필요, 고치지 않음 | 1 | 같은 행들을 서로 반대 순서로 잠그는 묶음(E9). 5절에 선택지와 영향 |
 | 반례를 찾지 못함 | 나머지 | 3절 표의 "통과" 행 |
 
@@ -108,7 +110,7 @@ PROBE_ROUNDS=<반복 횟수> $P <시험 이름>
 - 원인: 241ae37f(완료된 쓰기 재생을 slot보다 먼저)가 확장 요청마다 `pool.acquire_until`과 완료 key 조회를 `extension_slots.try_acquire` 앞에 두었다. 그래서 DB가 느리거나 응답하지 않으면 slot을 쥔 요청이 하나도 없어 `WORKER_BUSY` 상한이 동시 요청 수를 막지 못하고, 상한을 넘은 요청도 `DB_UNAVAILABLE`로 기한(2s)까지 연결을 기다렸다. 기존 macOS 전용 시험 3건(`db_connect_lifetime`, `db_query_lifetime` 2건)이 이 계약을 지키고 있었고 be2c0682에서는 통과, 241ae37f부터 main까지 실패했다. Linux CI는 이 시험들(`#![cfg(target_os = "macos")]`)을 돌리지 않아 놓쳤다.
 - 수정(최소): ① slot을 DB 작업 앞에서 먼저 잡는다(`try_acquire`, 못 잡아도 즉시 실패시키지 않는다). ② slot이 없는 포화 요청도 완료 key 재생은 받을 수 있게 하되, 연결 checkout·배포 fence·journal 조회 전체에 500ms(`SATURATED_REPLAY_BUDGET`) 예산만 준다. 재생이 없거나 예산을 넘기면 `WIRE.WORKER_BUSY`다. ③ 조기 조회가 기한을 넘긴 연결은 `release()`로 되돌리지 않고 폐기한다(멈춘 연결에서 reset을 기다리다 응답이 기한을 넘기는 것을 막는다). ④ principal slot이 거절하는 경우 쥐고 있던 연결을 `release()`로 돌려준다(이전에는 폐기해서 건강한 연결을 버렸다).
 - 영향: 포화 상태의 재생(7cdfed93이 보장하는 것)은 DB가 500ms 안에 답할 때 유지된다. DB가 그보다 느리면 포화 요청은 재생 대신 `WORKER_BUSY`를 받는다(재시도 가능). 500ms는 이 작업이 정한 값이라 소유자가 조정할 수 있다. 시험: 위 3건과 `write_extension_replay_backpressure`가 통과한다. `db_query_lifetime`의 `silent_operation_sql_after_clock...`는 코드가 아니라 fixture를 고쳤다. 조기 조회가 clock 조회보다 먼저 `aip_idem`을 읽으므로 그 시험의 DB에 journal 테이블이 있어야 하는데 없어서 `relation does not exist`가 `WIRE.INTERNAL`이 되었다. 기대값은 바꾸지 않고 테이블 준비만 추가했다.
-- 후속 제안(고치지 않음): 위 세 시험의 `#![cfg(target_os = "macos")]`는 소켓 프록시만 쓰는데 macOS 전용으로 막혀 있다. Linux CI에서도 돌리면 같은 퇴행을 CI가 잡는다. CI 구성은 이 작업의 범위가 아니다.
+- 후속(8절에서 처리): 위 세 시험의 `#![cfg(target_os = "macos")]`를 풀어 Linux CI에서 돌게 했고, 84d4e318을 되돌리면 Linux에서 실패함을 보였다(8.3절).
 
 ## 5. 설계 결정이 필요한 것: 반대 순서 잠금 (E9의 남은 부분)
 
@@ -128,7 +130,7 @@ PROBE_ROUNDS=<반복 횟수> $P <시험 이름>
 ## 6. 범위 밖 발견과 미검증
 
 - 범위 밖(권한 정책): 확장 `ctx.data.create`가 유일 제약과 생성 권한(`allow`)이 모두 어긋날 때 경합 결과에 따라 `WIRE.ALREADY_EXISTS` 또는 `forbidden`으로 갈린다. INSERT가 먼저 실행되고 `allow`는 DB 기본값 적용 뒤에 평가되기 때문이다. 생성 권한이 없는 호출자가 숨은 행의 존재를 알아낼 수 있는지는 정책 담당이 판단할 문제라 건드리지 않았다. 탐색 중 `Claim` 생성 `allow owner = actor`에 다른 사용자가 `owner`를 1로 넣어 부딪쳤을 때 6라운드 중 3라운드에서 관찰했다. 시험으로 남기지 않았고 표에도 넣지 않았다.
-- 미재현 의심(코드 추론): `handle_apply`의 멱등 key 조회가 `if let Ok(Some(row))`라서 그 조회의 오류(직렬화 실패·연결 끊김)가 버려지고 다음 문장의 `25P02`가 `WIRE.INTERNAL`로 보일 수 있다. SERIALIZABLE 일반 `/apply` 180회 시도(`i5`)에서 `WIRE.INTERNAL`은 없었다. 재현하지 못해 고치지 않았다.
+- 처리됨(8.4절): `handle_apply`의 멱등 key 조회가 `if let Ok(Some(row))`라서 조회 오류가 버려지던 문제. 실제 `/apply` 180회 시도(`i5`)로는 재현하지 못했으나, 조회에서만 오류를 주입해 재현했고 고쳤다. 중복 실행은 없고 오류 분류만 틀렸다.
 - 미검증: MySQL relational 경로의 재생·fence(이 환경은 PostgreSQL만), 격리 모드 worker(`WorkerIsolation`이 `None`이 아닌 경우), `create`의 absence 판정을 쓰는 확장(`create.<Resource>`) 경합. 마지막은 이번에 쓴 정의가 생성 후 판정이라 자기 행에 막혀 시험이 성립하지 않아 버렸다. 해당 영역은 기존 `absence_serializable_http`가 덮는다.
 - 해시 충돌: 멱등 직렬화는 `pg_advisory_xact_lock(hashtext(principal:key))` 32비트 해시를 쓴다. 충돌하면 서로 다른 key가 직렬화될 뿐 결과는 달라지지 않는다고 코드로 판단했고 시험하지 않았다.
 - 시험 반복 횟수는 표에 적은 값이다. 교착·경합 결과는 비결정적이라 라운드 사이 편차가 있다(3.1절은 라운드별 분포를 적었다).
@@ -140,3 +142,65 @@ PROBE_ROUNDS=<반복 횟수> $P <시험 이름>
 - `spike-v3-write` 전체(수정 2건 반영, 4.3절 이전): 통과 107, 실패 0.
 - `spike-v6-transport` 전체(4.3절 수정 전): 통과 290, 실패 8, ignored 24. 실패 8건 중 5건은 이 환경에 `tsc`가 없어서(`v12`~`v16` SDK 시험, `No such file or directory`), 3건은 4.3절의 결함(macOS 전용 `db_connect_lifetime` 1건과 `db_query_lifetime` 2건)이었다.
 - 4.3절 수정 뒤에는 이 수정이 닿는 확장·slot·수명·fence·commit 계열 `spike-v6-transport` 시험 35개 바이너리를 다시 돌렸다: 통과 76, 실패 2(`v14_apply`, `v16_bundle`, 둘 다 `tsc` 부재). `db_connect_lifetime`과 `db_query_lifetime` 2건, `write_extension_replay_backpressure`, `write_extension_serializable_conflict`, `deployment_fence`가 통과했다. 전체 85개 바이너리를 다시 돌리지 않은 이유는 이 Mac의 부하로 durable job 시험이 매우 느려서다. 4.3절 수정은 `serve_request`의 확장 경로 앞부분만 건드린다.
+
+## 8. CI 공백과 멱등 조회 오류 (2026-11-21 후속)
+
+### 8.1 macOS 전용 시험 목록과 판정
+
+`git grep`로 `target_os = "macos"`로 시험을 막은 곳을 모두 찾았다(`cfg!`로 격리 모드만 고르는 시험은 Linux에서 `Isolation::None`이나 bwrap으로 돌므로 제외). 4.3절의 회귀가 Linux CI를 통과한 이유는 아래 1~3행이 "소켓 프록시와 Node worker만 쓰는데도" macOS 전용이었기 때문이다.
+
+| # | 위치 | macOS 전용인 이유 | 판정 | 조치 |
+| --- | --- | --- | --- | --- |
+| 1 | `spike-v6-transport/tests/db_connect_lifetime.rs` (파일 전체) | 플랫폼 API 없음. 침묵하는 DB는 TCP 소켓 프록시다. 기본 격리(`Auto`)가 macOS는 sandbox-exec, Linux는 bwrap을 요구해서 막아 둔 것으로 보인다(작성 이력 외 근거 없음, 추정) | Linux에서 같은 조건을 만들 수 있음 | 게이트 제거, worker 격리 `None`(worker가 시작되기 전의 계약이라 샌드박스는 시험 대상이 아님) |
+| 2 | `.../db_query_lifetime.rs` (파일 전체, 시험 2건) | 1과 같음 | 가능 | 1과 같음 |
+| 3 | `.../db_commit_lifetime.rs` (파일 전체, 시험 1건) | 1과 같음. 이미 `Isolation::None`을 쓰는데 게이트만 남아 있었다 | 가능 | 게이트 제거 |
+| 4 | `spike-v6-transport/src/server.rs`의 `product_start_fails_when_worker_runtime_is_missing`, `..._exits_nonzero`와 도우미 `start_with_probe_runtime` | 기본 격리 `Auto`가 Linux에서는 bwrap을 요구함. bwrap이 없으면 런타임 검사가 아니라 격리 검사에서 실패해 헛통과한다 | 가능 | 게이트 제거, 도우미에서 격리 `None` 지정 |
+| 5 | `server.rs`의 `rejects_an_extension_module_symlink_outside_its_directory` | 파일시스템 검사뿐이라 플랫폼 API 없음 | 가능 | 게이트 제거 |
+| 6 | `crates/aip-cli/tests/service_flow.rs`의 `operation_only_service_preserves_principal_contract_revocation_and_deployment_fences` | 서비스 설정에는 무격리 모드가 없다(`WorkerIsolation`은 `auto`·`mac_net_deny`·`mac_sandbox`·`linux_bubblewrap`). Linux는 `auto`가 bwrap과 user namespace(AppArmor 프로파일)를 요구하는데 `semantic-conformance.yml`에는 그 준비가 없다 | Linux에서 만들려면 CI 환경 변경이 필요하고 로컬에서 검증할 수 없음(이 Mac의 Docker는 `bwrap: Operation not permitted`) | macOS runner job에서 실행 |
+| 7 | `spike-v4-worker/src/isolation.rs`의 macOS 시험 5건(`auto_uses_macos_sandbox_that_denies_network_writes_and_spawn`, `mac_net_deny_keeps_its_network_only_profile`, `mac_sandbox_profile_escapes_paths_so_they_cannot_add_rules`, `macos_sandbox_blocks_file_reads_writes_network_and_spawn`, `macos_sandbox_runs_node_extensions`) | Seatbelt와 `sandbox-exec`라는 플랫폼 API 자체가 대상 | 불가능(Linux 대응물은 bwrap 시험이 따로 있음) | macOS runner job |
+| 8 | `spike-v4-worker/tests/v4_1.rs`의 `MacNetDeny` 블록 | 7과 같음. 네트워크 차단 worker에서 DB 직접 연결만 막히는지 본다 | 불가능 | macOS runner job |
+
+게이트가 아닌 구현 분기(`objects.rs`의 `clear_errno`, `hosting.rs`의 `O_*` 상수)는 Linux 짝이 이미 있어 시험이 건너뛰어지지 않는다.
+
+Linux에서 돌게 한 시험은 `tools/verify.sh`가 이미 `spike-v6-transport` 전체를 `--no-fail-fast`로 돌리므로 Verify의 core job(`ubuntu-latest`)과 릴리스 후보 게이트에 자동으로 들어간다. 워크플로 변경은 필요 없었다.
+
+### 8.2 macOS runner job 추가
+
+`.github/workflows/macos-platform-tests.yml`(`macos-15`, `brew`로 PostgreSQL 17)을 새로 만들었다. 6~8행의 시험만 돌린다. `push`(main, 경로 필터)와 `workflow_dispatch`로 돌고, `release-candidate.yml`이 `workflow_call`로 불러 `required`의 `needs`에 넣었다(경로 필터가 없으므로 모든 출시 SHA에서 돈다). v4_1은 격리 없는 worker가 `127.0.0.1:5432`에 붙을 수 있어야 하므로 그 포트에 빈 리스너를 띄운다.
+
+- 이 job의 명령 3개는 이 Mac에서 같은 형태로 실행해 통과했다(8.5절). GitHub의 macOS runner에서의 동작(`sandbox-exec` 허용 여부, `brew` PostgreSQL 기동)은 아직 실행하지 못했다(`미검증`). 실패하면 출시 후보 게이트도 막히는데, 4.3절 같은 일을 막으려는 설계라서 의도한 방향이다.
+
+### 8.3 84d4e318을 되돌리면 Linux에서 실패한다
+
+Linux(Docker `rust:1-bookworm`, linux/arm64, PostgreSQL 17, bwrap 없음)에서 같은 시험을 돌렸다. 84d4e318의 `src/lib.rs` 변경만 `git apply -R`로 되돌린 상태다(`db_query_lifetime`의 fixture 보정은 둠).
+
+| 시험 | 수정 있음 | 84d4e318 되돌림 |
+| --- | --- | --- |
+| `db_connect_lifetime::silent_database_handshake_releases_requests_sockets_and_extension_slots` | 통과 | 실패: `overflow: ... "WIRE.DB_UNAVAILABLE"` (기대 `WORKER_BUSY`) |
+| `db_query_lifetime::authenticated_but_silent_sql_releases_slots_and_request_owned_connections` | 통과 | 실패: `overflow: Err("SQL response remained blocked")`와 `slot not returned` |
+| `db_query_lifetime::silent_operation_sql_after_clock_...` | 통과 | 통과(이 시험은 fixture 보정이 핵심이고 slot 순서에는 둔감) |
+| `db_commit_lifetime::committed_but_missing_reply_...` | 통과 | 통과(slot 순서와 무관) |
+
+되돌렸을 때 걸리는 것은 두 건이다. 4.3절이 말한 "3건"에서 `silent_operation_sql_after_clock_...`는 fixture를 고친 뒤에는 slot 순서 퇴행을 잡지 못한다. 기대값은 건드리지 않았다.
+
+### 8.4 `handle_apply`의 멱등 key 조회 오류 무시
+
+- 의심 지점: `spike-v6-transport/src/lib.rs`의 `apply_attempt`가 `if let Ok(Some(row)) = tx.query_opt(... aip_idem ...)`로 조회했다. 조회 오류(`Err`)는 "키 없음"처럼 취급되어 쓰기 경로로 넘어갔다.
+- 중복 실행은 일어나지 않는다. 조회가 오류를 내면 PostgreSQL은 그 트랜잭션을 중단 상태로 만들므로, 이어지는 쓰기 문장은 모두 `25P02`로 실패하고 롤백되며 커밋은 없다. 연결이 끊긴 경우도 같다. 시험으로 확인했다(수정 전 코드에서 실패 메시지가 `(hits 0 -> 0)`: 오류를 받은 요청은 쓰기를 하나도 커밋하지 않았다).
+- 결함은 오류 분류다. 조회의 40001·40P01(재시도 가능)이 `WIRE.CONFLICT` 대신 `WIRE.INTERNAL`(`대상 조회 실패(sqlstate 25P02)`)로 바뀌어 서버의 3회 재시도 루프가 돌지 못했고 호출자는 재시도 표지 없는 내부 오류를 받았다. 연결 끊김은 `lost_before_commit`이 아니라 같은 `INTERNAL`이 되었다. 4.2절의 `before_commit_failure`와 같은 계열이다.
+- 재현: 이 환경의 이전 시도(`i5` 180회)는 조회에서 직렬화 실패가 나지 않아 못 찾았다. 이번에는 `aip_idem`을 같은 이름의 뷰로 바꿔(필터 함수가 지정한 SQLSTATE를 던짐, 시퀀스로 "처음 N번만 실패") 조회에서만 실패를 주입했다. 슈퍼유저는 RLS를 건너뛰므로 정책은 쓸 수 없었다. 실서비스에서 이 실패가 얼마나 자주 나는지는 측정하지 않았다(PostgreSQL이 이 조회에서 40001을 내는 빈도는 모름).
+- 수정(최소): 조회 결과를 `match`로 받아 연결 끊김은 `lost_before_commit()`, 그 밖의 오류는 `classify_write_error("멱등 조회", ...)`로 돌려준다. 키가 없는 경우(`Ok(None)`)와 있는 경우의 동작은 그대로다.
+- 시험: `spikes/spike-v6-transport/tests/apply_idem_lookup_error.rs`. ① 처음 두 번의 조회가 40001·40P01로 실패해도 서버가 다시 시도해 한 번만 실행하고, 같은 key 재전송은 재생한다. ② 계속 실패하면 `WIRE.CONFLICT`를 내고 쓰기·저장이 없으며, 복구 뒤 같은 key가 한 번 실행된다. ③ 재시도 의미가 없는 오류(42501)도 쓰기 없이 `ok:false`다.
+  - 수정 전: `40001: a transient lookup failure must be retried, not reported as {"code":"WIRE.INTERNAL","msg":"대상 조회 실패(sqlstate 25P02)","ok":false}`로 실패.
+  - 수정 후: 통과(`1 passed`).
+- 같은 모양이 `durable.rs`(취소 확인 `if let Ok(Some(row)) = tx.query_opt(... aip_jobs ... FOR UPDATE)`)에도 있다. 멱등 key 조회가 아니고 오류 시 조용히 반환하는 경로라 이번 범위 밖으로 두고 고치지 않았다.
+
+### 8.5 실행 결과
+
+- Linux 컨테이너: 수정 후 `db_connect_lifetime` 1, `db_query_lifetime` 2, `db_commit_lifetime` 1, 서버 단위 시험 6(`extension_config_tests`), `apply_idem_lookup_error` 1이 통과했다. `product_start_*` 2건은 `worker_launch.probe` 호출을 지우면 Linux에서 실패하고(헛통과 아님) 되돌리면 통과했다.
+- macOS(이 Mac, `CARGO_TARGET_DIR=/tmp/aip-target-ci-gap`): 위 시험과 `isolation::tests` 22건, `v4_1`, `service_flow`의 해당 시험이 모두 통과했다.
+
+### 8.6 범위 밖 발견 (고치지 않음)
+
+- `cargo clippy --manifest-path spikes/spike-v6-transport/Cargo.toml --all-targets --locked -- -D warnings`가 `tests/concurrency_probe_http.rs:616`(613fab7a에서 추가)에서 `manual RangeInclusive::contains`와 `absurd_extreme_comparisons`로 실패한다(Rust 1.100.0, Linux 컨테이너). `tools/verify.sh`가 같은 명령을 `spike-v6-transport`에 돌리므로 Verify의 clippy 단계가 이 파일 때문에 막힐 수 있다. 이 후속 작업의 파일은 이 명령에서 오류가 없었다.
+- `v14_apply`는 이 Linux 컨테이너에 `tsc`가 없어 실패한다(4.3절이 `v14_apply`·`v16_bundle`로 기록한 것과 같은 원인, CI에는 `npm ci`가 있다). `v16_bundle`은 이번에 돌리지 않았다.

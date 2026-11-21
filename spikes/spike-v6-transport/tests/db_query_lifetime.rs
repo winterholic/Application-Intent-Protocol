@@ -1,9 +1,8 @@
-#![cfg(target_os = "macos")]
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::id_wire::IdWire;
 use spike_v5_sdk::contract_fingerprint_with_all_extensions;
-use spike_v6_transport::server::{listen_with_prototype_options, ReadExtensions, ServerOptions, WorkerLang};
+use spike_v6_transport::server::{listen_with_prototype_launch, ReadExtensions, ServerOptions, WorkerIsolation, WorkerLang, WorkerLaunchConfig};
 use std::{
     fs,
     net::SocketAddr,
@@ -105,7 +104,7 @@ async fn silent_operation_sql_after_clock_respects_declared_deadlines_and_return
         }
     });
     let facts = load_str(include_str!("fixtures/write-extension.aip"), Form::A).unwrap().execution;
-    let server = listen_with_prototype_options(
+    let server = listen_with_prototype_launch(
         facts.clone(),
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().unwrap(),
@@ -113,6 +112,7 @@ async fn silent_operation_sql_after_clock_respects_declared_deadlines_and_return
         Some(ReadExtensions { lang: WorkerLang::Node, dir: path.clone() }),
         ServerOptions::default(),
         true,
+        no_sandbox(),
     )
     .await
     .unwrap();
@@ -172,6 +172,12 @@ async fn reaches(value: &AtomicUsize, count: usize) -> bool {
     .await
     .is_ok()
 }
+// The workers in these tests never start before the database answers, so the OS sandbox is not under test. The default
+// (Auto) needs sandbox-exec on macOS and bwrap on Linux; running without it lets Linux CI run the same fixture.
+fn no_sandbox() -> WorkerLaunchConfig {
+    WorkerLaunchConfig { isolation: WorkerIsolation::None, ..Default::default() }
+}
+
 async fn post(address: SocketAddr, token: &str, fp: &str, path: &str, body: Value) -> Result<Value, String> {
     let body = body.to_string();
     let mut socket = TcpStream::connect(address).await.map_err(|e| e.to_string())?;
@@ -209,7 +215,7 @@ async fn authenticated_but_silent_sql_releases_slots_and_request_owned_connectio
         }
     });
     let facts = load_str(include_str!("fixtures/write-extension.aip"), Form::A).unwrap().execution;
-    let server = listen_with_prototype_options(
+    let server = listen_with_prototype_launch(
         facts.clone(),
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().unwrap(),
@@ -217,6 +223,7 @@ async fn authenticated_but_silent_sql_releases_slots_and_request_owned_connectio
         Some(ReadExtensions { lang: WorkerLang::Node, dir: path.clone() }),
         ServerOptions::default(),
         true,
+        no_sandbox(),
     )
     .await
     .unwrap();

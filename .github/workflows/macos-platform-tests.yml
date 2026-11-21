@@ -1,0 +1,66 @@
+name: macOS platform tests
+
+# Tests that need the macOS worker sandbox (sandbox-exec / Seatbelt) have no Linux equivalent, so the Linux jobs compile them
+# out. They used to run only on a developer's Mac, which is how a regression passed Verify and the release gate (see
+# plan-docs/hardening-1.0/concurrency.md, "CI gap"). This job runs exactly the tests gated by `target_os = "macos"`.
+on:
+  # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/macos-platform-tests.yml'
+      - 'crates/aip-cli/**'
+      - 'crates/aip-service/**'
+      - 'spikes/spike-v4-worker/**'
+      - 'spikes/spike-v6-transport/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-platform-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-sandbox:
+    runs-on: macos-15
+    timeout-minutes: 50
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Install Rust stable and a disposable PostgreSQL 17
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          brew install postgresql@17
+          pgbin="$(brew --prefix postgresql@17)/bin"
+          echo "$pgbin" >> "$GITHUB_PATH"
+          "$pgbin/initdb" -D "$RUNNER_TEMP/pgdata" -U runner --auth=trust >/dev/null
+          "$pgbin/pg_ctl" -D "$RUNNER_TEMP/pgdata" -o "-h 127.0.0.1 -p 5433 -k $RUNNER_TEMP" -l "$RUNNER_TEMP/pg.log" -w start
+          "$pgbin/createdb" -h 127.0.0.1 -p 5433 -U runner aip_test_ci
+          # v4_1's deliberately unisolated probe connects to 127.0.0.1:5432. Any listener proves the port is reachable
+          # without the sandbox, so the network-denied run below has something real to be blocked from.
+          nohup python3 -c "import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', 5432)); s.listen(16); time.sleep(3000)" >/dev/null 2>&1 &
+      - name: Seatbelt profile and sandbox tests
+        run: cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
+      - name: Network-denied workers on Node and Python (v4_1)
+        run: cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --test v4_1 --locked --target-dir target
+      - name: Operation-only service with the macOS worker sandbox
+        run: cargo test -p aip-cli --test service_flow operation_only_service_preserves_principal_contract_revocation_and_deployment_fences --locked -- --nocapture
+      - name: Show PostgreSQL log on failure
+        if: failure()
+        run: tail -n 100 "$RUNNER_TEMP/pg.log"

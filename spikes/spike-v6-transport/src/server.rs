@@ -930,10 +930,11 @@ mod extension_config_tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
     async fn start_with_probe_runtime(runtime: std::path::PathBuf, dir: &ProbeDir) -> io::Result<Server> {
         let mut infrastructure = crate::infrastructure::Infrastructure::default();
         infrastructure.worker_launch.runtime_executable = Some(runtime);
+        // The OS sandbox is not under test; without this a Linux host lacking bwrap would fail startup for the wrong reason.
+        infrastructure.worker_launch.isolation = spike_v4_worker::Isolation::None;
         let mut facts =
             spike_v1_fixture::load_str(include_str!("../../spike-v1-fixture/fixture/recruitment.aip"), spike_v1_fixture::Form::A).unwrap().execution;
         facts["resources"]["Recruitment"]["extensions"]["stats"]["implementation"] = json!("probe.run");
@@ -954,7 +955,6 @@ mod extension_config_tests {
         .await
     }
 
-    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn product_start_fails_when_worker_runtime_is_missing() {
         let dir = ProbeDir::new();
@@ -962,7 +962,6 @@ mod extension_config_tests {
         assert!(result.is_err(), "product startup must reject a missing worker runtime");
     }
 
-    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn product_start_fails_when_worker_runtime_exits_nonzero() {
         use std::os::unix::fs::PermissionsExt;
@@ -1076,7 +1075,6 @@ mod extension_config_tests {
         .unwrap();
         assert!(validate_job_broker(&facts, true, Some(&broker)).is_ok());
     }
-    #[cfg(target_os = "macos")]
     #[test]
     fn rejects_an_extension_module_symlink_outside_its_directory() {
         use std::os::unix::fs::symlink;
