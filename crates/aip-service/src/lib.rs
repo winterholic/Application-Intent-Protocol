@@ -1059,7 +1059,7 @@ pub async fn run(command: Command) -> Result<Value, Value> {
             let checked = load(&file, dev_checks)?;
             let worker_extensions = worker_extensions(&checked.output.execution);
             Ok(
-                json!({"ok":true,"executionDigest":spike_v1_fixture::digest(&checked.output.execution),"advisories":checked.advisories.iter().map(|a|json!({"code":a.code,"anchor":a.anchor,"message":a.msg})).collect::<Vec<_>>(),
+                json!({"ok":true,"executionDigest":spike_v1_fixture::digest(&checked.output.execution),"advisories":checked.advisories.iter().map(|a|json!({"severity":"warning","code":a.code,"anchor":a.anchor,"message":a.msg})).collect::<Vec<_>>(),
                     "workers":{"required":!worker_extensions.is_empty(),"extensions":worker_extensions}}),
             )
         }
