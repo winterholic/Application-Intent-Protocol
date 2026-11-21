@@ -281,7 +281,19 @@ fn val_to_str(v: &Value) -> Option<String> {
     }
 }
 
+/// 암호화가 켜진 서버는 묶음 안의 compose 연산과 `refs`를 처리하지 않는다(검토 D-5, 1.0 범위 밖). 변환기가 이 연산들을 건너뛰면
+/// compose 단계의 값이 평문으로 들어가고 `refs`의 범위 id가 "0"으로 떨어지므로, 조용히 지나가게 두지 않고 요청 전체를 거절한다.
+pub fn reject_unsupported_bundle_ops(req: &Value) -> Result<(), Reject> {
+    for op in req.get("atomic").and_then(Value::as_array).into_iter().flatten() {
+        if op.get("compose").is_some() || op.get("refs").is_some() {
+            return Err(Reject { code: "WIRE.UNSUPPORTED", msg: "암호화가 켜진 서버는 묶음 안의 compose와 refs를 지원하지 않음".into() });
+        }
+    }
+    Ok(())
+}
+
 pub async fn resolve_row_ids_for_create(tx: &tokio_postgres::Transaction<'_>, facts: &Value, req: &mut Value) -> Result<(), Reject> {
+    reject_unsupported_bundle_ops(req)?;
     let Some(obj) = req.as_object_mut() else { return Ok(()) };
     let create_target = obj.get("create").and_then(Value::as_str).map(str::to_string);
     let is_atomic = obj.get("atomic").is_some();
@@ -348,6 +360,7 @@ async fn resolve_single_create_id(
 /// Encrypts encrypted field values in a write request payload using the active DEK.
 /// Also produces the blind index column value if lookup: eq is configured.
 pub fn encrypt_request_for_write(facts: &Value, req: &Value, crypto: &RuntimeCrypto, schema: &str, default_row_id: &str) -> Result<Value, Reject> {
+    reject_unsupported_bundle_ops(req)?;
     let mut encrypted_req = req.clone();
     let Some(obj) = encrypted_req.as_object_mut() else { return Ok(encrypted_req) };
     let apply_name = obj.get("apply").and_then(Value::as_str).map(str::to_string);
@@ -540,5 +553,25 @@ fn transform_single_filter(facts: &Value, res: &str, fo: &mut Map<String, Value>
         if let Some(tag) = tags.first() {
             fo.insert("value".to_string(), json!(tag));
         }
+    }
+}
+
+#[cfg(test)]
+mod bundle_op_tests {
+    use super::reject_unsupported_bundle_ops;
+    use serde_json::json;
+
+    /// D-5: an encrypting server refuses a bundle with a compose operation or `refs` instead of letting the request converter skip them.
+    #[test]
+    fn compose_and_refs_in_a_bundle_are_refused_when_encryption_is_on() {
+        for op in [
+            json!({"compose": "Order", "targets": {"ids": ["1"]}, "steps": [{"transition": "mark"}]}),
+            json!({"create": "Line", "values": {}, "refs": {"order": {"created": 0}}}),
+        ] {
+            let refused = reject_unsupported_bundle_ops(&json!({"atomic": [{"create": "Order", "values": {}}, op]})).unwrap_err();
+            assert_eq!(refused.code, "WIRE.UNSUPPORTED");
+        }
+        assert!(reject_unsupported_bundle_ops(&json!({"atomic": [{"create": "Order", "values": {}}, {"apply": "Order.mark", "target": {"ids": ["1"]}}]})).is_ok());
+        assert!(reject_unsupported_bundle_ops(&json!({"compose": "Order", "targets": {"ids": ["1"]}, "steps": []})).is_ok());
     }
 }
