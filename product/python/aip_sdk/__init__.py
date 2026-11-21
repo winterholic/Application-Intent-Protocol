@@ -450,7 +450,10 @@ class Client:
     def bundle(self, operations: list, key: Optional[str] = None, retries: int = 2) -> dict:
         """Runs exposed transitions (`{"apply": "R.t", "target": {...}}`) and exposed creates
         (`{"create": "R", "values": {...}, "refs": {"field": created(i)}}`) as one atomic request: all succeed or nothing
-        changes. A create's `refs` and an apply's `target` may name an earlier create with `created(i)`. The result is
+        changes. A create's `refs` and an apply's `target` may name an earlier create with `created(i)`. An exposed compose
+        (`{"compose": "R", "targets": {"ids": [...]}, "steps": [...]}`) is one more operation; when the bundle has one, the result
+        also carries `"ops": [{"kind", "applied": [start, end], "created": [start, end]}...]`, the slice of `applied` and `created`
+        that belongs to each operation (a compose adds one `applied` per step). The result is
         `{"ok": True, "applied": [{"changed", "unchanged"}...], "created": [{"resource", "id"}...], "tags"}` or a
         rejection. The key, lost-response recovery and `WriteUnsettled` work as for `apply`."""
         if not isinstance(operations, (list, tuple)) or not operations:

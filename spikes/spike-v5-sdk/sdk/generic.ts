@@ -87,29 +87,39 @@ export type CreateOpWithRefs<Cr extends CreateContractShape<Cr>, K extends keyof
   [N in K]: { readonly create: N; readonly values: Partial<CreateValues<Cr[N]>>; readonly refs: CreateRefs<Cr[N]> }
 }[K];
 /** 한 요청에 묶는 공개 동작: 서버가 선언한 `expose apply` 전이와 `expose create`만 고를 수 있다. 하나 이상. */
-export type BundleOp<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>> = BundleApplyRequest<A> | CreateOp<Cr> | CreateOpWithRefs<Cr>;
+export type BundleOp<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>, Cp extends ComposeContractShape<Cp> = {}> =
+  | BundleApplyRequest<A> | CreateOp<Cr> | CreateOpWithRefs<Cr>
+  // P0-D: 서버가 공개한 조합(`expose compose`)도 묶음의 연산이 된다. 단계에는 입력 슬롯이 없다(patch·expect·input 전이는 apply 연산으로 쓴다).
+  | ComposeRequest<Cp>;
 /**
  * 묶음 빌더(`client.bundle(b => { ... })`). 연산은 호출 순서대로 쌓이고 `create`가 돌려주는 핸들을 뒤 연산의 `refs`·`target`에 넣는다.
  * 핸들은 이 빌더가 만든 것만 받는다. 요청은 빌더가 끝난 뒤 한 번에 보내진다.
  */
-export interface BundleBuilder<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>> {
+export interface BundleBuilder<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>, Cp extends ComposeContractShape<Cp> = {}> {
   create<const N extends keyof Cr & string, const Rf extends CreateRefs<Cr[N]> = {}>(
     resource: N,
     values: Omit<CreateValues<Cr[N]>, keyof Rf>,
     refs?: Rf,
   ): Created<N>;
   apply<const K extends keyof A & string>(request: BundleApplyRequest<A, K> & { readonly apply: K }): void;
+  /** 서버가 공개한 조합을 묶음의 한 연산으로 더한다(P0-D). 만든 행이 여럿이라 핸들을 돌려주지 않고 뒤 연산이 가리킬 수 없다. */
+  compose<const N extends keyof Cp & string>(request: ComposeRequest<Cp, N> & { readonly compose: N }): void;
 }
-export type BundleRequest<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}> = {
-  readonly atomic: readonly [BundleOp<A, Cr>, ...BundleOp<A, Cr>[]];
+export type BundleRequest<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}> = {
+  readonly atomic: readonly [BundleOp<A, Cr, Cp>, ...BundleOp<A, Cr, Cp>[]];
 };
 /** 만든 행. `id` 열이 없는 비공개 관계 테이블은 id가 null이다. */
 export type CreatedRow<Cr extends CreateContractShape<Cr>> = {
   [N in keyof Cr & string]: { readonly resource: N; readonly id: Cr[N]["idOutput"] }
 }[keyof Cr & string];
 type AppliedRow<I> = { readonly changed: readonly I[]; readonly unchanged: readonly I[] };
-export type BundleResult<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}> =
-  | { readonly ok: true; readonly applied: readonly AppliedRow<A[keyof A]["idOutput"]>[]; readonly created: readonly CreatedRow<Cr>[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
+/**
+ * 묶음에 compose 연산이 있을 때만 오는 연산별 경계(P0-D). compose는 단계 수만큼 `applied`를, create 단계마다 대상 수만큼 `created`를 만들어
+ * 연산 번호와 항목 번호가 어긋난다. `applied`·`created`는 그 연산의 항목이 `[시작, 끝)`인 구간이다.
+ */
+export type BundleOpSpan = { readonly kind: "apply" | "create" | "compose"; readonly applied: readonly [number, number]; readonly created: readonly [number, number] };
+export type BundleResult<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}> =
+  | { readonly ok: true; readonly applied: readonly AppliedRow<A[keyof A]["idOutput"] | Cp[keyof Cp]["idOutput"]>[]; readonly created: readonly (CreatedRow<Cr> | ComposeCreated<Cp[keyof Cp]>)[]; readonly ops?: readonly BundleOpSpan[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
   | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string; readonly retry?: RetryGuidance };
 
 /** `expose compose`: 대상 목록 하나에 서버가 허용한 전이·생성 단계를 조합한다. 값은 서버가 읽은 대상 행의 경로(`item`)나 상수(`const`)다. */
@@ -134,7 +144,7 @@ export type ComposeResult<Cp extends ComposeContractShape<Cp>, K extends keyof C
   | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string; readonly retry?: RetryGuidance };
 export type PendingWrite<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}> =
   | PendingResult<A>
-  | (BundleResult<A, Cr> & { readonly key: string })
+  | (BundleResult<A, Cr, Cp> & { readonly key: string })
   | (ComposeResult<Cp> & { readonly key: string });
 
 export type DeepReadonly<T> = T extends string | number | boolean | bigint | symbol | null | undefined

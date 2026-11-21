@@ -28,14 +28,14 @@ function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>
      * 원시 요청(`{ atomic: [...] }`) 또는 빌더 함수를 받는다. 빌더의 `create`가 돌려주는 핸들은 뒤 연산의 `refs`·`target`에 넣어
      * 서버가 만든 행의 id로 풀게 한다(`bundle(b => { const o = b.create("Order", {...}); b.create("Line", {...}, { order: o }); })`).
      */
-    bundle(request: BundleRequest<A, Cr> | ((builder: BundleBuilder<A, Cr>) => void), options?: ApplyOptions): Promise<BundleResult<A, Cr>> {
-      let body: BundleRequest<A, Cr>;
+    bundle(request: BundleRequest<A, Cr, Cp> | ((builder: BundleBuilder<A, Cr, Cp>) => void), options?: ApplyOptions): Promise<BundleResult<A, Cr, Cp>> {
+      let body: BundleRequest<A, Cr, Cp>;
       try {
-        body = typeof request === "function" ? buildBundle<A, Cr>(request) : request;
+        body = typeof request === "function" ? buildBundle<A, Cr, Cp>(request) : request;
       } catch (error) {
         return Promise.reject(error);
       }
-      return client.apply(body, options) as Promise<BundleResult<A, Cr>>;
+      return client.apply(body, options) as Promise<BundleResult<A, Cr, Cp>>;
     },
     /** 서버가 공개한 조합(`expose compose`): 대상 목록에 허용된 전이·생성 단계를 조합한다. */
     compose<const K extends keyof Cp & string>(request: ComposeRequest<Cp, K> & { readonly compose: K }, options?: ApplyOptions): Promise<ComposeResult<Cp, K>> {
@@ -47,7 +47,7 @@ function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>
 }
 
 /** 빌더가 쌓은 연산을 원시 묶음 요청으로 만든다. 핸들은 `{ created: 연산번호 }`로 직렬화되고 이 빌더가 만든 것만 받는다. */
-function buildBundle<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>>(build: (builder: BundleBuilder<A, Cr>) => void): BundleRequest<A, Cr> {
+function buildBundle<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>, Cp extends ComposeContractShape<Cp>>(build: (builder: BundleBuilder<A, Cr, Cp>) => void): BundleRequest<A, Cr, Cp> {
   const ops: unknown[] = [];
   const mine = new WeakSet<object>();
   const wire = (handle: unknown): { created: number } => {
@@ -69,10 +69,13 @@ function buildBundle<A extends ApplyContractShape<A>, Cr extends CreateContractS
       const isHandle = typeof target === "object" && target !== null && mine.has(target);
       ops.push(isHandle ? { ...request, target: wire(target) } : request);
     },
+    compose(request: object) {
+      ops.push(request);
+    },
   };
-  build(builder as unknown as BundleBuilder<A, Cr>);
+  build(builder as unknown as BundleBuilder<A, Cr, Cp>);
   if (ops.length === 0) throw Object.assign(new Error("묶음에 연산이 하나는 있어야 한다"), { code: "CLIENT.PROTOCOL_ERROR" });
-  return { atomic: ops } as unknown as BundleRequest<A, Cr>;
+  return { atomic: ops } as unknown as BundleRequest<A, Cr, Cp>;
 }
 
 export type ReadEnvelope<T> = {

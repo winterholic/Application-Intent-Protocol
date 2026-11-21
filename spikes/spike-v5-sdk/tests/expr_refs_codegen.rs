@@ -23,6 +23,7 @@ resource Order {
   transition sweep { from status = "open"; allow owner = actor; to status = "swept" }
   expose create { allow owner = actor; fields owner, status }
   expose apply confirm { target id; bulk maxRows 5 }
+  expose compose { bulk maxRows 5; transitions confirm }
   expose apply sweep { target where; bulk maxRows 5 }
   expose read { select id, status; filter status.eq; budget { rows 10; depth 1; deadline 1s; cost 100 } }
 }

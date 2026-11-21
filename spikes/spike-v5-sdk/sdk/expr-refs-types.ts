@@ -2,9 +2,9 @@
 // Each `@ts-expect-error` line must be a real error. expr_refs_codegen.rs generates `./contract.ts` for its fixture definition,
 // copies this file next to `generic.ts`, checks it compiles, then removes the markers and checks that tsc reports every one.
 import type { BundleBuilder, BundleRequest, Created } from "./generic.ts";
-import type { ApplyContract, CreateContract, Id } from "./contract.ts";
+import type { ApplyContract, ComposeContract, CreateContract, Id } from "./contract.ts";
 
-declare const b: BundleBuilder<ApplyContract, CreateContract>;
+declare const b: BundleBuilder<ApplyContract, CreateContract, ComposeContract>;
 const me = "1" as Id<"Member">;
 const someProduct = "5" as Id<"Product">;
 const someOrder = "9" as Id<"Order">;
@@ -17,14 +17,17 @@ export function positive() {
   b.apply({ apply: "Order.confirm", target: order });
   b.apply({ apply: "Order.confirm", target: { ids: [someOrder] } });
   b.apply({ apply: "Product.take", target: { ids: [someProduct] }, input: { qty: 2 } });
+  // P0-D: a compose the server exposes is one more operation of the bundle (no handle comes back, nothing can refer to it)
+  b.compose({ compose: "Order", targets: { ids: [someOrder] }, steps: [{ transition: "confirm" }] });
   const typed: Created<"Order"> = order;
   void typed;
   // the raw wire form, symbols as the server stores them
-  const raw: BundleRequest<ApplyContract, CreateContract> = {
+  const raw: BundleRequest<ApplyContract, CreateContract, ComposeContract> = {
     atomic: [
       { create: "Order", values: { owner: me, status: "open" } },
       { create: "OrderLine", values: { owner: me, qty: 1 }, refs: { order: { created: 0 } } },
       { apply: "Order.confirm", target: { created: 0 } },
+      { compose: "Order", targets: { ids: [someOrder] }, steps: [{ transition: "confirm" }] },
     ],
   };
   void raw;
@@ -51,7 +54,13 @@ export function negatives() {
   b.apply({ apply: "Order.sweep", target: order });
   // @ts-expect-error `Order.nothing` is not an exposed transition
   b.apply({ apply: "Order.nothing", target: order });
-  const raw: BundleRequest<ApplyContract, CreateContract> = {
+  // @ts-expect-error `sweep` is not a step of the exposed compose
+  b.compose({ compose: "Order", targets: { ids: [someOrder] }, steps: [{ transition: "sweep" }] });
+  // @ts-expect-error a compose that the server does not expose
+  b.compose({ compose: "Product", targets: { ids: [someProduct] }, steps: [{ transition: "take" }] });
+  // @ts-expect-error a compose operation takes no `refs`
+  b.compose({ compose: "Order", targets: { ids: [someOrder] }, steps: [{ transition: "confirm" }], refs: { order: order } });
+  const raw: BundleRequest<ApplyContract, CreateContract, ComposeContract> = {
     // @ts-expect-error a symbol is `{ created: number }`, not a string
     atomic: [
       { create: "Order", values: { owner: me, status: "open" } },
