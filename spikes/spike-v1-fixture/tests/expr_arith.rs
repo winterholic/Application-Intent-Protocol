@@ -379,6 +379,42 @@ fn b2_from_and_effect_when_keep_refusing_the_same_mix() {
     assert!(got.contains("DEF.UNKNOWN_FIELD") || got.contains("DEF.PARSE") || got.contains("DEF.UNRESOLVED"), "{got}");
 }
 
+/// B-2 후속: 술어 호출은 본문이 호출 지점에서 안 보여서 `input`과 가려진 필드의 비교를 술어 안으로 옮기면 B-2의 검사를 지나간다.
+/// `allow`·`from` 어느 쪽이든 호출자가 `input`을 바꿔 가며 `WIRE.FORBIDDEN`·`WIRE.INVALID_STATE`의 경계로 가려진 값을 이분 탐색할 수 있다.
+#[test]
+fn b2_a_predicate_call_cannot_launder_the_input_comparison_with_a_hidden_field() {
+    let hidden =
+        DEF.replace("rows read when true\n  transition take", "rows read when true\n  field risk read when owner = actor\n  transition take");
+    let with = |predicates: &str, from: &str, allow: &str| {
+        format!(
+            "{predicates}\n{}",
+            hidden
+                .replace("from stock >= input.qty", from)
+                .replace("allow actor != null\n    to stock = stock - input.qty", &format!("{allow}\n    to stock = stock - input.qty"))
+        )
+    };
+    let risk = "predicate riskAtLeast(p: Product, n: Int) = p.risk >= n";
+    // 술어가 가려진 필드를 읽고 `input`을 인자로 받으면 allow와 from 모두 거절한다.
+    expect_code(&with(risk, "from stock >= input.qty", "allow riskAtLeast(this, input.qty)"), "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION");
+    expect_code(&with(risk, "from riskAtLeast(this, input.qty)", "allow actor != null"), "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION");
+    // 술어가 다른 술어를 거쳐 읽어도, 논리 연산 안에 있어도 같다.
+    let nested = format!("{risk}\npredicate viaOther(p: Product, n: Int) = riskAtLeast(p, n)");
+    expect_code(
+        &with(&nested, "from stock >= input.qty", "allow actor != null and (viaOther(this, input.qty) or stock > 1000)"),
+        "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+    );
+    // 참조 이동과 exists 안쪽도 따라간다.
+    let hop = "predicate walletCount(p: Product, n: Int) = exists Wallet where owner = p.owner and count >= n";
+    let wallet_hidden = with(hop, "from stock >= input.qty", "allow walletCount(this, input.qty)").replace(
+        "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true",
+        "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true\n  field count read when owner = actor",
+    );
+    expect_code(&wallet_hidden, "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION");
+    // 서버가 고른 상수와 견주는 술어(`input`을 받지 않음)와, `input`을 받지만 가려지지 않은 필드만 읽는 술어는 기존대로 된다.
+    facts(&with("predicate riskHigh(p: Product) = p.risk >= 3", "from stock >= input.qty", "allow riskHigh(this)"));
+    facts(&with("predicate stockAtLeast(p: Product, n: Int) = p.stock >= n", "from stock >= input.qty", "allow stockAtLeast(this, input.qty)"));
+}
+
 /// B-3: 효과 update의 앞 `f`는 효과 대상 행이다. `this.f`는 전이 행이므로 앞에 올 수 없고, 전이 행에 같은 이름이 있으면 모호하다.
 #[test]
 fn b3_effect_leading_operand_is_the_target_rows_bare_field() {

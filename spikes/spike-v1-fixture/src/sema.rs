@@ -935,23 +935,24 @@ impl<'a> Ctx<'a> {
     /// `allow`·효과 `when`의 한 비교식(`cmp`·`in`)이 `input.*`과 field read 정책 필드를 함께 읽으면 막는다.
     /// 호출자가 고른 값을 가려진 값과 견주면 `WIRE.FORBIDDEN`(또는 거절)과 성공의 경계로 가려진 값을 이분 탐색할 수 있다.
     /// 서버가 고른 상수와의 비교(한 비트)나 서로 다른 비교식의 `and`는 기존대로 허용한다. `from`은 이미 모든 hidden read를 막는다.
-    fn reject_hidden_input_compare(&mut self, v: &Value, res: &str, what: &str, sp: Span) {
+    fn reject_hidden_input_compare(&mut self, v: &Value, res: &str, what: &str, sp: Span, calls_only: bool) {
         let mut hits = vec![];
-        self.hidden_input_compares(v, res, &mut hits);
+        self.hidden_input_compares(v, res, calls_only, &mut hits);
         hits.sort();
         hits.dedup();
         for h in hits {
             self.d(
                 "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
                 format!(
-                    "{what}가 호출자의 `input`과 field read 정책이 있는 `{h}`를 같은 비교식에서 읽을 수 없음(성공·거절의 경계로 가려진 값이 추론됨)"
+                    "{what}가 호출자의 `input`과 field read 정책이 있는 `{h}`를 같은 비교식(`input`을 받는 술어 호출 안 포함)에서 읽을 수 없음(성공·거절의 경계로 가려진 값이 추론됨)"
                 ),
                 sp,
             );
         }
     }
 
-    fn hidden_input_compares(&self, v: &Value, cur: &str, out: &mut Vec<String>) {
+    /// `calls_only`는 직접 읽기를 이미 `reject_hidden_reads`가 막는 `from`용이다. 술어 호출 안쪽만 본다.
+    fn hidden_input_compares(&self, v: &Value, cur: &str, calls_only: bool, out: &mut Vec<String>) {
         fn has_input(v: &Value) -> bool {
             match v {
                 Value::Object(o) => {
@@ -963,18 +964,93 @@ impl<'a> Ctx<'a> {
         }
         match v {
             Value::Object(o) => {
-                if (o.contains_key("cmp") || o.contains_key("in")) && has_input(v) {
+                if (o.contains_key("cmp") || o.contains_key("in")) && !calls_only && has_input(v) {
                     self.hidden_reads(v, cur, out);
+                }
+                // 술어 본문은 호출 지점에서 보이지 않는다. `input`을 인자로 받는 술어가 가려진 필드를 읽으면 같은 이분 탐색이 된다.
+                if let (Some(name), Some(args)) = (o.get("call").and_then(Value::as_str), o.get("args")) {
+                    if has_input(args) {
+                        if !calls_only {
+                            self.hidden_reads(args, cur, out);
+                        }
+                        self.predicate_hidden_reads(name, &mut vec![], out);
+                    }
                 }
                 for (key, x) in o {
                     // exists 안쪽의 where는 그 resource 기준으로 읽는다.
                     match (key.as_str(), o.get("exists").and_then(Value::as_str)) {
-                        ("where", Some(inner)) => self.hidden_input_compares(x, inner, out),
-                        _ => self.hidden_input_compares(x, cur, out),
+                        ("where", Some(inner)) => self.hidden_input_compares(x, inner, calls_only, out),
+                        _ => self.hidden_input_compares(x, cur, calls_only, out),
                     }
                 }
             }
-            Value::Array(a) => a.iter().for_each(|x| self.hidden_input_compares(x, cur, out)),
+            Value::Array(a) => a.iter().for_each(|x| self.hidden_input_compares(x, cur, calls_only, out)),
+            _ => {}
+        }
+    }
+
+    /// 술어 본문이 읽는 field read 정책 필드. 매개변수 경로(`var.d`)는 매개변수 타입의 resource에서, `exists` 안쪽은 그 resource에서 따라간다.
+    /// 술어끼리 부르는 호출도 따라간다(순환은 `stack`으로 끊는다).
+    fn predicate_hidden_reads(&self, name: &str, stack: &mut Vec<String>, out: &mut Vec<String>) {
+        if stack.len() >= 8 || stack.iter().any(|seen| seen == name) {
+            return;
+        }
+        let Some(p) = self.preds.get(name).copied() else { return };
+        let vars: Vec<(String, TT)> = p.params.iter().filter_map(|(n, t)| Some((n.clone(), self.plain_type(t)?))).collect();
+        let mut sc = self.base_scope();
+        sc.vars.extend(vars.iter().cloned());
+        let Ok(body) = self.bool_of(&p.body, &sc) else { return };
+        stack.push(name.to_string());
+        self.predicate_body_hidden_reads(&body, &vars, None, stack, out);
+        stack.pop();
+    }
+
+    fn predicate_body_hidden_reads(&self, v: &Value, vars: &[(String, TT)], cur: Option<&str>, stack: &mut Vec<String>, out: &mut Vec<String>) {
+        match v {
+            Value::Object(o) => {
+                if let Some(p) = o.get("path") {
+                    let root = p["root"].as_str().unwrap_or("");
+                    let start = match root.strip_prefix("var.") {
+                        Some(var) => vars.iter().find(|(n, _)| n == var).and_then(|(_, tt)| match &tt.ty {
+                            Ty::Ref(r) => Some(r.clone()),
+                            _ => None,
+                        }),
+                        None if root == "this" => cur.map(str::to_string),
+                        None => None,
+                    };
+                    let mut at = start;
+                    for seg in p["segs"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                        let Some(here) = at.take() else { break };
+                        let Some(rs) = self.res.get(here.as_str()) else { break };
+                        if rs.field_read.iter().any(|x| x.0 == seg) {
+                            out.push(format!("{here}.{seg}"));
+                            break;
+                        }
+                        at = match self.field_tt(&here, seg) {
+                            Some(TT { ty: Ty::Ref(next), .. }) => Some(next),
+                            _ => None,
+                        };
+                    }
+                    return;
+                }
+                if let Some(inner) = o.get("exists").and_then(Value::as_str) {
+                    if let Some(w) = o.get("where") {
+                        self.predicate_body_hidden_reads(w, vars, Some(inner), stack, out);
+                    }
+                    return;
+                }
+                if let Some(name) = o.get("call").and_then(Value::as_str) {
+                    if let Some(args) = o.get("args") {
+                        self.predicate_body_hidden_reads(args, vars, cur, stack, out);
+                    }
+                    self.predicate_hidden_reads(name, stack, out);
+                    return;
+                }
+                for x in o.values() {
+                    self.predicate_body_hidden_reads(x, vars, cur, stack, out);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| self.predicate_body_hidden_reads(x, vars, cur, stack, out)),
             _ => {}
         }
     }
@@ -1337,11 +1413,12 @@ impl<'a> Ctx<'a> {
             let from = self.run(from);
             if let Some(from) = &from {
                 self.reject_hidden_reads(from, &r.name, &format!("transition `{}`의 from", t.name), t.span);
+                self.reject_hidden_input_compare(from, &r.name, &format!("transition `{}`의 from", t.name), t.span, true);
             }
             let allow = self.bool_of(&t.allow, &tsc);
             let allow = self.run(allow);
             if let Some(allow) = &allow {
-                self.reject_hidden_input_compare(allow, &r.name, &format!("transition `{}`의 allow", t.name), t.span);
+                self.reject_hidden_input_compare(allow, &r.name, &format!("transition `{}`의 allow", t.name), t.span, false);
             }
             let mut to = Map::new();
             let mut counters = false;
@@ -1813,7 +1890,7 @@ impl<'a> Ctx<'a> {
                 let m = typed(matches, "조건", &value_scope, true, self);
                 let when = when.as_ref().and_then(|condition| self.run(self.bool_of(condition, sc)));
                 if let Some(when) = &when {
-                    self.reject_hidden_input_compare(when, &r.name, &format!("update `{resource}` 효과의 when"), *span);
+                    self.reject_hidden_input_compare(when, &r.name, &format!("update `{resource}` 효과의 when"), *span, false);
                 }
                 let v = typed(values, "값", &value_scope, false, self);
                 if m.is_empty() || v.is_empty() {
