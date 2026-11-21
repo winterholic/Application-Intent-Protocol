@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -58,10 +58,11 @@ impl Diag {
     }
 
     /// The wire form of the service output. The first four fields are the historical ones; `scope`,
-    /// `help` and `explain` are additive.
+    /// `help`, `explain` and `severity` are additive. Definition diagnostics are always errors.
     pub fn json(&self) -> Value {
         let mut m = Map::new();
         m.insert("code".into(), json!(self.code));
+        m.insert("severity".into(), json!("error"));
         m.insert("message".into(), json!(self.msg));
         m.insert("line".into(), json!(self.span.line));
         m.insert("column".into(), json!(self.span.col));

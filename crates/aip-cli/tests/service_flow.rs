@@ -106,6 +106,19 @@ resource Event {
 resource Vote { fields { id: Id; event: Event } rows read when true }
 resource Metric { fields { id: Id; event: Event; amount: Int } rows read when true }
 "#;
+const DECIMAL_SUM_HTTP_APP: &str = r#"
+resource Member { fields { id: Id } rows read when true }
+actor Member
+access totalOfVisibleOrder = totalOfVisible(Order)
+resource Order {
+  fields { id: Id; title: Text }
+  rows read when true
+  expose read { select id, total, tight; sort id; budget { rows 10; depth 1; deadline 2s; cost 1000 } }
+  aggregate total: Decimal(14,2) { source Item; sourceAccess totalOfVisibleOrder; groupKey order; callerFilter none; rowOutput none; release sum(amount) }
+  aggregate tight: Decimal(12,2) { source Item; sourceAccess totalOfVisibleOrder; groupKey order; callerFilter none; rowOutput none; release sum(amount) }
+}
+resource Item { fields { id: Id; order: Order; amount: Decimal(12,2); hidden: Bool } rows read when hidden = false }
+"#;
 
 async fn command(config: &Path, args: &[&str]) -> Value {
     let mut child = Command::new(env!("CARGO_BIN_EXE_aip"));
@@ -942,6 +955,187 @@ async fn service_policy_http_pagination_ignores_hidden_middle_rows() {
     .catch_unwind()
     .await;
     fixture.cleanup().await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn decimal_sum_is_preserved_by_generated_typescript_and_python_sdks_over_pg17_http() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = format!("aip_decimal_sdk_{}", uuid::Uuid::new_v4().simple());
+    let config = dir.path().join("service.json");
+    let file = dir.path().join("decimal-sum.aip");
+    std::fs::write(&file, DECIMAL_SUM_HTTP_APP).unwrap();
+    let private = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
+    let public = private.to_public_key();
+    std::fs::write(
+        dir.path().join("jwks.json"),
+        json!({"keys":[{"kty":"RSA","kid":"current","alg":"RS256","use":"sig","n":URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())}]}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &config,
+        json!({"schema":schema,"database_url_env":"AIP_TEST_DATABASE","listen":"127.0.0.1:0","wire":"decimal","auth":{"issuer":"https://issuer.example","audience":"aip-api","jwks":{"kind":"file","path":"jwks.json"}}}).to_string(),
+    )
+    .unwrap();
+    command(&config, &["init", file.to_str().unwrap()]).await;
+    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
+    db.batch_execute(&format!(
+        "INSERT INTO {schema}.member(id) VALUES (42);
+         INSERT INTO {schema}.order(id,title) VALUES (1,'visible'),(2,'empty'),(3,'hidden-only'),(4,'overflow');
+         INSERT INTO {schema}.item(id,order_id,amount,hidden) VALUES
+           (1,1,0.10,false),(2,1,0.20,false),(3,1,100.50,false),(4,1,-50.10,false),(5,1,1000.00,true),
+           (6,3,7.00,true)"
+    ))
+    .await
+    .unwrap();
+    command(&config, &["principal", "bind", "--subject", "decimal-sdk-user", "--actor", "42"]).await;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let mut header = Header::new(Algorithm::RS256);
+    header.typ = Some("at+jwt".into());
+    header.kid = Some("current".into());
+    let key = EncodingKey::from_rsa_der(private.to_pkcs1_der().unwrap().as_bytes());
+    let token =
+        encode(&header, &json!({"iss":"https://issuer.example","aud":"aip-api","sub":"decimal-sdk-user","iat":now,"nbf":now,"exp":now+300}), &key)
+            .unwrap();
+    let mut running = None;
+    let outcome = AssertUnwindSafe(async {
+        let mut generated = Vec::new();
+        for language in ["typescript", "python"] {
+            let output = if language == "python" { dir.path().join("binding.py") } else { dir.path().join("binding.ts") };
+            let mut args = vec!["service", "gen", file.to_str().unwrap(), "--wire", "decimal", "--out", output.to_str().unwrap()];
+            if language == "python" {
+                args.extend(["--lang", "python"]);
+            }
+            let result = Command::new(env!("CARGO_BIN_EXE_aip")).args(args).output().await.unwrap();
+            assert!(result.status.success(), "{language} generation failed: {}", String::from_utf8_lossy(&result.stderr));
+            generated.push((language, output));
+        }
+        let (child, listening) = start(&config, &file).await;
+        running = Some(child);
+        let address = listening["address"].as_str().unwrap().to_owned();
+        let sdk_source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../product/sdk/index.ts");
+        for (language, binding) in generated {
+            if language == "typescript" {
+                let script = dir.path().join("decimal-sum-ts.mjs");
+                std::fs::write(&script, format!(r#"
+import assert from "node:assert/strict";
+import {{ connect }} from {};
+import {{ contract }} from {};
+const client = connect({}, {}, contract);
+const query = select => ({{read:"Order",select,sort:[{{field:"id",dir:"asc"}}]}});
+let result = await client.read(query(["id","total"]));
+assert.deepEqual(result.rows.map(row => row.total), ["50.70","0.00","0.00","0.00"]);
+assert.ok(result.rows.every(row => typeof row.total === "string"));
+result = await client.read(query(["id","tight"]));
+assert.equal(result.rows[0].tight, "50.70");
+console.log("DECIMAL_HTTP_TYPESCRIPT_OK");
+"#,
+                    serde_json::to_string(&format!("file://{}", sdk_source.display())).unwrap(),
+                    serde_json::to_string(&format!("file://{}", binding.display())).unwrap(),
+                    serde_json::to_string(&format!("http://{address}")).unwrap(),
+                    serde_json::to_string(&token).unwrap(),
+                )).unwrap();
+                let node = Command::new("node").args(["--experimental-strip-types", script.to_str().unwrap()]).output().await.unwrap();
+                assert!(node.status.success(), "generated TypeScript SDK failed: stdout={} stderr={}", String::from_utf8_lossy(&node.stdout), String::from_utf8_lossy(&node.stderr));
+                assert!(String::from_utf8_lossy(&node.stdout).contains("DECIMAL_HTTP_TYPESCRIPT_OK"));
+            } else {
+                let script = dir.path().join("decimal-sum-python.py");
+                std::fs::write(&script, format!(r#"
+from aip_sdk import AipError, connect
+from binding import CONTRACT_FINGERPRINT, read_order
+client = connect({}, {}, CONTRACT_FINGERPRINT)
+query = {{"read":"Order","select":["id","total"],"sort":[{{"field":"id","dir":"asc"}}]}}
+rows = read_order(client, query)
+assert [row["total"] for row in rows] == ["50.70","0.00","0.00","0.00"], rows
+assert all(isinstance(row["total"], str) for row in rows)
+query["select"] = ["id","tight"]
+assert read_order(client, query)[0]["tight"] == "50.70"
+print("DECIMAL_HTTP_PYTHON_OK")
+"#,
+                    serde_json::to_string(&format!("http://{address}")).unwrap(),
+                    serde_json::to_string(&token).unwrap(),
+                )).unwrap();
+                let python_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../product/python");
+                let python = Command::new("python3").args([script.to_str().unwrap()]).env("PYTHONPATH", &python_root).output().await.unwrap();
+                assert!(python.status.success(), "generated Python SDK failed: stdout={} stderr={}", String::from_utf8_lossy(&python.stdout), String::from_utf8_lossy(&python.stderr));
+                assert!(String::from_utf8_lossy(&python.stdout).contains("DECIMAL_HTTP_PYTHON_OK"));
+            }
+        }
+
+        db.batch_execute(&format!("INSERT INTO {schema}.item(id,order_id,amount,hidden) VALUES (10,4,9999999999.99,false)")).await.unwrap();
+        let edge_ts = dir.path().join("decimal-edge-ts.mjs");
+        let ts_binding = dir.path().join("binding.ts");
+        std::fs::write(&edge_ts, format!(r#"
+import assert from "node:assert/strict";
+import {{ connect }} from {};
+import {{ contract }} from {};
+const client = connect({}, {}, contract);
+const query = select => ({{read:"Order",select,sort:[{{field:"id",dir:"asc"}}]}});
+assert.equal((await client.read(query(["id","tight"]))).rows[3].tight, "9999999999.99");
+"#,
+            serde_json::to_string(&format!("file://{}", sdk_source.display())).unwrap(),
+            serde_json::to_string(&format!("file://{}", ts_binding.display())).unwrap(),
+            serde_json::to_string(&format!("http://{address}")).unwrap(),
+            serde_json::to_string(&token).unwrap(),
+        )).unwrap();
+        let edge = Command::new("node").args(["--experimental-strip-types", edge_ts.to_str().unwrap()]).output().await.unwrap();
+        assert!(edge.status.success(), "TS precision edge failed: {}", String::from_utf8_lossy(&edge.stderr));
+        let edge_py = dir.path().join("decimal-edge-python.py");
+        std::fs::write(&edge_py, format!(r#"
+from aip_sdk import connect
+from binding import CONTRACT_FINGERPRINT, read_order
+client = connect({}, {}, CONTRACT_FINGERPRINT)
+rows = read_order(client, {{"read":"Order","select":["id","tight"],"sort":[{{"field":"id","dir":"asc"}}]}})
+assert rows[3]["tight"] == "9999999999.99", rows[3]
+"#,
+            serde_json::to_string(&format!("http://{address}")).unwrap(),
+            serde_json::to_string(&token).unwrap(),
+        )).unwrap();
+        let python_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../product/python");
+        let edge_python = Command::new("python3").args([edge_py.to_str().unwrap()]).env("PYTHONPATH", &python_root).output().await.unwrap();
+        assert!(edge_python.status.success(), "Python precision edge failed: {}", String::from_utf8_lossy(&edge_python.stderr));
+
+        db.batch_execute(&format!("INSERT INTO {schema}.item(id,order_id,amount,hidden) VALUES (11,4,0.01,false)")).await.unwrap();
+        let overflow_ts = dir.path().join("decimal-overflow-ts.mjs");
+        std::fs::write(&overflow_ts, format!(r#"
+import assert from "node:assert/strict";
+import {{ connect }} from {};
+import {{ contract }} from {};
+const client = connect({}, {}, contract);
+await assert.rejects(() => client.read({{read:"Order",select:["id","tight"],sort:[{{field:"id",dir:"asc"}}]}}), error => error.code === "WIRE.OUTPUT_INVALID");
+"#,
+            serde_json::to_string(&format!("file://{}", sdk_source.display())).unwrap(),
+            serde_json::to_string(&format!("file://{}", ts_binding.display())).unwrap(),
+            serde_json::to_string(&format!("http://{address}")).unwrap(),
+            serde_json::to_string(&token).unwrap(),
+        )).unwrap();
+        let overflow = Command::new("node").args(["--experimental-strip-types", overflow_ts.to_str().unwrap()]).output().await.unwrap();
+        assert!(overflow.status.success(), "TS overflow contract failed: {}", String::from_utf8_lossy(&overflow.stderr));
+        let overflow_py = dir.path().join("decimal-overflow-python.py");
+        std::fs::write(&overflow_py, format!(r#"
+from aip_sdk import AipError, connect
+from binding import CONTRACT_FINGERPRINT, read_order
+client = connect({}, {}, CONTRACT_FINGERPRINT)
+try:
+    read_order(client, {{"read":"Order","select":["id","tight"],"sort":[{{"field":"id","dir":"asc"}}]}})
+except AipError as error:
+    assert error.code == "WIRE.OUTPUT_INVALID", error.code
+else:
+    raise AssertionError("Decimal overflow was accepted")
+"#,
+            serde_json::to_string(&format!("http://{address}")).unwrap(),
+            serde_json::to_string(&token).unwrap(),
+        )).unwrap();
+        let overflow_python = Command::new("python3").args([overflow_py.to_str().unwrap()]).env("PYTHONPATH", &python_root).output().await.unwrap();
+        assert!(overflow_python.status.success(), "Python overflow contract failed: {}", String::from_utf8_lossy(&overflow_python.stderr));
+    }).catch_unwind().await;
+    if let Some(child) = running.take() {
+        stop(child).await;
+    }
+    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
+    db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await.unwrap();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
