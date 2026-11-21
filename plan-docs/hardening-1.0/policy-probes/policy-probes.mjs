@@ -486,6 +486,110 @@ resource Doc {
       return out.join(' | ');
     },
   },
+  {
+    id: 'C9-create-forbidden-vs-unique',
+    claim: '생성 권한이 없는 호출자가 유일 제약에 걸리는 값을 넣어도 응답은 FORBIDDEN이어야 한다(권한 판정이 유일 제약보다 먼저). 공개 create와 확장 `ctx.data.create` 모두, 순차와 경합 모두.',
+    def: `actor Member
+resource Member { fields { id: Id; org: Int } rows read when true expose read { select id, org; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } } }
+resource Claim {
+  fields { id: Id; owner: Member; tag: Text(1..9) }
+  rows read when owner = actor
+  unique tag
+  expose read { select id, tag; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+  expose create { allow owner = actor; fields owner, tag }
+  extension write claimit { input { owner: Member.Id; tag: Text(1..9) } output { id: Text(0..200) } access create.Claim effect db deadline 3s implementation "x.claimit" }
+  extension write claimcatch { input { owner: Member.Id; tag: Text(1..9) } output { id: Text(0..200) } access create.Claim effect db deadline 3s implementation "x.claimcatch" }
+}`,
+    seed: `INSERT INTO $S.member(id,org) VALUES (1,1),(2,1); INSERT INTO $S.claim(id,owner_id,tag) VALUES (1,1,'secret1'); SELECT setval(pg_get_serial_sequence('$S.claim','id'), 500)`,
+    workers: `export async function claimit(input, ctx) { const id = await ctx.data.create('Claim', { owner: input.owner, tag: input.tag }); return { id: String(id) }; }
+// 확장 작성자 코드가 ctx 오류를 잡아 호출자에게 그대로 돌려주는 최악의 경우도 본다(오류의 code·message가 원인을 가르는지).
+export async function claimcatch(input, ctx) {
+  try { const id = await ctx.data.create('Claim', { owner: input.owner, tag: input.tag }); return { id: String(id) }; }
+  catch (e) { return { id: 'CAUGHT ' + (e.code ?? '') + ' ' + String(e.message ?? e).slice(0, 120) }; }
+}`,
+    run: async (s) => {
+      const pub = (owner, tag) => bundle(s, 'u2', [{ create: 'Claim', values: { owner, tag } }]);
+      const ext = (owner, tag, name = 'claimit') => apply(s, 'u2', { extension: `Claim.${name}`, input: { owner, tag } });
+      const extShow = (r) => (r.body.ok ? r.body.output.id : r.body.code);
+      const out = [];
+      // u2는 Member 1의 claim을 만들 권한이 없다(allow owner = actor). 'secret1'은 u1의 숨은 claim 값이다.
+      out.push(`public forbidden+existing=${code(await pub('1', 'secret1'))} forbidden+fresh=${code(await pub('1', 'fresh1'))}`);
+      out.push(`extension forbidden+existing=${extShow(await ext('1', 'secret1'))} forbidden+fresh=${extShow(await ext('1', 'fresh2'))}`);
+      out.push(`extension that catches the ctx error: forbidden+existing=${extShow(await ext('1', 'secret1', 'claimcatch'))} forbidden+fresh=${extShow(await ext('1', 'fresh5', 'claimcatch'))} allowed+existing=${extShow(await ext('2', 'secret1', 'claimcatch'))}`);
+      // 권한이 있을 때(owner = actor)의 유일 제약 충돌은 K1과 같은 계열이다.
+      out.push(`public allowed+existing=${code(await pub('2', 'secret1'))} allowed+fresh=${code(await pub('2', 'fresh3'))}`);
+      out.push(`extension allowed+existing=${extShow(await ext('2', 'secret1'))} allowed+fresh=${extShow(await ext('2', 'fresh4'))}`);
+      // 경합: 같은 값을 권한 없는 쪽과 있는 쪽이 동시에 보낸다. 권한 없는 쪽은 어떤 경우에도 FORBIDDEN이어야 한다.
+      const seen = new Set();
+      for (let round = 0; round < 8; round++) {
+        const tag = `race${round}`;
+        const results = await Promise.all([
+          ...[0, 1, 2].map(() => ext('1', tag)),
+          ...[0, 1, 2].map(() => ext('2', tag)),
+        ]);
+        results.slice(0, 3).forEach((r) => seen.add(extShow(r)));
+      }
+      out.push(`race forbidden-caller codes=${[...seen].sort().join(',')}`);
+      return out.join(' | ');
+    },
+  },
+  {
+    id: 'D13-external-create-forbidden-vs-unique',
+    claim: '외부 테이블 입양(`adopt-external`) 리소스의 create는 INSERT를 먼저 실행하고 allow를 나중에 평가한다. 권한 없는 호출자(member가 자신이 아님)가 유일 제약에 걸리는 값을 보내면 ALREADY_EXISTS, 걸리지 않으면 FORBIDDEN이라 숨은 행의 존재를 알아낸다.',
+    external: {
+      sourceSchema: 'ext_src',
+      sql: `DROP SCHEMA IF EXISTS ext_src CASCADE; CREATE SCHEMA ext_src;
+CREATE TABLE ext_src.members(member_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, org int NOT NULL DEFAULT 1);
+CREATE TABLE ext_src.claims(claim_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, member_id bigint NOT NULL REFERENCES ext_src.members(member_id), tag text NOT NULL UNIQUE, status text NOT NULL DEFAULT 'open');
+INSERT INTO ext_src.members(org) VALUES (1),(1);
+INSERT INTO ext_src.claims(member_id,tag,status) VALUES (1,'secret1','open');`,
+    },
+    def: `actor Members
+resource Members { fields { id: Id; org: Int default database } rows read when true
+  expose read { select id, org; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } } }
+resource Claims {
+  fields { id: Id; member: Members; tag: Text; status: Text default database }
+  rows read when member = actor
+  expose read { select id, tag, status; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+  expose create { allow member = actor; fields member, tag }
+}`,
+    seed: '',
+    quiet: true,
+    run: async (s) => {
+      const create = (member, tag) => bundle(s, 'u2', [{ create: 'Claims', values: { member, tag } }]);
+      // u2는 Members 2다. Members 1의 claim을 만들 권한이 없다(`allow member = actor`). 'secret1'은 Members 1의 숨은 claim 값이다.
+      const out = [`forbidden+existing=${code(await create('1', 'secret1'))}`, `forbidden+fresh=${code(await create('1', 'fresh1'))}`];
+      out.push(`allowed+existing=${code(await create('2', 'secret1'))}`, `allowed+fresh=${code(await create('2', 'fresh2'))}`);
+      return out.join(' ');
+    },
+  },
+  {
+    id: 'K4-external-create-allow-reads-default-field',
+    claim: 'D13과 같지만 allow가 생략한 `default database` 필드(`status`)를 읽는다. 그 필드의 값은 INSERT 뒤에야 알 수 있어 INSERT 전 판정이 안 된다. 수정 뒤에도 남는 좁은 경우.',
+    external: {
+      sourceSchema: 'ext_src',
+      sql: `DROP SCHEMA IF EXISTS ext_src CASCADE; CREATE SCHEMA ext_src;
+CREATE TABLE ext_src.members(member_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, org int NOT NULL DEFAULT 1);
+CREATE TABLE ext_src.claims(claim_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, member_id bigint NOT NULL REFERENCES ext_src.members(member_id), tag text NOT NULL UNIQUE, status text NOT NULL DEFAULT 'open');
+INSERT INTO ext_src.members(org) VALUES (1),(1);
+INSERT INTO ext_src.claims(member_id,tag,status) VALUES (1,'secret1','open');`,
+    },
+    def: `actor Members
+resource Members { fields { id: Id; org: Int default database } rows read when true
+  expose read { select id, org; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } } }
+resource Claims {
+  fields { id: Id; member: Members; tag: Text; status: Text default database }
+  rows read when member = actor
+  expose read { select id, tag, status; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+  expose create { allow member = actor and status = "open"; fields member, tag }
+}`,
+    seed: '',
+    quiet: true,
+    run: async (s) => {
+      const create = (member, tag) => bundle(s, 'u2', [{ create: 'Claims', values: { member, tag } }]);
+      return `forbidden+existing=${code(await create('1', 'secret1'))} forbidden+fresh=${code(await create('1', 'fresh1'))} allowed+existing=${code(await create('2', 'secret1'))} allowed+fresh=${code(await create('2', 'fresh2'))}`;
+    },
+  },
   // 알려진 한계(문서화된 존재 노출 계열). 고치지 않고 policy.md에 선택지만 적었다.
   {
     id: 'K1-unique-hidden-field',
@@ -555,14 +659,14 @@ for (const sc of scenarios) {
   n++;
   let s;
   try {
-    s = await setup(sc.id.toLowerCase().replace(/[^a-z0-9]/g, '_'), sc.def, sc.seed, { u1: 1, u2: 2, v1: 10 }, sc.workers ? { workers: true, mjs: sc.workers } : {});
+    s = await setup(sc.id.toLowerCase().replace(/[^a-z0-9]/g, '_'), sc.def, sc.seed, { u1: 1, u2: 2, v1: 10 }, sc.workers ? { workers: true, mjs: sc.workers } : sc.external ? { external: sc.external } : {});
   } catch (e) {
     const m = String(e.message).match(/DEF\.[A-Z_]+/g) ?? [];
     console.log(`${sc.id.padEnd(34)} REJECTED ${[...new Set(m)].filter((c) => c !== 'DEF.INVALID_DEFINITION').join(',') || e.message.slice(0, 120)}`);
     continue;
   }
   try {
-    console.log(`${sc.id.padEnd(34)} ${sc.id[0] === 'D' ? 'RECOVERED ' : ''}${await sc.run(s)}`);
+    console.log(`${sc.id.padEnd(34)} ${sc.id[0] === 'D' && !sc.quiet ? 'RECOVERED ' : ''}${await sc.run(s)}`);
   } finally {
     s.stop();
   }

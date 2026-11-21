@@ -10,6 +10,7 @@ D9-compose-copy                    REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANS
 D10-effect-copy                    REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
 D11-access-guard                   REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
 D12-operation-allow                REJECTED DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION
+D13-external-create-forbidden-vs-unique forbidden+existing=WIRE.FORBIDDEN forbidden+fresh=WIRE.FORBIDDEN allowed+existing=WIRE.ALREADY_EXISTS allowed+fresh=ok
 C1-tenant-existence                create ref=same apply=same mixed targets=same filter owner.eq=same note owner=same patch ref=same
 C2-bundle-created-refs             refs=WIRE.MISSING_TARGET target.created=WIRE.MISSING_TARGET
 C3-extension-ctx                   readHidden(1)={"rows":[{"id":"1","org":1,"risk":null}] | filterHidden(1)=WIRE.EXTENSION_ERROR | readForeign(1)={"rows":[]} | readNotGranted(1)=WIRE.EXTENSION_ERROR | applyInternal(2)=WIRE.EXTENSION_ERROR | applyAllowed(1)=WIRE.EXTENSION_ERROR | applyAllowed(2)={"changed":["2"],"unchanged":[]}
@@ -18,7 +19,9 @@ C5-cursor-filter-sort              after+risk=WIRE.BAD_CURSOR sort risk=WIRE.SOR
 C6-idempotency-key-scope           u1=ok v1 same body=WIRE.MISSING_TARGET (not a replay of u1's changed:[1]: true) v1 other body=ok
 C7-read-extension-ctx-read         readHidden={"rows":[{"id":"1","risk":null}]} | filterHidden=WIRE.EXTENSION_ERROR | foreignTenant={"rows":[]} | foreignById={"rows":[]} | unexposed=WIRE.EXTENSION_ERROR | traverseOnly=WIRE.EXTENSION_ERROR | notInSelect=WIRE.EXTENSION_ERROR | overBudget=WIRE.EXTENSION_ERROR | sortNotAllowed=WIRE.EXTENSION_ERROR | filterOpNotAllowed=WIRE.EXTENSION_ERROR | unknownKey=WIRE.EXTENSION_ERROR | publicSame=true | foreignVsMissingInputId=true
 C8-read-extension-other-ops        declared={"value":1} | rebound=WIRE.EXTENSION_ERROR | undeclared=WIRE.EXTENSION_ERROR | apply=WIRE.EXTENSION_ERROR | create=WIRE.EXTENSION_ERROR | jobs=WIRE.EXTENSION_ERROR
+C9-create-forbidden-vs-unique      public forbidden+existing=WIRE.FORBIDDEN forbidden+fresh=WIRE.FORBIDDEN | extension forbidden+existing=WIRE.EXTENSION_ERROR forbidden+fresh=WIRE.EXTENSION_ERROR | extension that catches the ctx error: forbidden+existing=WIRE.EXTENSION_ERROR forbidden+fresh=WIRE.EXTENSION_ERROR allowed+existing=WIRE.EXTENSION_ERROR | public allowed+existing=WIRE.ALREADY_EXISTS allowed+fresh=ok | extension allowed+existing=WIRE.ALREADY_EXISTS allowed+fresh=505 | race forbidden-caller codes=WIRE.EXTENSION_ERROR,WIRE.WORKER_BUSY
 K1-unique-hidden-field             code=1:ok code=4242:WIRE.ALREADY_EXISTS
 K2-literal-increment-hidden-range  successes before BAD_VALUE=37 => hidden risk was 63
 K3-fk-delete-hidden-child          parent-with-hidden-child=WIRE.REFERENCE_CONFLICT plain-parent=ok
-23 scenarios
+K4-external-create-allow-reads-default-field forbidden+existing=WIRE.ALREADY_EXISTS forbidden+fresh=WIRE.FORBIDDEN allowed+existing=WIRE.ALREADY_EXISTS allowed+fresh=ok
+26 scenarios

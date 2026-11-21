@@ -10,6 +10,7 @@ D9-compose-copy                    RECOVERED cart.sku via read="SECRET-SKU-9" or
 D10-effect-copy                    RECOVERED u2 reads Log=[{"id":"1","val":37}]
 D11-access-guard                   RECOVERED largest n that passes the guard = 5
 D12-operation-allow                RECOVERED n=0:ok n=37:ok n=38:WIRE.ACCESS_DENIED
+D13-external-create-forbidden-vs-unique RECOVERED forbidden+existing=WIRE.ALREADY_EXISTS forbidden+fresh=WIRE.FORBIDDEN allowed+existing=WIRE.ALREADY_EXISTS allowed+fresh=ok
 C1-tenant-existence                create ref=same apply=same mixed targets=same filter owner.eq=same note owner=same patch ref=same
 C2-bundle-created-refs             refs=WIRE.MISSING_TARGET target.created=WIRE.MISSING_TARGET
 C3-extension-ctx                   readHidden(1)={"rows":[{"id":"1","org":1,"risk":null}] | filterHidden(1)=WIRE.EXTENSION_ERROR | readForeign(1)={"rows":[]} | readNotGranted(1)=WIRE.EXTENSION_ERROR | applyInternal(2)=WIRE.EXTENSION_ERROR | applyAllowed(1)=WIRE.EXTENSION_ERROR | applyAllowed(2)={"changed":["2"],"unchanged":[]}
@@ -19,4 +20,3 @@ C6-idempotency-key-scope           u1=ok v1 same body=WIRE.MISSING_TARGET (not a
 K1-unique-hidden-field             code=1:ok code=4242:WIRE.ALREADY_EXISTS
 K2-literal-increment-hidden-range  successes before BAD_VALUE=37 => hidden risk was 63
 K3-fk-delete-hidden-child          parent-with-hidden-child=WIRE.REFERENCE_CONFLICT plain-parent=ok
-21 scenarios
