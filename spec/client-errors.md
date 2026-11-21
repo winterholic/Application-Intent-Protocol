@@ -2,7 +2,7 @@
 
 > 이 문서는 `spikes/spike-v6-transport/src/client_codes.rs`의 레지스트리에서 생성된다. 손으로 고치지 않는다. 다시 만들려면 `AIP_UPDATE_GOLDEN=1 cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test client_codes`를 실행한다.
 
-TypeScript 클라이언트와 Python SDK가 서버 응답과 무관하게 스스로 올리는 오류의 `code`다. 서버가 보낸 거부는 `WIRE.*` 코드를 그대로 가지므로(`wire-errors.md`), 오류 하나의 `code`로 어느 쪽이 실패를 만들었는지 알 수 있다.
+TypeScript 클라이언트와 Python SDK가 서버 응답과 무관하게 스스로 올리는 오류의 `code`다. 서버가 보낸 거부는 `WIRE.*` 코드를 그대로 가지므로(`wire-errors.md`), 오류 하나의 `code`로 어느 쪽이 실패를 만들었는지 알 수 있다. `CLIENT.INVALID_TOKEN`, `CLIENT.PROTOCOL_ERROR`, `CLIENT.WRITE_UNSETTLED`, `CLIENT.SCOPE_CONFLICT`는 두 SDK가 모두 올린다. WebSocket 구독과 job 클라이언트의 `CLIENT.AUTH_TIMEOUT`, `CLIENT.NETWORK_ERROR`, `CLIENT.NOT_DURABLE`, `CLIENT.OFFLINE`, `CLIENT.SERVICE_UNAVAILABLE`는 TypeScript만 올린다(Python SDK에는 WebSocket과 이 job 검사가 없다).
 
 모든 AIP 오류 코드는 `영역.이름` 형식이다. 이 문서의 영역은 `CLIENT`이고, 정의 검사기의 `DEF` 코드는 [definition-diagnostics.md](definition-diagnostics.md), 제품 HTTP API의 `WIRE` 코드는 [wire-errors.md](wire-errors.md), PoC의 `POC` 코드는 [diagnostics.md](diagnostics.md)에 있다. 2026-10-13 이전에는 접두 없는 이름(`PROTOCOL_ERROR`)이었다. 조회: `aip explain-code <CODE>`.
 

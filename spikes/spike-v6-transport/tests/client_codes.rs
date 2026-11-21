@@ -81,3 +81,22 @@ fn spec_client_errors_is_generated_from_the_registry() {
     let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
     assert!(on_disk == generated, "spec/client-errors.md differs from the registry (AIP_UPDATE_GOLDEN=1 regenerates it)");
 }
+
+/// The document says which SDK raises which code. The four shared codes must be in both sources (a registry entry used by
+/// only one SDK would pass the union check above, which is how the TypeScript classes lost `code`).
+#[test]
+fn the_shared_codes_are_raised_by_both_sdks() {
+    let sources = sdk_sources();
+    let literals = |file: &str| -> BTreeSet<String> {
+        sources.iter().filter(|(name, _)| name == file).flat_map(|(_, text)| client_literals(text)).collect()
+    };
+    let typescript = literals("transport.ts");
+    let python = literals("aip_sdk/__init__.py");
+    for code in ["CLIENT.INVALID_TOKEN", "CLIENT.PROTOCOL_ERROR", "CLIENT.WRITE_UNSETTLED", "CLIENT.SCOPE_CONFLICT"] {
+        assert!(typescript.contains(code), "{code} is not raised by the TypeScript client");
+        assert!(python.contains(code), "{code} is not raised by the Python SDK");
+    }
+    for code in ["CLIENT.AUTH_TIMEOUT", "CLIENT.NETWORK_ERROR", "CLIENT.NOT_DURABLE", "CLIENT.OFFLINE", "CLIENT.SERVICE_UNAVAILABLE"] {
+        assert!(!python.contains(code), "{code} is documented as TypeScript only but the Python SDK raises it");
+    }
+}
