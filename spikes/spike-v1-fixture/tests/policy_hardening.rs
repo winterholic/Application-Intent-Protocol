@@ -82,3 +82,23 @@ fn the_actor_root_is_checked_like_this_for_hidden_fields() {
     accepted(&apply_t("transition t { from true; allow actor.score >= 3; to flag = true }"));
     accepted(&with_input("actor.org >= input.n", "actor.org = 1"));
 }
+
+/// PG17 serve 재현: 효과 `create Log { val = this.risk }`가 가려진 risk(37)를 호출자가 읽는 `Log.val`에 복사했다.
+/// 효과의 create·update 값, update·delete의 대상 조건 모두 전이 `to`와 같은 복사·비교 통로다.
+#[test]
+fn effects_cannot_copy_or_match_a_hidden_field() {
+    let with_effect = |effect: &str| apply_t(&format!("transition t {{ from true; allow actor != null; to flag = true\n {effect} }}"));
+    for effect in [
+        "create Log { owner = this.owner; val = this.risk }",
+        "create Log { owner = this.owner; val = 1; flag = big(this) }",
+        "update Log where owner = this.owner { val = this.risk }",
+        "update Log where owner = this.owner { flag = big(this) }",
+        "update Log where val = this.risk { flag = true }",
+        "delete Log where val = this.risk",
+    ] {
+        rejected(&with_effect(effect));
+    }
+    // 가려지지 않은 필드 복사와 `when`의 한 비트 상수 비교는 기존대로 된다.
+    accepted(&with_effect("create Log { owner = this.owner; val = this.cap }"));
+    accepted(&with_effect("update Log when big(this) where owner = this.owner { val = 1 }"));
+}

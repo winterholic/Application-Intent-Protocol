@@ -1845,6 +1845,8 @@ impl<'a> Ctx<'a> {
                         }
                     });
                     if let Some(val) = self.run(res) {
+                        // 가려진 필드를 읽는 값은 호출자가 읽는 행으로 복사된다.
+                        self.reject_hidden_reads(&val, &r.name, &format!("create `{resource}.{f}` 효과의 값"), *span);
                         vals.insert(f.clone(), val);
                     }
                 }
@@ -1893,6 +1895,8 @@ impl<'a> Ctx<'a> {
                             }
                         });
                         if let Some(val) = cx.run(res) {
+                            // 값은 복사 통로이고 대상 조건은 일치 여부(전이 성공·실패)로 가려진 값을 드러낸다.
+                            cx.reject_hidden_reads(&val, &r.name, &format!("update `{resource}.{f}` 효과의 {what}"), *span);
                             out.insert(f.clone(), val);
                         }
                     }
@@ -1960,6 +1964,7 @@ impl<'a> Ctx<'a> {
                             }
                         });
                         if let Some(val) = cx.run(res) {
+                            cx.reject_hidden_reads(&val, &r.name, &format!("delete `{resource}.{f}` 효과의 {what}"), *span);
                             out.insert(f.clone(), val);
                         }
                     }
