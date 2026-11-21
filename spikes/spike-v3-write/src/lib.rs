@@ -1935,17 +1935,66 @@ pub fn bundle_plan<'a>(facts: &'a Value, ops: &'a [Value], knobs: &Knobs, wire: 
     Ok(plan)
 }
 
-/// A create policy can take FOR SHARE on a referenced row that a later apply will update.
+/// Write locks a later operation will need on rows an earlier create references, keyed by the operation that needs them.
+struct ReferenceLocks<'a> {
+    /// Rows a later `target.ids` apply or `compose` names: (resource, id) → (last operation needing it, strongest lock).
+    rows: BTreeMap<(&'a str, EntityId), (usize, &'static str)>,
+    /// A later `target.where` apply finds its rows by query, so any row of the resource may be one: resource → same pair.
+    resources: BTreeMap<&'a str, (usize, &'static str)>,
+}
+
+fn reserve<K: Ord>(locks: &mut BTreeMap<K, (usize, &'static str)>, key: K, index: usize, lock: &'static str) {
+    locks
+        .entry(key)
+        .and_modify(|(last, strongest): &mut (usize, &str)| {
+            *last = index;
+            if lock == " FOR UPDATE OF t" {
+                *strongest = lock;
+            }
+        })
+        .or_insert((index, lock));
+}
+
+impl ReferenceLocks<'_> {
+    /// The lock the create at `at` takes on the row it references, so the update that follows finds the row already locked.
+    fn for_create(&self, at: usize, resource: &str, id: EntityId) -> &'static str {
+        let rows = self.rows.get(&(resource, id)).filter(|(last, _)| at < *last);
+        let resources = self.resources.get(resource).filter(|(last, _)| at < *last);
+        match (rows, resources) {
+            (None, None) => "",
+            (Some((_, lock)), None) | (None, Some((_, lock))) => lock,
+            (Some((_, row)), Some((_, resource))) => {
+                if *row == " FOR UPDATE OF t" || *resource == " FOR UPDATE OF t" {
+                    " FOR UPDATE OF t"
+                } else {
+                    row
+                }
+            }
+        }
+    }
+}
+
+/// A create policy can take FOR SHARE on a referenced row that a later apply or compose will update.
 /// Reserve the write lock in the existing visibility query, before evaluating that create policy.
 /// Keep each operation's checks and writes in the requested order.
-fn bundle_reference_locks<'a>(facts: &'a Value, ops: &[Value], knobs: &Knobs, wire: IdWire) -> BTreeMap<(&'a str, EntityId), (usize, &'static str)> {
-    let mut locks = BTreeMap::new();
+fn bundle_reference_locks<'a>(facts: &'a Value, ops: &[Value], plan: &[OpPlan<'a>], knobs: &Knobs, wire: IdWire) -> ReferenceLocks<'a> {
+    let mut locks = ReferenceLocks { rows: BTreeMap::new(), resources: BTreeMap::new() };
     if knobs.skip_row_lock || knobs.skip_policy_lock {
         return locks;
     }
     let Some(first_create) = ops.iter().position(|op| op.get("create").is_some()) else { return locks };
     for (index, op) in ops.iter().enumerate().skip(first_create + 1) {
         let Some(request) = op.as_object() else { continue };
+        if let Some(composed) = plan.get(index).and_then(|planned| planned.compose.as_ref()) {
+            // `compose_exec` locks every target with the strongest mode any of its transition steps needs.
+            let transitions: Vec<&str> =
+                composed.steps.iter().filter_map(|step| if let Step::Tr(transition, _) = step { Some(*transition) } else { None }).collect();
+            let lock = row_lock(facts, composed.res, &transitions);
+            for id in &composed.ids {
+                reserve(&mut locks.rows, (composed.res, *id), index, lock);
+            }
+            continue;
+        }
         let Some(name) = request.get("apply").and_then(Value::as_str) else { continue };
         let Ok((res, tr, expose)) = exposed(facts, name) else { continue };
         if refuse_internal(expose, knobs, request).is_err()
@@ -1954,18 +2003,15 @@ fn bundle_reference_locks<'a>(facts: &'a Value, ops: &[Value], knobs: &Knobs, wi
         {
             continue;
         }
-        let Ok(TargetSpec::Ids(ids)) = parse_target(facts, res, expose, &op["target"], wire) else { continue };
         let lock = row_lock(facts, res, &[tr]);
-        for id in ids {
-            locks
-                .entry((res, id))
-                .and_modify(|(last, strongest): &mut (usize, &str)| {
-                    *last = index;
-                    if lock == " FOR UPDATE OF t" {
-                        *strongest = lock;
-                    }
-                })
-                .or_insert((index, lock));
+        match parse_target(facts, res, expose, &op["target"], wire) {
+            Ok(TargetSpec::Ids(ids)) => {
+                for id in ids {
+                    reserve(&mut locks.rows, (res, id), index, lock);
+                }
+            }
+            Ok(TargetSpec::Where(_)) => reserve(&mut locks.resources, res, index, lock),
+            Err(_) => {}
         }
     }
     locks
@@ -1981,7 +2027,7 @@ async fn bundle_run(
     wire: IdWire,
 ) -> Result<BundleResult, Reject> {
     let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![], ops: vec![] };
-    let reference_locks = bundle_reference_locks(facts, ops, knobs, wire);
+    let reference_locks = bundle_reference_locks(facts, ops, plan, knobs, wire);
     // 연산 번호 → 그 연산이 만든 행의 id. create가 아니거나 id를 못 돌려준 연산은 None이다(계획 단계가 가리키지 못하게 막았다).
     let mut made: Vec<Option<EntityId>> = Vec::with_capacity(ops.len());
     for (at, op) in ops.iter().enumerate() {
@@ -2043,10 +2089,7 @@ async fn bundle_run(
                 let referenced = ops[*i]["create"].as_str().unwrap_or("");
                 row.push((field.clone(), Src::Lit(id.to_string(), id_kind(facts, referenced))));
             }
-            ensure_refs_readable(tx, facts, res, &row, caller, knobs, |referenced, id| {
-                reference_locks.get(&(referenced, id)).filter(|(last_apply, _)| at < *last_apply).map_or("", |(_, lock)| *lock)
-            })
-            .await?;
+            ensure_refs_readable(tx, facts, res, &row, caller, knobs, |referenced, id| reference_locks.for_create(at, referenced, id)).await?;
             let id = create_row(tx, facts, res, &row, caller, knobs).await?;
             out.created += 1;
             out.created_rows.push((res.to_string(), id));
