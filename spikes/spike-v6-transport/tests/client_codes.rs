@@ -87,9 +87,8 @@ fn spec_client_errors_is_generated_from_the_registry() {
 #[test]
 fn the_shared_codes_are_raised_by_both_sdks() {
     let sources = sdk_sources();
-    let literals = |file: &str| -> BTreeSet<String> {
-        sources.iter().filter(|(name, _)| name == file).flat_map(|(_, text)| client_literals(text)).collect()
-    };
+    let literals =
+        |file: &str| -> BTreeSet<String> { sources.iter().filter(|(name, _)| name == file).flat_map(|(_, text)| client_literals(text)).collect() };
     let typescript = literals("transport.ts");
     let python = literals("aip_sdk/__init__.py");
     for code in ["CLIENT.INVALID_TOKEN", "CLIENT.PROTOCOL_ERROR", "CLIENT.WRITE_UNSETTLED", "CLIENT.SCOPE_CONFLICT"] {

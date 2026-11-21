@@ -76,7 +76,8 @@ Core의 자동 tenant 격리, search, publishable, consent, subscribe 같은 기
 | `/read`, `/apply`(전이·묶음·조합), `/status`에서 헤더 없음 | `WIRE.CONTRACT_REQUIRED` | 실행 |
 | 같은 경로에서 소문자 16진수 64자리가 아닌 값(대문자 16진수 포함) | `WIRE.BAD_REQUEST` | 실행 |
 | 같은 경로에서 형식은 맞고 서버와 다른 지문 | `WIRE.CONTRACT_MISMATCH` | 실행 |
-| object API(`/objects/*`), RAG API(`/rag/*`), 쓰기 확장 `/apply`에서 헤더 없음 | `WIRE.CONTRACT_MISMATCH`(`CONTRACT_REQUIRED`가 아니다) | 코드 확인만, 실행하지 않음 |
+| object API(`/objects/*`), RAG API(`/rag/*`), 관리형 `/jobs/*`·`/files/*`·`/events/*`·`/messages/*`에서 헤더 없음 | `WIRE.CONTRACT_MISMATCH`(`CONTRACT_REQUIRED`가 아니다) | 실행(인프라가 설정되지 않은 서버에서 헤더를 맞게 주면 `WIRE.NOT_AVAILABLE`이라 헤더 검사가 먼저 실행된다) |
+| 쓰기 확장 `/apply`에서 헤더 없음 | `WIRE.CONTRACT_MISMATCH` | 코드 확인만, 실행하지 않음 |
 
 직접 HTTP를 호출하는 클라이언트는 두 코드를 같은 방식으로 처리하면 된다. 서버의 지문을 얻어 헤더에 넣거나 binding을 다시 생성한다. 생성 binding과 SDK는 헤더를 자동으로 보낸다. 이 문서는 1.0의 현재 동작을 기록하며 코드는 바꾸지 않았다.
 
