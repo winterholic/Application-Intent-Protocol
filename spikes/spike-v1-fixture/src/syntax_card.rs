@@ -196,6 +196,7 @@ pub fn render_markdown() -> String {
          - `aggregate`에는 `sourceAccess`가 필요하다. 원본 행의 읽기 정책을 물려받지 않는다. `count`는 공개 count 계약을 따른다(아래 \"공개 count 계약\").\n\
          - 필드 읽기 정책(`field ... read when`)이 있는 필드는 filter·sort·집계에 쓸 수 없다.\n\
          - 필드 읽기 정책이 있는 필드는 전이의 `from`, `to`의 값 식, `repeat unchanged`가 걸린 `to` 대상에도 쓸 수 없다(`DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION`). 결과로 가려진 값이 추론되기 때문이다. `allow`와 `repeat unchanged` 없는 `to` 쓰기는 가능하다.\n\
+         - 같은 금지는 술어 호출 안(`from big(this)`, `to flag = big(this)`), `actor.*` 경로, 효과 `create`·`update`의 값과 `update`·`delete`의 대상 조건, compose `create ... from` 출처, `sameScope`에도 적용된다. 호출자가 정하는 값(`input`, 쓰기 요청의 새 행 값, `patch`로 쓰는 필드)을 가려진 필드와 한 조건에서 견주는 것도 `allow`, 효과 `when`, `expose create`의 `allow`, `check`, operation `allow`, 집계 `where`와 `sourceAccess` guard에서 막는다(성공·거절의 경계로 가려진 값이 이분 탐색되기 때문). 호출자가 고르지 않은 서버 상수와의 한 비트 비교는 `allow`·`when`에서 허용한다.\n\
          - `unique`·`limit`·`invariant` 위반(`WIRE.ALREADY_EXISTS`, `WIRE.INVARIANT_VIOLATED`)은 호출자가 볼 수 없는 행과 충돌해도 같은 코드로 실패한다. 존재는 알려도 오류 본문에 그 행의 id나 값은 싣지 않는다.\n\
          - `fields` 안에서 다른 resource를 가리키는 타입은 참조 `X` 하나뿐이다(외래 키가 생긴다). `X.Id`는 `input`·`access` 인자·operation 입출력처럼 DB 열이 아닌 자리에서만 쓰며, `fields` 안에서는 정의 오류(`DEF.ID_FIELD_NEEDS_REFERENCE`)다. 기본 키는 숫자 `id: Id`(기본) 또는 UUID `id: Uuid`로 선언하며 `id: Item.Id`는 같은 오류다.\n\
          - 다른 행이 없음에 의존하는 `allow`·`from`(`not exists`, predicate 안과 중첩 포함)이나 그런 `check`가 걸린 전이·create는 서버가 SERIALIZABLE 트랜잭션으로 실행하고, 직렬화 실패·교착은 같은 요청을 서버가 최대 3회 다시 실행한다. 유일성·정원이 목적이면 `unique`나 `limit`과 `invariant`가 더 싸다.\n\

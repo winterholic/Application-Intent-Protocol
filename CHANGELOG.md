@@ -10,6 +10,7 @@
 - 문서: [1.0 지원 범위](product/SUPPORT.md)(지원 11, 조건부 7, 제외 1, PostgreSQL 17 한정, 공개 count, 계약 헤더 오류 코드), [표현력 한계와 확장 우회](product/LIMITS.md)(E1~E9), COMPATIBILITY의 1.0 호환 약속과 정의 검사 변경.
 
 ### Changed
+- **호환 변경(정의 검사 강화): 숨겨진 필드(`field ... read when`)의 값이 다른 경로로 호출자에게 건너가는 정의를 `DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION`으로 거부한다.** 술어 호출 안과 `actor.*` 경로를 `from`·`to`가 읽는 것, 효과 create·update 값과 update·delete 대상 조건, compose `create ... from` 출처, `sameScope`, 그리고 호출자가 정하는 값(`input`, `expose create`의 새 행 값, `patch` 필드)을 `expose create` allow·`check`·operation allow·집계 `where`·집계 `sourceAccess` guard에서 가려진 필드와 견주는 것이다. 모두 PostgreSQL 17 serve에서 가려진 값을 복원한 반례다. 저장소의 `.aip` 정의 68개는 새로 거부되지 않는다. 근거와 판정은 [plan-docs/hardening-1.0/policy.md](plan-docs/hardening-1.0/policy.md).
 - `tools/verify.sh`의 엔진 clippy·test 목록에 `spike-v11-dev-checks`를 추가했다(제품 `load` 경로가 호출하는 엔진).
 - README 맨 위에 1.0 상태를 명시했다: 정식 경로는 `aip service`, `.aipoc`는 PoC, tenant 자동 격리는 1.0 제외. 시작 가이드는 저장소 checkout 없이 릴리스 묶음(`AIP_HOME`)만으로 따라 하도록 고치고, 참조 열 이름 규칙(`<필드>_id`), `Time` 출력 표기, 소스 빌드의 SDK 도구 준비, `PG*` 환경 변수와 release 빌드의 관계를 적었다.
 
