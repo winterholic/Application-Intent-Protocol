@@ -36,7 +36,7 @@ r=await ap({apply:'Item.finish2',target:{ids:[ids.cherry]}}); console.log('finis
 console.log('--target where'); r=await ap({apply:'Item.finish',target:{where:[{field:'name',op:'eq',value:'d_e'}]}}); console.log(short(r));
 console.log('--bulk over'); r=await ap({apply:'Item.finish2',target:{ids:['1','2','3','4','5','6']}}); console.log(short(r));
 console.log('--delete'); r=await ap({apply:'Item.drop',target:{ids:[ids.np??ids.zz??ids.Apple2]}}); console.log(short(r));
-console.log('--sum overflow'); 
+console.log('--sum overflow');
 const many=Array.from({length:11},(_,i)=>mk('big'+i,{price:'999.99'}));
 r=await ap({atomic:many}); console.log('create 11 big',short(r));
 r=await rd({read:'Member',select:['id','priceSum'],filter:[{field:'id',op:'eq',value:'42'}]}); console.log('priceSum Decimal(6,2)',short(r));
