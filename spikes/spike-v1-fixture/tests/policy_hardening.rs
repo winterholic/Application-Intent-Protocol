@@ -217,3 +217,42 @@ resource Vote {
     accepted(&agg("count", "where owner = actor and amount >= input.n;"));
     accepted(&agg("count", "where secret >= 3;"));
 }
+
+/// PG17 서버 재현: `operation read probe { allow riskAbove(input.n) }`에서 다른 사용자가 n을 바꿔 가며 보내 WIRE.ACCESS_DENIED의
+/// 경계로 읽을 수 없는 행의 가려진 risk(37)를 복원했다. 가려진 필드와 `input`의 비교 금지가 operation allow에는 없었다.
+#[test]
+fn operation_allow_cannot_compare_input_with_a_hidden_field() {
+    let op = |allow: &str| {
+        let predicate = "predicate riskAbove(n: Int) = exists Doc where risk >= n\n";
+        format!(
+            "{predicate}{}\noperation read probe {{ input {{ n: Int }} output {{ ok: Bool }} allow {allow} effect none deadline 2s implementation \"x.probe\" }}\n",
+            doc("", "")
+        )
+    };
+    rejected(&op("riskAbove(input.n)"));
+    rejected(&op("actor.score >= input.n"));
+    // 호출자가 고르지 않은 한 비트 상수 비교와 가려지지 않은 필드는 기존대로 된다.
+    accepted(&op("riskAbove(3)"));
+    accepted(&op("actor.score >= 3"));
+    accepted(&op("actor.org >= input.n"));
+}
+
+/// PG17 serve 재현: `sourceAccess guardA(actor, input.n)`(`access guardA(a: Member, n: Int) = a.score >= n`)에서 호출자가 n을 바꿔 가며
+/// 보내 WIRE.ACCESS_DENIED의 경계로 자기 행의 가려진 score(5)를 복원했다. guard 본문은 호출 지점에서 보이지 않는다.
+#[test]
+fn aggregate_access_guard_cannot_compare_input_with_a_hidden_field() {
+    let agg = |access: &str, args: &str| {
+        format!(
+            "{access}\n{}",
+            doc(
+                &format!("aggregate c: Int {{ input {{ n: Int }}; source Doc; sourceAccess guard({args}); where owner = actor; callerFilter none; rowOutput none; release count }}"),
+                "expose aggregate c",
+            )
+        )
+    };
+    rejected(&agg("access guard(a: Member, n: Int) = a.score >= n", "actor, input.n"));
+    rejected(&agg("access guard(a: Member, n: Int) = exists Doc where risk >= n", "actor, input.n"));
+    // 호출자가 고르지 않은 값이면 한 비트 상수 비교로 기존대로 된다.
+    accepted(&agg("access guard(a: Member, n: Int) = a.score >= n", "actor, 3"));
+    accepted(&agg("access guard(a: Member, n: Int) = a.org >= n", "actor, input.n"));
+}

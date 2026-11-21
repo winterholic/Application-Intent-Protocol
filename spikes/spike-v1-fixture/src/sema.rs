@@ -1175,6 +1175,17 @@ impl<'a> Ctx<'a> {
         stack.pop();
     }
 
+    /// guard access 본문이 읽는 field read 정책 필드(`predicate_hidden_reads`와 같은 규칙).
+    fn access_hidden_reads(&self, name: &str, out: &mut Vec<String>) {
+        let Some(AccessBody::Guard(body)) = self.accesses.get(name).map(|x| &x.body) else { return };
+        let params = &self.accesses[name].params;
+        let vars: Vec<(String, TT)> = params.iter().filter_map(|(n, t)| Some((n.clone(), self.plain_type(t)?))).collect();
+        let mut sc = self.base_scope();
+        sc.vars.extend(vars.iter().cloned());
+        let Ok(body) = self.bool_of(body, &sc) else { return };
+        self.predicate_body_hidden_reads(&body, &vars, None, &mut vec![], out);
+    }
+
     fn predicate_body_hidden_reads(&self, v: &Value, vars: &[(String, TT)], cur: Option<&str>, stack: &mut Vec<String>, out: &mut Vec<String>) {
         match v {
             Value::Object(o) => {
@@ -2316,7 +2327,22 @@ impl<'a> Ctx<'a> {
                 let mut sc = self.base_scope();
                 sc.input = input.clone();
                 let av = self.args_against(n, &acc.params, args, &sc, a.span);
-                json!({ "ref": n, "args": self.run(av)? })
+                let av = self.run(av)?;
+                // guard 본문은 호출 지점에서 보이지 않는다. 호출자의 `input`을 받는 guard가 가려진 필드를 읽으면 ACCESS_DENIED 경계로 값이 샌다.
+                if av.iter().any(facts_mention_input) {
+                    let mut hits = vec![];
+                    self.access_hidden_reads(n, &mut hits);
+                    hits.sort();
+                    hits.dedup();
+                    for h in hits {
+                        self.d(
+                            "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                            format!("aggregate `{}`의 sourceAccess `{n}`가 호출자의 `input`을 받으면서 field read 정책이 있는 `{h}`를 읽을 수 없음(접근 거부의 경계로 가려진 값이 추론됨)", a.name),
+                            a.span,
+                        );
+                    }
+                }
+                json!({ "ref": n, "args": av })
             }
         };
         let where_ = match &a.where_ {
@@ -2633,7 +2659,12 @@ impl<'a> Ctx<'a> {
         let allow = match &operation.allow {
             Some(allow) => {
                 let result = self.bool_of(allow, &scope);
-                self.run(result)
+                let allow = self.run(result);
+                // operation에는 대상 행이 없지만 `actor`와 술어·exists 안의 가려진 필드는 있다. `input`과 견주면 allow의 거절 경계로 값이 샌다.
+                if let Some(allow) = &allow {
+                    self.reject_hidden_input_compare(allow, "", &format!("operation `{}`의 allow", operation.name), operation.span, false);
+                }
+                allow
             }
             None => {
                 self.d("DEF.MISSING_ITEM", "operation에 allow 정책 필요", operation.span);
@@ -2885,6 +2916,17 @@ fn valid_message_queue(value: &str) -> bool {
 
 /// `condition`이 참이면 `policy`도 참임을 정규화된 식의 구조만으로 보인다(보수적이라 같은 뜻의 다른 식은 거부한다).
 /// `condition`의 AND 항 중에 정책 전체가 있거나, 정책이 AND이면 모든 항이, OR이면 한 가지가 같은 방식으로 충족되어야 한다.
+/// facts 안에 `input.*` 경로가 있는지.
+fn facts_mention_input(v: &Value) -> bool {
+    match v {
+        Value::Object(o) => {
+            o.get("path").is_some_and(|p| p["root"].as_str().is_some_and(|r| r.starts_with("input."))) || o.values().any(facts_mention_input)
+        }
+        Value::Array(a) => a.iter().any(facts_mention_input),
+        _ => false,
+    }
+}
+
 fn implies_policy(condition: &Value, policy: &Value) -> bool {
     fn flatten<'a>(e: &'a Value, out: &mut Vec<&'a Value>) {
         match e.get("and").and_then(Value::as_array) {
