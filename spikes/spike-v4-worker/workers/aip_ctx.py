@@ -42,13 +42,14 @@ class Data(Protocol):
         key: str | None = None,
         values: Mapping[str, Any] | None = None,
         expect: Mapping[str, Any] | None = None,
+        input: Mapping[str, Any] | None = None,
     ) -> ApplyResult:
         """A declared public transition on rows the caller can see (access `<Resource>.<transition>`).
 
         `ids` is a list (a bare `str` would be split into characters by worker.py, so it is not accepted).
         `key` names the call for you (1..100 characters, no control characters). `values` and `expect` are for a patch transition
-        (the new values, and the values the rows must still hold; a mismatch ends in `WIRE.CONFLICT`). The transition's
-        `input { ... }` slot (P0-B) is not forwarded by worker.py yet, so it is not declared here.
+        (the new values, and the values the rows must still hold; a mismatch ends in `WIRE.CONFLICT`). `input` is the transition's
+        `input { ... }` block (P0-B): the amounts it adds or subtracts, every declared key required.
         """
 
     async def read(self, query: Mapping[str, Any]) -> ReadResult:

@@ -65,8 +65,8 @@ export interface Data {
    * `key` names the call for you (checked: 1..100 characters, no control characters); the outer request's idempotency key already
    * covers the whole extension call. `values` and `expect` are for a patch transition (the new values and the values the rows must
    * still hold; a mismatch ends in `WIRE.CONFLICT`).
-   * `input` is the transition's `input { ... }` slot (P0-B). worker.mjs does not forward it yet, so it is declared as optional only;
-   * a server without that feature refuses the request (`WIRE.UNKNOWN_KEY`).
+   * `input` is the transition's `input { ... }` block (P0-B): the amounts it adds or subtracts, every declared key required. The server
+   * checks them (positive, inside the declared range) and computes on the locked row.
    */
   apply(
     resource: string,

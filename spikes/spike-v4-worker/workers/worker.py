@@ -29,7 +29,7 @@ class Data:
     async def aggregate(self, res, name, inp):
         return await self.ctx.call("aggregate", f"{res}.{name}", inp)
 
-    async def apply(self, res, name, ids, key=None, values=None, expect=None):
+    async def apply(self, res, name, ids, key=None, values=None, expect=None, input=None):
         inp = {"ids": [str(i) for i in ids]}
         if key is not None:
             inp["key"] = key
@@ -38,6 +38,9 @@ class Data:
             inp["values"] = values
         if expect is not None:
             inp["expect"] = expect
+        # A transition with an `input { ... }` block: the amounts it adds or subtracts (the server computes on the locked row).
+        if input is not None:
+            inp["input"] = input
         return await self.ctx.call("apply", f"{res}.{name}", inp)
 
     # durable job과 MySQL 쓰기 확장: 공개된 create(expose create)로 새 행 하나를 만들고 id를 돌려준다. key는 effect 장부에 남는다.

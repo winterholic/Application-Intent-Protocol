@@ -795,14 +795,15 @@ fn ctx_request(message: &Value, wire: IdWire) -> Result<Value, Reject> {
             target["ids"] = json!(encoded);
         }
     }
-    // A patch transition takes the caller's values and the expected current values (GENERAL-UPDATE); they are not part of the target.
+    // A patch transition takes the caller's values and the expected current values (GENERAL-UPDATE), and a transition with an `input { ... }`
+    // block takes its amounts as `input` (P0-B); none of them is part of the target.
     let mut request = json!({"apply":message["name"]});
     if let Some(object) = target.as_object_mut() {
         match object.remove("key") {
             None | Some(Value::Null) => {}
             Some(key) => check_ctx_key(&key)?,
         }
-        for key in ["values", "expect"] {
+        for key in ["values", "expect", "input"] {
             if let Some(value) = object.remove(key) {
                 request[key] = value;
             }
