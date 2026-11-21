@@ -989,6 +989,91 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// `expose create`의 allow에서 새 행(`this`)의 값은 호출자가 정한다. `input`과 같아서, 그 값을 남이 못 읽는 필드와 같은 조건에서 견주면
+    /// 성공·거절의 경계로 가려진 값이 이분 탐색된다. 새 행 자신의 필드는 호출자가 준 값이라 숨길 것이 없으므로, 참조 이동 뒤·`actor`·
+    /// 술어 본문에서 읽는 가려진 필드만 본다. 호출자가 정한 값이 끼지 않은 서버 상수 비교(한 비트)는 기존대로 허용한다.
+    fn reject_hidden_create_compare(&mut self, v: &Value, res: &str, sp: Span) {
+        let mut hits = vec![];
+        self.hidden_create_compares(v, res, &mut hits);
+        hits.sort();
+        hits.dedup();
+        for h in hits {
+            self.d(
+                "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                format!(
+                    "expose create의 allow가 호출자가 정한 새 행 값과 field read 정책이 있는 `{h}`를 같은 비교식(새 행 값을 받는 술어 호출 안 포함)에서 읽을 수 없음(성공·거절의 경계로 가려진 값이 추론됨)"
+                ),
+                sp,
+            );
+        }
+    }
+
+    fn hidden_create_compares(&self, v: &Value, cur: &str, out: &mut Vec<String>) {
+        fn new_row_value(v: &Value) -> bool {
+            match v {
+                Value::Object(o) => o.get("path").is_some_and(|p| p["root"] == "this") || o.values().any(new_row_value),
+                Value::Array(a) => a.iter().any(new_row_value),
+                _ => false,
+            }
+        }
+        match v {
+            Value::Object(o) => {
+                if (o.contains_key("cmp") || o.contains_key("in")) && new_row_value(v) {
+                    self.foreign_hidden_reads(v, cur, out);
+                }
+                if let (Some(name), Some(args)) = (o.get("call").and_then(Value::as_str), o.get("args")) {
+                    if new_row_value(args) {
+                        self.foreign_hidden_reads(args, cur, out);
+                        self.predicate_hidden_reads(name, &mut vec![], out);
+                    }
+                }
+                // exists 안쪽의 `this`는 안쪽 행이라 새 행 값이 아니다. 새 행 값은 술어 인자로만 들어간다.
+                if o.contains_key("exists") {
+                    return;
+                }
+                for x in o.values() {
+                    self.hidden_create_compares(x, cur, out);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| self.hidden_create_compares(x, cur, out)),
+            _ => {}
+        }
+    }
+
+    /// `hidden_reads`와 같지만 `this`로 시작하는 경로의 첫 필드(새 행 자신의 필드)는 건너뛴다.
+    fn foreign_hidden_reads(&self, v: &Value, cur: &str, out: &mut Vec<String>) {
+        match v {
+            Value::Object(o) => {
+                if let Some(p) = o.get("path") {
+                    let (start, skip) = match p["root"].as_str() {
+                        Some("this") => (Some(cur.to_string()), 1),
+                        Some("actor") => (self.actor.clone(), 0),
+                        _ => (None, 0),
+                    };
+                    let mut at = start;
+                    for (i, seg) in p["segs"].as_array().into_iter().flatten().filter_map(Value::as_str).enumerate() {
+                        let Some(here) = at.take() else { break };
+                        let Some(rs) = self.res.get(here.as_str()) else { break };
+                        if i >= skip && rs.field_read.iter().any(|x| x.0 == seg) {
+                            out.push(format!("{here}.{seg}"));
+                            break;
+                        }
+                        at = match self.field_tt(&here, seg) {
+                            Some(TT { ty: Ty::Ref(next), .. }) => Some(next),
+                            _ => None,
+                        };
+                    }
+                    return;
+                }
+                for x in o.values() {
+                    self.foreign_hidden_reads(x, cur, out);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| self.foreign_hidden_reads(x, cur, out)),
+            _ => {}
+        }
+    }
+
     /// 술어 본문이 읽는 field read 정책 필드. 매개변수 경로(`var.d`)는 매개변수 타입의 resource에서, `exists` 안쪽은 그 resource에서 따라간다.
     /// 술어끼리 부르는 호출도 따라간다(순환은 `stack`으로 끊는다).
     fn predicate_hidden_reads(&self, name: &str, stack: &mut Vec<String>, out: &mut Vec<String>) {
@@ -1628,7 +1713,9 @@ impl<'a> Ctx<'a> {
                 let allow = match &c.allow {
                     Some(e) => {
                         let v = self.bool_of(e, &sc);
-                        self.run(v).unwrap_or(Value::Null)
+                        let v = self.run(v).unwrap_or(Value::Null);
+                        self.reject_hidden_create_compare(&v, &r.name, c.span);
+                        v
                     }
                     None => {
                         self.d("DEF.MISSING_ITEM", "expose create에 allow 필요", c.span);

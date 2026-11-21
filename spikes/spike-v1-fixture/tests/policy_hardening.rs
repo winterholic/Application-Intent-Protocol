@@ -152,3 +152,21 @@ fn same_scope_cannot_be_a_hidden_field() {
     rejected(&compose_scope("risk"));
     accepted(&compose_scope("org"));
 }
+
+/// PG17 serve 재현: `expose create`의 allow는 호출자가 고른 새 행 값(`cap`)과 남이 못 읽는 필드를 같은 조건에서 견줄 수 있었다.
+/// `allow riskAbove(cap)`(술어 안 exists)와 `allow owner.score >= cap`(참조 이동)이 각각 성공·FORBIDDEN 경계로 가려진 값(37)을 내줬다.
+#[test]
+fn create_allow_cannot_compare_caller_values_with_a_hidden_field() {
+    let create = |allow: &str| doc("", &format!("expose create {{ allow {allow}; fields owner, org, cap, flag, risk }}"));
+    let above = "predicate riskAbove(n: Int) = exists Doc where org = 1 and risk >= n\n";
+    rejected(&format!("{above}{}", create("riskAbove(cap)")));
+    rejected(&create("owner.score >= cap"));
+    rejected(&create("actor.score >= cap"));
+    // 호출자가 고른 값이 끼지 않은 한 비트 상수 비교, 가려지지 않은 필드, 새 행 자신의 필드는 기존대로 된다.
+    accepted(&format!("{above}{}", create("riskAbove(1)")));
+    accepted(&create("owner.org >= cap"));
+    accepted(&create("owner = actor and org = actor.org and risk >= cap"));
+    accepted(&create("actor.score >= 3"));
+    // exists 안쪽의 `this`는 안쪽 행이라 호출자가 고른 값이 아니다.
+    accepted(&create("exists Doc where owner.score >= 3"));
+}
