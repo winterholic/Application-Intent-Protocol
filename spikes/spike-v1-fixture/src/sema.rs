@@ -1122,6 +1122,14 @@ impl<'a> Ctx<'a> {
                     }
                     return;
                 }
+                // 술어 본문은 호출 지점에서 보이지 않는다. 직접 경로 검사만 하면 `from big(this)`·`to flag = big(this)`가 지나간다.
+                if let Some(name) = o.get("call").and_then(Value::as_str) {
+                    if let Some(args) = o.get("args") {
+                        self.hidden_reads(args, cur, out);
+                    }
+                    self.predicate_hidden_reads(name, &mut vec![], out);
+                    return;
+                }
                 for x in o.values() {
                     self.hidden_reads(x, cur, out);
                 }
