@@ -3,7 +3,7 @@
 //! holds (field allow-list, `expose create allow`, readable references) and a refusal poisons the call.
 //! - C-S1..3: a created id comes back, a child can use the parent's id, an absence-dependent create runs SERIALIZABLE.
 //! - C-F1..5, R-2: refused creates and a later failure leave nothing behind; the cause tag names `ctx.create.<cause>`.
-//! - K-4: two extensions racing on a unique create: one commits, the other ends with cause `ctx.create.already_exists`.
+//! - K-4: two extensions racing on a unique create: one commits, the other ends with `WIRE.ALREADY_EXISTS`.
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{connect_with_url, id_wire::IdWire, plan::Caller, sqlgen};
@@ -58,6 +58,7 @@ resource Project {
   extension write hiddenRef { input { owner: Member.Id; name: Text(1..40) } output { ok: Bool } access create.Note effect db deadline 5s implementation "ex.hiddenRef" }
   extension write badKey { input { owner: Member.Id; name: Text(1..40) } output { ok: Bool } access create.Project effect db deadline 5s implementation "ex.badKey" }
   extension write slot { input { owner: Member.Id; name: Text(1..40) } output { id: Slot.Id } access create.Slot effect db deadline 5s implementation "ex.slot" }
+  extension write slotLater { input { owner: Member.Id; name: Text(1..40) } output { id: Slot.Id } access create.Slot effect db deadline 5s implementation "ex.slotLater" }
   extension write tag { input { owner: Member.Id; name: Text(1..40) } output { id: Tag.Id } access create.Tag effect db deadline 5s implementation "ex.tag" }
 }
 "#;
@@ -305,10 +306,43 @@ async fn two_extensions_creating_the_same_unique_row_one_wins(first: &mut Env) {
     let (won, lost) = tokio::join!(winner, loser);
     assert!(won["id"].is_string(), "{won}");
     let lost = lost.expect_err("the second create meets the unique constraint");
-    // The cause of the refused call (what the unique constraint said), as for every other refused ctx call of this path.
-    assert_eq!((lost.code, tag_of(&lost.msg)), ("WIRE.EXTENSION_ERROR", Some("ctx.create.already_exists")), "{lost:?}");
+    // The extension ended with the code of the refused create unchanged, so the caller gets `ALREADY_EXISTS` itself (review C-2).
+    assert_eq!(lost.code, "WIRE.ALREADY_EXISTS", "{lost:?}");
     let tags: i64 = first.db.query_one(&format!("SELECT count(*) FROM {schema}.tag"), &[]).await.unwrap().get(0);
     assert_eq!(tags, 1);
+    second_worker.stop().await;
+}
+
+/// Review C-2: a SERIALIZABLE create that loses to a concurrent commit ends the call with `WIRE.CONFLICT` (retry later), not with the
+/// opaque `EXTENSION_ERROR`, and the loser leaves nothing behind.
+async fn a_serialization_failure_in_ctx_create_is_a_retryable_conflict(first: &mut Env) {
+    let schema = first.schema.clone();
+    let mut second_db = connect_with_url(DB).await.unwrap();
+    let mut second_worker = start_worker(&first._dir.0).await;
+    let input = json!({"owner": "1", "name": "n"});
+    let facts = first.facts.clone();
+    let slow = async {
+        let tx = first.db.transaction().await.unwrap();
+        let result = prepare_write_in_with_wire(&tx, &mut first.worker, &facts, "Project.slotLater", &input, &caller(1), IdWire::DecimalString).await;
+        let _ = tx.rollback().await;
+        result.map(|prepared| prepared.output)
+    };
+    let quick = async {
+        // Starts after the slow call's first create and commits before its second one.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let tx = second_db.transaction().await.unwrap();
+        let prepared = prepare_write_in_with_wire(&tx, &mut second_worker, &facts, "Project.slot", &input, &caller(1), IdWire::DecimalString)
+            .await
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        tx.commit().await.unwrap();
+        prepared.output
+    };
+    let (slow, quick) = tokio::join!(slow, quick);
+    assert!(quick["id"].is_string(), "{quick}");
+    let lost = slow.expect_err("the slow call read a state the quick one changed");
+    assert_eq!(lost.code, "WIRE.CONFLICT", "{lost:?}");
+    let slots: i64 = first.db.query_one(&format!("SELECT count(*) FROM {schema}.slot"), &[]).await.unwrap().get(0);
+    assert_eq!(slots, 1, "only the quick call's row");
     second_worker.stop().await;
 }
 
@@ -323,5 +357,7 @@ async fn ctx_data_create_of_a_postgres_write_extension() {
     a_refused_create_or_a_later_failure_commits_nothing_and_names_its_cause(&mut env).await;
     env.reset().await;
     two_extensions_creating_the_same_unique_row_one_wins(&mut env).await;
+    env.reset().await;
+    a_serialization_failure_in_ctx_create_is_a_retryable_conflict(&mut env).await;
     env.drop_schema().await;
 }

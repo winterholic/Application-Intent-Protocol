@@ -134,6 +134,28 @@ fn check_ctx_key(key: &Value) -> Result<(), Reject> {
     }
 }
 
+/// The first refused ctx call was a `CONFLICT` (an optimistic `expect`, a serialization failure or a deadlock) or an `ALREADY_EXISTS` (a unique
+/// constraint) and the extension ended with that same code, unchanged: the call fails with the code itself, not with the opaque
+/// `EXTENSION_ERROR`, so the caller can send the request again (conflict) or tell "already there" from a failing extension. Nothing was
+/// committed. An extension may also end with `CONFLICT` after an `ALREADY_EXISTS` (a first call that lost the race to create a row).
+/// An extension that swallowed the refusal and returned normally does not get here: that call fails as `EXTENSION_ERROR` with the cause.
+fn passed_on_refusal(poisoned: Option<&'static str>, ended_with: Option<&str>) -> Option<Reject> {
+    match (poisoned, ended_with) {
+        (Some("WIRE.CONFLICT"), Some("WIRE.CONFLICT")) => Some(Reject {
+            code: "WIRE.CONFLICT",
+            msg: "동시 쓰기와 충돌(expect 불일치·직렬화 실패): 쓴 것은 모두 취소됨. 같은 요청을 다시 보내면 됨".into(),
+        }),
+        (Some("WIRE.ALREADY_EXISTS"), Some("WIRE.ALREADY_EXISTS")) => Some(Reject {
+            code: "WIRE.ALREADY_EXISTS",
+            msg: "이미 있는 행이라 만들 수 없음(유일 제약): 쓴 것은 모두 취소됨".into(),
+        }),
+        (Some("WIRE.ALREADY_EXISTS"), Some("WIRE.CONFLICT")) => {
+            Some(Reject { code: "WIRE.CONFLICT", msg: "같은 행을 동시에 만든 호출이 먼저 끝남: 다시 보내면 됨".into() })
+        }
+        _ => None,
+    }
+}
+
 /// 실행 효과와 caller의 추가 결과 기록을 함께 커밋하기 위한 private spike 경계.
 pub struct PreparedWrite {
     pub output: Value,
@@ -386,21 +408,8 @@ pub async fn invoke_write_action(
                 if Instant::now() > expires {
                     break rej("WIRE.DEADLINE_EXCEEDED", "기한 뒤 완료");
                 }
-                // The extension passed on the refusal of an optimistic `expect` unchanged: the caller may send the request again.
-                if poisoned == Some("WIRE.CONFLICT") && message["error"]["code"] == "WIRE.CONFLICT" {
-                    break rej("WIRE.CONFLICT", "확장이 읽은 뒤 행이 바뀜(expect 불일치): 다시 보내면 됨");
-                }
-                // A create the unique constraint refused: the extension ends with the same code (nothing was committed) so the caller can
-                // tell "already there" from a failing extension. An extension may also end with CONFLICT after it (a first call that lost
-                // the race to create a row), since the caller sends that one again.
-                if poisoned == Some("WIRE.ALREADY_EXISTS") {
-                    match message["error"]["code"].as_str() {
-                        Some("WIRE.ALREADY_EXISTS") => {
-                            break rej("WIRE.ALREADY_EXISTS", "이미 있는 행이라 만들 수 없음(유일 제약): 쓴 것은 모두 취소됨");
-                        }
-                        Some("WIRE.CONFLICT") => break rej("WIRE.CONFLICT", "같은 행을 동시에 만든 호출이 먼저 끝남: 다시 보내면 됨"),
-                        _ => {}
-                    }
+                if let Some(error) = passed_on_refusal(poisoned, message["error"]["code"].as_str()) {
+                    break Err(error);
                 }
                 if let (None, Some(error)) = (poisoned, message.get("error")) {
                     if error["code"] == "WIRE.EXTENSION_REJECTED" {
@@ -613,6 +622,9 @@ async fn run_write_in(
                 if poisoned == Some("WIRE.DB_UNAVAILABLE") {
                     break Err(lost_before_commit());
                 }
+                if let Some(error) = passed_on_refusal(poisoned, m["error"]["code"].as_str()) {
+                    break Err(error);
+                }
                 if let (None, Some(e)) = (poisoned, m.get("error")) {
                     if e["code"] == "WIRE.EXTENSION_REJECTED" {
                         break Err(rejection(e));
@@ -803,6 +815,30 @@ mod job_create_tests {
         assert_eq!(request, json!({"atomic": [{"create": "Video", "values": {"title": "t"}}]}));
         for bad in [json!({}), json!({"values": "x"}), json!({"values": {}, "key": "k", "extra": 1}), json!({"key": "k"}), json!("x")] {
             assert_eq!(job_create_request("Video", &bad).unwrap_err().code, "WIRE.BAD_VALUE", "{bad}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod passed_on_refusal_tests {
+    use super::passed_on_refusal;
+
+    #[test]
+    fn a_conflict_or_duplicate_the_extension_ended_with_keeps_its_code() {
+        let code = |poisoned, ended| passed_on_refusal(poisoned, ended).map(|error| error.code);
+        assert_eq!(code(Some("WIRE.CONFLICT"), Some("WIRE.CONFLICT")), Some("WIRE.CONFLICT"));
+        assert_eq!(code(Some("WIRE.ALREADY_EXISTS"), Some("WIRE.ALREADY_EXISTS")), Some("WIRE.ALREADY_EXISTS"));
+        assert_eq!(code(Some("WIRE.ALREADY_EXISTS"), Some("WIRE.CONFLICT")), Some("WIRE.CONFLICT"));
+        // Swallowed (no error at the end), another cause, or ended with a different code: still the opaque extension error with the cause.
+        for (poisoned, ended) in [
+            (Some("WIRE.CONFLICT"), None),
+            (Some("WIRE.CONFLICT"), Some("WIRE.ALREADY_EXISTS")),
+            (Some("WIRE.CONFLICT"), Some("WIRE.EXTENSION_REJECTED")),
+            (Some("WIRE.FORBIDDEN"), Some("WIRE.FORBIDDEN")),
+            (Some("WIRE.ALREADY_EXISTS"), None),
+            (None, Some("WIRE.CONFLICT")),
+        ] {
+            assert_eq!(code(poisoned, ended), None, "{poisoned:?} {ended:?}");
         }
     }
 }

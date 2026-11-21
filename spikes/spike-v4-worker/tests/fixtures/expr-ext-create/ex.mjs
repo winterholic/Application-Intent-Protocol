@@ -56,3 +56,10 @@ export async function slot(input, ctx) {
 export async function tag(input, ctx) {
   return { id: await ctx.data.create('Tag', { owner: input.owner, name: input.name }) };
 }
+
+// Two absence-dependent creates with a pause between them, so a concurrent transaction can commit in the gap.
+export async function slotLater(input, ctx) {
+  await ctx.data.create('Slot', { room: '1', owner: input.owner, taken: false });
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  return { id: await ctx.data.create('Slot', { room: '1', owner: input.owner, taken: false }) };
+}
