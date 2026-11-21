@@ -62,7 +62,7 @@ tar -xzf "aip-$version-$target.tar.gz"
 
 `SHA256SUMS`는 파일 무결성을, `gh attestation verify`는 이 저장소의 `release.yml`이 만든 산출물임을 확인한다(GitHub artifact attestation, 키 없는 OIDC 서명). 둘은 같은 일이 아니다. 해시만으로는 만든 주체를 알 수 없다.
 
-아카이브에는 `bin/aip`, `config.example.json`, `example.aip`, `extensions/`, `tools/dev-jwt.mjs`(개발용 토큰 도구, 운영 금지), `LICENSE`, `COMPATIBILITY.md`, 이 문서가 들어 있다. 첫 실행은 [시작 가이드](GETTING-STARTED.md)를 따르며, 개발 토큰은 압축을 푼 디렉터리에서 `node tools/dev-jwt.mjs --dir ./dev-idp --subject user-42`로 만든다(저장소 checkout 불필요, Node.js 필요). PostgreSQL 17에서 검증했고 다른 버전은 확인하지 않았다.
+아카이브에는 `bin/aip`, `config.example.json`, `example.aip`, `extensions/`, `tools/dev-jwt.mjs`(개발용 토큰 도구, 운영 금지), `README.md`(아카이브 내용 안내), `LICENSE`, `COMPATIBILITY.md`, 이 문서가 들어 있다. SDK tarball과 `SHA256SUMS`는 아카이브가 아니라 Release에 따로 있다. 첫 실행은 [시작 가이드](GETTING-STARTED.md)를 따르며, 개발 토큰은 압축을 푼 디렉터리에서 `node tools/dev-jwt.mjs --dir ./dev-idp --subject user-42`로 만든다(저장소 checkout 불필요, Node.js 필요). PostgreSQL 17에서 검증했고 다른 버전은 확인하지 않았다.
 
 ## TypeScript SDK
 

@@ -18,7 +18,9 @@ trap 'rm -rf "$work"' EXIT
 stage="$work/$name"
 mkdir -p "$stage/bin" "$stage/extensions" "$stage/tools"
 cp "$bundle/bin/aip" "$stage/bin/aip"
-cp "$bundle/config.example.json" "$bundle/example.aip" "$bundle/README.md" "$stage/"
+cp "$bundle/config.example.json" "$bundle/example.aip" "$stage/"
+# $bundle/README.md는 sdk/, SHA256SUMS를 안내하는 번들용이라 쓰지 않고, 아카이브 내용에 맞춘 전용 README를 넣는다.
+cp "$root/product/CLI-ARCHIVE-README.md" "$stage/README.md"
 cp "$bundle/extensions/event.mjs" "$bundle/extensions/event.py" "$stage/extensions/"
 cp "$bundle/tools/dev-jwt.mjs" "$stage/tools/"
 cp "$root/LICENSE" "$root/product/INSTALL.md" "$root/COMPATIBILITY.md" "$stage/"
