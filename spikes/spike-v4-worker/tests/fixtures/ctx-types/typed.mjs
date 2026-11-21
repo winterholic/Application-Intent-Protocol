@@ -16,6 +16,7 @@ export async function data(input, ctx) {
   });
   const done = await ctx.data.apply("Todo", "complete", [10, "11", 12n], "complete-1", { note: "x" }, { note: null });
   const bare = await ctx.data.apply("Todo", "complete", ["10"]);
+  await ctx.data.apply("Todo", "take", ["10"], undefined, undefined, undefined, { qty: 3 });
   const made = await ctx.data.create("Todo", { owner: input.owner, title: "next", done: false }, "todo-1");
   const noKey = await ctx.data.create("Todo", { owner: input.owner, title: "again", done: false });
   // The declared result shapes, held in place by assignments the checker would refuse if a declaration changed.

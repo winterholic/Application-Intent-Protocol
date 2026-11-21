@@ -20,6 +20,7 @@ async def data(input: dict[str, Any], ctx: "Ctx") -> dict[str, Any]:
     mixed: list[str | int] = [10, "11"]
     done = await ctx.data.apply("Todo", "complete", mixed, "complete-1", {"note": "x"}, {"note": None})
     bare = await ctx.data.apply("Todo", "complete", ["10"])
+    await ctx.data.apply("Todo", "take", ["10"], input={"qty": 3})
     made = await ctx.data.create("Todo", {"owner": input["owner"], "title": "next", "done": False}, "todo-1")
     no_key = await ctx.data.create("Todo", {"owner": input["owner"], "title": "again", "done": False})
     # The declared result shapes, held in place by assignments mypy would refuse if a declaration changed.

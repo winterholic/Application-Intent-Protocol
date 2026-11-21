@@ -154,6 +154,7 @@ async fn the_declared_calls_are_what_the_workers_send_and_return() {
                 "filter": [{"field": "id", "op": "eq", "value": "10"}], "sort": [{"field": "id", "dir": "asc"}], "limit": 5}},
             {"op": "apply", "name": "Todo.complete", "input": {"ids": ["10", "11", "12"], "key": "complete-1", "values": {"note": "x"}, "expect": {"note": null}}},
             {"op": "apply", "name": "Todo.complete", "input": {"ids": ["10"]}},
+            {"op": "apply", "name": "Todo.take", "input": {"ids": ["10"], "input": {"qty": 3}}},
             {"op": "create", "name": "Todo", "input": todo_key},
             {"op": "create", "name": "Todo", "input": again_key},
         ])
