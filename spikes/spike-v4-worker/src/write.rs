@@ -707,6 +707,10 @@ async fn ctx_create_in(
     if !allowed.iter().any(|grant| grant.strip_prefix("create.") == Some(resource)) {
         return rej("WIRE.ACCESS_NOT_DECLARED", "create가 확장 access에 선언되지 않음");
     }
+    // Like `ctx.data.read`, an encrypted field is not reachable here: this transaction has no sealer, so the value would be stored as plaintext.
+    if has_encrypted_field(facts, resource) {
+        return rej("WIRE.UNSUPPORTED", "암호화 필드가 있는 resource는 PostgreSQL 쓰기 확장 ctx.data.create에서 지원하지 않음");
+    }
     let request = job_create_request(resource, &message["input"])?;
     match message["input"].get("key") {
         None | Some(Value::Null) => {}
@@ -725,6 +729,10 @@ async fn ctx_create_in(
         })
         .collect::<Result<Vec<_>, Reject>>()?;
     Ok(json!({"created": created}))
+}
+
+fn has_encrypted_field(facts: &Value, resource: &str) -> bool {
+    facts["resources"][resource]["fields"].as_object().is_some_and(|fields| fields.values().any(|field| field.get("encrypted").is_some()))
 }
 
 fn declares_encrypted(output_type: &Value) -> bool {

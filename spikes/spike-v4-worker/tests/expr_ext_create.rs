@@ -29,6 +29,11 @@ resource Slot {
   rows read when true
   expose create { allow roomFree(this.room); fields room, owner, taken }
 }
+resource Secret {
+  fields { id: Id; owner: Member; value: Text(1..100) encrypted(scope: service) }
+  rows read when owner = actor
+  expose create { allow owner = actor; fields owner, value }
+}
 resource Tag {
   fields { id: Id; owner: Member; name: Text(1..20) }
   rows read when owner = actor
@@ -59,11 +64,12 @@ resource Project {
   extension write badKey { input { owner: Member.Id; name: Text(1..40) } output { ok: Bool } access create.Project effect db deadline 5s implementation "ex.badKey" }
   extension write slot { input { owner: Member.Id; name: Text(1..40) } output { id: Slot.Id } access create.Slot effect db deadline 5s implementation "ex.slot" }
   extension write slotLater { input { owner: Member.Id; name: Text(1..40) } output { id: Slot.Id } access create.Slot effect db deadline 5s implementation "ex.slotLater" }
+  extension write secret { input { owner: Member.Id; name: Text(1..40) } output { id: Secret.Id } access create.Secret effect db deadline 5s implementation "ex.secret" }
   extension write tag { input { owner: Member.Id; name: Text(1..40) } output { id: Tag.Id } access create.Tag effect db deadline 5s implementation "ex.tag" }
 }
 "#;
 
-const TABLES: [&str; 5] = ["project", "item", "note", "slot", "tag"];
+const TABLES: [&str; 6] = ["project", "item", "note", "slot", "tag", "secret"];
 
 struct OwnedDir(PathBuf);
 impl Drop for OwnedDir {
@@ -182,7 +188,7 @@ async fn an_extension_creates_a_row_and_a_child_with_the_parent_id(env: &mut Env
         .map(|r| (r.get(0), r.get(1)))
         .unwrap();
     assert_eq!(stored, (1, "plan".to_string()));
-    assert_eq!(env.counts().await, vec![1, 0, 0, 0, 0]);
+    assert_eq!(env.counts().await, vec![1, 0, 0, 0, 0, 0]);
 
     // C-S2: the child refers to the id the parent create returned; both commit.
     let out = env.run("family", 1, input).await.unwrap_or_else(|e| panic!("{e:?}"));
@@ -190,7 +196,7 @@ async fn an_extension_creates_a_row_and_a_child_with_the_parent_id(env: &mut Env
     assert_ne!(project, id, "a new parent row");
     let parent_of_item: i64 = env.db.query_one(&format!("SELECT project_id FROM {}.item WHERE id = {item}", env.schema), &[]).await.unwrap().get(0);
     assert_eq!(parent_of_item.to_string(), project);
-    assert_eq!(env.counts().await, vec![2, 1, 0, 0, 0]);
+    assert_eq!(env.counts().await, vec![2, 1, 0, 0, 0, 0]);
 }
 
 async fn an_absence_dependent_create_grant_runs_the_extension_serializable(env: &mut Env) {
@@ -255,6 +261,8 @@ async fn a_refused_create_or_a_later_failure_commits_nothing_and_names_its_cause
             "ctx.create.missing_target",
             Some((json!({"atomic":[{"create":"Note","values":{"task":"20","owner":"1","body":"org 2 task"}}]}), "WIRE.MISSING_TARGET")),
         ),
+        // Review C-4: a resource with an encrypted field cannot be created from an extension (no sealer in this transaction).
+        ("secret", 1, input.clone(), "ctx.create.unsupported", None),
         // C-F5: a key outside the documented form.
         ("badKey", 1, input.clone(), "ctx.create.key_format", None),
     ];
@@ -266,7 +274,7 @@ async fn a_refused_create_or_a_later_failure_commits_nothing_and_names_its_cause
             other => failures.push(format!("{extension}: expected EXTENSION_ERROR tagged {tag}, got {other:?}")),
         }
         let counts = env.counts().await;
-        if counts != vec![0; 5] {
+        if counts != vec![0; 6] {
             failures.push(format!("{extension}: left rows behind {counts:?}"));
         }
         if let Some((request, code)) = client {
