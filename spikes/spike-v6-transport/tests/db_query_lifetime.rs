@@ -79,6 +79,10 @@ async fn proxy_sql(socket: TcpStream, held: Arc<AtomicUsize>, closed: Arc<Atomic
 
 #[tokio::test]
 async fn silent_operation_sql_after_clock_respects_declared_deadlines_and_returns_slots() {
+    // A write extension reads the idempotency journal for a completed result before the clock query, so the journal must exist.
+    let setup = spike_v2_read::connect_with_url(aip_test_support::test_database_url!()).await.unwrap();
+    let journal = spike_v6_transport::idempotency_ddl().replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ");
+    setup.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {}; {journal}", spike_v2_read::sqlgen::schema())).await.unwrap();
     let path = std::env::temp_dir().join(format!(
         "aip-db-operation-{}-{}",
         std::process::id(),

@@ -131,6 +131,10 @@ where
     tokio::time::timeout(lifetime, transfer).await
 }
 
+/// How long a request over the worker-slot limit may look for a completed result of its key before it is refused with `WIRE.WORKER_BUSY`.
+/// It bounds the connection checkout, the deployment fence and the journal read together.
+const SATURATED_REPLAY_BUDGET: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// 신선도 비교 실험의 상한. 제품 기본값이나 즉시 권한 회수 보장이 아니다.
 pub const READ_CACHE_MS: u64 = 1000;
 
@@ -1742,24 +1746,37 @@ async fn serve_request(
         });
         return reply(&mut w, &result.to_string()).await;
     }
+    // Take the worker slot before any database work. Otherwise a slow or silent database lets any number of extension requests
+    // queue for a connection, because the slot limit would only count requests that already hold one.
+    let needs_extension_slot = path == "/extension" || path == "/operation" || write_extension;
+    let mut extension_slot = if needs_extension_slot { runtime.extension_slots.try_acquire().ok() } else { None };
+    let saturated = needs_extension_slot && extension_slot.is_none();
+    // A saturated server still answers a completed key from the journal, but only when the database answers promptly.
+    // A request over the limit that cannot be answered that way gets the same `WORKER_BUSY` as any other.
+    let early_deadline = if saturated { deadline.min(tokio::time::Instant::now() + SATURATED_REPLAY_BUDGET) } else { deadline };
+    let busy = || err("WIRE.WORKER_BUSY", "로컬 확장 동시 호출 상한");
     let mut early_write_db = None;
     let mut early_write_result = None;
     let mut early_write_fence_checked = false;
     if write_extension && runtime.infrastructure.relational.is_none() {
         if let Some(pool) = runtime.db_pool.as_ref() {
-            let mut db = match pool.acquire_until(deadline).await {
+            let mut db = match pool.acquire_until(early_deadline).await {
                 Ok(db) => db,
+                Err(_) if saturated => return reply(&mut w, &busy()).await,
                 Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB 연결 또는 pool checkout 기한 초과")).await,
             };
             if let Some(fence) = &runtime.deployment {
-                if let Err(result) = check_deployment_fence(&db, &facts, fence, deadline).await {
+                if let Err(result) = check_deployment_fence(&db, &facts, fence, early_deadline).await {
                     std::mem::drop(db);
+                    if saturated && result["code"] == "WIRE.DB_UNAVAILABLE" {
+                        return reply(&mut w, &busy()).await;
+                    }
                     return reply(&mut w, &result.to_string()).await;
                 }
                 early_write_fence_checked = true;
             }
             let replay = tokio::time::timeout_at(
-                deadline,
+                early_deadline,
                 write_extension::replay_completed(&mut db, &facts, &body, session.as_ref().map(|session| session.actor_id), wire),
             )
             .await;
@@ -1768,22 +1785,35 @@ async fn serve_request(
                     early_write_result = Some(result);
                     early_write_db = Some(db);
                 }
+                Ok(Ok(None)) if saturated => {
+                    let _ = db.release().await;
+                    return reply(&mut w, &busy()).await;
+                }
                 Ok(Ok(None)) => early_write_db = Some(db),
                 Ok(Err(result)) => {
                     let _ = db.release().await;
                     return reply(&mut w, &result.to_string()).await;
                 }
+                // The lookup is still in flight on this connection. `release` would queue a reset behind it and wait for a database
+                // that is not answering, so the reply would outlive the request deadline: discard the connection instead.
+                Err(_) if saturated => {
+                    std::mem::drop(db);
+                    return reply(&mut w, &busy()).await;
+                }
                 Err(_) => {
-                    let _ = db.release().await;
+                    std::mem::drop(db);
                     return reply(&mut w, &json!({"ok":false,"code":"WIRE.DB_UNAVAILABLE","msg":"완료 멱등 결과 조회 기한 초과"}).to_string()).await;
                 }
             }
         }
     }
-    let _extension_slot = if (path == "/extension" || path == "/operation" || write_extension) && early_write_result.is_none() {
-        match runtime.extension_slots.try_acquire() {
-            Ok(slot) => Some(slot),
-            Err(_) => return reply(&mut w, &err("WIRE.WORKER_BUSY", "로컬 확장 동시 호출 상한")).await,
+    if early_write_result.is_some() {
+        extension_slot = None;
+    }
+    let _extension_slot = if needs_extension_slot && early_write_result.is_none() {
+        match extension_slot.take() {
+            Some(slot) => Some(slot),
+            None => return reply(&mut w, &busy()).await,
         }
     } else {
         None
@@ -1791,7 +1821,12 @@ async fn serve_request(
     let _extension_principal_slot = if _extension_slot.is_some() {
         match runtime.principal_slots.workers.try_acquire(&admission::principal(session.as_ref())) {
             Some(permit) => Some(permit),
-            None => return reply(&mut w, &err("WIRE.WORKER_BUSY", "principal별 로컬 확장 동시 호출 상한")).await,
+            None => {
+                if let Some(db) = early_write_db.take() {
+                    let _ = db.release().await;
+                }
+                return reply(&mut w, &err("WIRE.WORKER_BUSY", "principal별 로컬 확장 동시 호출 상한")).await;
+            }
         }
     } else {
         None
