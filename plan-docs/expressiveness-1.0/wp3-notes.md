@@ -23,3 +23,34 @@
   - id는 wire에 따라 string(`decimal`, `uuid`) 또는 number(legacy)라 `EntityId = string | number`다.
 - **시험** `tests/worker_ctx_types.rs`(3개): ① `tsc --checkJs`로 `ctx-types/typed.mjs`와 `expr-ext-create/ex.mjs`가 통과하고 `neg.mjs`가 `// ERR` 표시 줄에서만 실패. ② `mypy --strict`로 `typed.py` 통과, `neg.py`가 `# ERR` 줄에서만 실패(`AIP_MYPY`가 없으면 "미실행"을 출력하고 건너뜀). ③ 같은 typed fixture를 진짜 `worker.mjs`·`worker.py`에서 돌려 보낸 call과 돌려받은 값이 선언과 같음을 본다. 도구는 저장소에 없어 `AIP_TSC`(기본 `../spike-0-ts/node_modules/.bin/tsc`)와 `AIP_MYPY`로 지정한다. 이 세션은 `npm install typescript@7.0.2`를 `/tmp/wp3-ts`에, `pip install mypy`를 `/tmp/wp3-venv`에 따로 받아 썼다(원래 checkout의 `spike-0-ts` tsc는 `@typescript/typescript-darwin-arm64` 플랫폼 패키지가 없어 이 머신에서 실행되지 않았다).
 - **패키지에 넣으려면 고칠 파일**(이번 범위 밖, 수정하지 않음): 워커 스크립트는 `spikes/spike-v4-worker/src/lib.rs`의 `include_str!`로 바이너리에 들어가므로 타입 파일은 어디에도 배포되지 않는다. Node용은 `product/tools/build-sdk.mjs`(npm 패키지 `files`·`exports`에 `ctx.d.ts` 추가, 예: `@aip/sdk/worker-ctx`)와 `product/tools/package.mjs`(소스 목록·번들 배치), Python용은 `product/python/aip_sdk/`에 `worker_ctx.py`로 복사하는 것(`__init__.py`는 수정하지 않아도 되고 `py.typed`는 이미 있음). 소스 번들 목록은 `prototype/tools/build-bundle.py`(39~40행 `workers/worker.*`)에 두 파일을 더한다. 문서는 `product/MANAGED-EXECUTION.md`(WP5).
+
+## 4차: 검증 관찰 O-3(WORKER_BUSY)·O-4(stale 바이너리) 조사
+
+기준: P0-C 독립 검증 `verify-p0c.md`의 O-3, O-4. 이 절은 조사 기록이고 코드는 고치지 않았다(v6 transport는 다른 작업이 고친다).
+
+### O-3 같은 key 동시 8건 중 6건 `WIRE.WORKER_BUSY`
+
+**판정: 의도한 backpressure(기본 한도)다. P0-C가 만든 것도 같은 key 전용 결함도 아니다. 다만 "worker가 필요 없는 요청이 worker 슬롯을 쓴다"는 경미한 설계 개선점이 있다.**
+
+- 원인 한도: `ResourceLimits::default()`의 `workers: 4`, `per_principal_workers: 2`(`spikes/spike-v6-transport/src/infrastructure.rs:28`, `:33`). 확장 쓰기(`/apply`의 `extension`)는 `lib.rs:1691-1698`에서 전역 슬롯을, `lib.rs:1699-1706`에서 principal 슬롯을 `try_acquire`하고 못 얻으면 즉시 `WORKER_BUSY`(`wire_codes.rs:230`: retry later, "Send again after a short delay")를 돌려준다. 같은 주체의 8건 중 2건만 들어가므로 6건이 거절된다.
+- 같은 key 요청이 슬롯을 먼저 잡는 순서: 슬롯 획득(`lib.rs:1691-1706`) → `write_extension::apply_with_launch`(`lib.rs:1967`) → 그 안에서 `aip_idem` claim INSERT(`write_extension.rs` `ON CONFLICT (principal,key) DO NOTHING`)가 같은 key의 소유를 정한다 → 이긴 쪽만 worker를 시작한다. 진 쪽은 이긴 쪽 트랜잭션이 끝날 때까지 유일 인덱스에서 기다린 뒤 저장 결과를 재생한다(`replayed`). 그래서 슬롯 2개는 "실행 1건 + 기다리다 재생하는 1건"이 차지한다. 확장 실행은 한 번뿐이고(안전성 유지) 재생도 정상이다.
+- 재현(`/tmp/wp3-o3/run.mjs`, 800ms 걸리는 확장이 `Hit.n`을 1 올린다. 같은 PG 17, 같은 시나리오):
+
+| 시나리오 | 4e132564 | P0-C 이후 `3a6edf5f` | 한도를 8로 올린 `3a6edf5f` |
+| --- | --- | --- | --- |
+| S1 같은 key 8건 | OK 1, replayed 1, BUSY 6, n=1 | 같음 | OK 1, replayed 7, n=1 |
+| S2 서로 다른 key 8건 | OK 2, BUSY 6, n=2 | 같음 | OK 4, DEADLINE_EXCEEDED 4(같은 행 잠금 대기, 별개 현상) |
+| S3 슬롯 2개가 느린 호출로 찬 동안 이미 저장된 key 재전송 | **WORKER_BUSY**(다른 주체는 OK) | 같음 | replayed |
+| S4 단독 재전송 | replayed, n=1 | 같음 | 같음 |
+
+  한도를 `limits: {workers: 8, per_principal_workers: 8}`로 올리면 S1이 `OK 1 + replayed 7`로 바뀌므로 원인은 한도다. 서로 다른 key(S2)도 같은 6건이 거절되므로 key 때문이 아니다. 4e132564와 결과가 같아 P0-C 이전부터의 동작이다(이번 변경은 이 경로를 건드리지 않았다).
+- 개선점(결함이라 부를 정도는 아님, 가용성·공정성): S3처럼 **이미 저장된 결과를 재생하는 요청은 worker가 필요 없는데도 슬롯이 차 있으면 `WORKER_BUSY`가 된다.** 클라이언트가 재시도하는 것이 멱등 key의 용도인데, 재시도가 같은 주체의 슬롯을 차지해 그 주체의 새 요청을 밀어낸다. `WORKER_BUSY`는 retry later라 계약 위반은 아니다.
+- 수정안(v6 담당자용): 슬롯을 "worker를 시작하기 직전"으로 옮긴다. (a) `apply_with_launch`가 claim 성공(`Ok(Some(_)) => break tx`) 직후, `Worker::try_start_configured` 전에 슬롯을 얻게 한다(슬롯 두 개를 인자로 넘기거나 콜백). 재생·IDEMPOTENCY_MISMATCH·claim 대기는 슬롯 없이 끝난다. 단 이긴 쪽이 슬롯이 없어 BUSY로 끝나면 claim 행을 남기지 말고 롤백해야 한다(지금도 BUSY는 claim 전이라 행이 없다). (b) 더 작은 수정은 슬롯 획득 전에 `SELECT result FROM aip_idem WHERE principal=$1 AND key=$2`로 완료된 결과가 있는지 읽어 있으면 슬롯 없이 재생하는 것이다(진행 중인 같은 key는 기존대로 슬롯을 쓴다).
+- 영향 범위: `lib.rs:1691-1706`(PG 경로), 같은 순서를 가진 관계형 경로(`run_relational_write_extension`, `lib.rs:813-880`: `begin_worker_write`가 worker 시작 전이고 슬롯은 그 앞 `lib.rs:1691`에서 이미 잡힌다), 세션 쓰기(`lib.rs:988-989`, `:1551-1560` RAG는 해당 없음). BUSY를 기대하는 시험은 과부하를 만들 때 서로 다른 key를 쓰는지 확인해야 한다: `write_extension_lifetime.rs:90`, `extension_lifetime.rs:373`, `db_query_lifetime.rs`, `request_lifetime.rs:141`. (a)안은 claim 대기 중인 요청이 DB 연결을 쥐고 있으므로 `connections: 64` 한도가 새 상한이 된다. 이 항목들은 읽어서 적은 것이고 시험을 돌려 확인하지 않았다.
+
+### O-4 `cargo build`가 `Fresh`로 끝났는데 바이너리가 이전 소스
+
+**재현됨(원인은 mtime 기반 fresh 판정).** 한 줄: cargo는 소스 파일의 **mtime**이 직전 빌드의 기준 시각보다 오래되면 내용이 달라도 `Fresh`로 본다. 그래서 새 소스를 mtime을 보존하는 방법(`cp -a`, `rsync -a`, 아카이브 풀기)으로 같은 경로·같은 `CARGO_TARGET_DIR`에 덮어쓰면 이전 소스로 만든 바이너리가 그대로 남는다. `git checkout`은 파일 mtime을 지금으로 쓰므로 이 문제가 없다.
+- 재현: `write.rs`의 문자열에 `O4MARK`를 넣고 빌드 → 바이너리에 `O4MARK` 1개. `git checkout -- write.rs` 뒤 `touch -t 202001010000 write.rs` → `cargo build -p aip-cli --bin aip`가 `Finished ... 0.14s`(재컴파일 없음), 바이너리에 `O4MARK`가 그대로(stale). `touch write.rs`(지금 시각)로 다시 빌드하면 2.08s에 `O4MARK` 0개로 돌아왔다(작업 트리 clean).
+- 검증 쪽 추정(확인 못함): `/tmp/aip-verify-p0c-src` 복사본을 mtime을 보존해 만들었거나 공유 target에서 같은 경로를 다른 시점의 소스로 덮었을 가능성이 크다. worktree checkout 시각만으로는 설명되지 않는다(git은 mtime을 지금으로 쓴다).
+- 예방: 복사본을 쓸 때는 `touch`로 mtime을 지금으로 갱신하거나(`find . -name '*.rs' -exec touch {} +`), 소스 경로마다 별도 `CARGO_TARGET_DIR`을 쓴다. 바이너리에 P0-C 문자열이 있는지(`grep -c -a "ctx는 apply·create·read만"`)를 먼저 보는 검증 절차가 맞다.
