@@ -1,19 +1,21 @@
 # 소비자 앱 3유형 표현력 검증 (협업형 SaaS, 콘텐츠·커뮤니티, 주문·재고)
 
-측정: 2026-11-21, 브랜치 `test/expr-consumer-apps-20261121`(기준 `design/expressiveness-1.0-20261121` 50f2bc27), aip 1.0.0 debug 빌드(`CARGO_TARGET_DIR=/tmp/aip-target-apps`), PostgreSQL 17.11 전용 컨테이너, Node v26.9.0, Python 3.14.7, TypeScript 7.0.2.
+측정: 2026-11-21, 브랜치 `test/expr-consumer-apps-20261121`(1차 기준 `design/expressiveness-1.0-20261121` 50f2bc27, 주문·재고 2차는 P0-A·B·C 통합 2e94daa0을 merge한 b719bb42 이후), aip 1.0.0 debug 빌드(`CARGO_TARGET_DIR=/tmp/aip-target-apps`), PostgreSQL 17.11 전용 컨테이너, Node v26.9.0, Python 3.14.7, TypeScript 7.0.2.
 
-목표: AIP가 일반 백엔드 업무를 얼마나 적은 반복 코드로, 안전하고 예측 가능하게 구현하게 해 주는지를 소비자 앱 세 유형으로 본다. 문법 통과가 아니라 실제 HTTP(`aip service serve`)·PostgreSQL·SDK 경로 실행을 근거로 쓴다. 협업형 SaaS와 콘텐츠·커뮤니티는 현재 기능으로 끝까지 실행했고, 주문·재고는 현재 문법으로 가능한 부분만 실행하고 P0 기능이 필요한 부분은 목표 정의만 준비했다(미실행).
+목표: AIP가 일반 백엔드 업무를 얼마나 적은 반복 코드로, 안전하고 예측 가능하게 구현하게 해 주는지를 소비자 앱 세 유형으로 본다. 문법 통과가 아니라 실제 HTTP(`aip service serve`)·PostgreSQL·SDK 경로 실행을 근거로 쓴다. 협업형 SaaS와 콘텐츠·커뮤니티는 현재 기능으로 끝까지 실행했다. 주문·재고는 1차에서 현재 문법의 우회만 실행하고 P0 목표 정의를 미실행으로 남겼으며, 2차(2e94daa0 merge 뒤)에 목표 정의를 실제로 실행해 이 문서의 1절과 8절에 반영했다.
 
 ## 1. 실행 결과
 
-명령 한 번: `node product/tests/fixtures/expr-apps/run.mjs`(전용 PG 17 컨테이너 기동, 앱마다 새 schema `service init`, 시드, principal 바인딩, `serve`, 시나리오, 정리). 마지막 전체 실행 출력:
+명령 한 번: `node product/tests/fixtures/expr-apps/run.mjs`(전용 PG 17 컨테이너 기동, 앱마다 새 schema `service init`, 시드, principal 바인딩, `serve`, 시나리오, 정리). P0 통합(2e94daa0) merge 뒤 마지막 전체 실행 출력:
 
 ```
 실제 PostgreSQL: PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on aarch64-unknown-linux-gnu, ...
-DSN 대상: 전용 컨테이너 aip-expr-apps-19286 (host=127.0.0.1 port=54532 user=… dbname=aip_test_expr_apps)
-revision: 9ec531c70b87, aip 1.0.0, HTTP=aip service serve, SDK=@aip/sdk(tarball 설치)+python aip_sdk
-합계: PASS 47 / FAIL 0 / SKIP 1          (전체 11초)
+DSN 대상: 전용 컨테이너 aip-expr-apps-43515 (host=127.0.0.1 port=57247 user=… dbname=aip_test_expr_apps)
+revision: f90a000112fd, aip 1.0.0, HTTP=aip service serve, SDK=@aip/sdk(tarball 설치)+python aip_sdk
+합계: PASS 64 / FAIL 0 / SKIP 0
 ```
+
+이 revision은 시험 코드를 커밋한 시점이고 이 문서를 커밋하기 전이다. 1차 실행(50f2bc27 기반, PASS 47 / SKIP 1)과 달리 SKIP이 없다. 주문·재고 목표 정의가 현재 바이너리에서 `service check`를 통과하기 때문이다(P0 merge 전에는 `DEF.PARSE_UNKNOWN_KEY` `input`).
 
 | 단위 | 시나리오 | 결과 |
 | --- | --- | --- |
@@ -21,8 +23,9 @@ revision: 9ec531c70b87, aip 1.0.0, HTTP=aip service serve, SDK=@aip/sdk(tarball 
 | saas/py | 7개 | PASS 7 |
 | community/ts | typecheck + 11개 | PASS 12 |
 | community/py | 3개 | PASS 3 |
-| orders/ts (현재 문법과 우회) | typecheck + 7개 | PASS 8, INFO 1(동시 주문 관찰값) |
-| orders/target (P0-A·B·C 목표) | 5개 | SKIP 1: `미실행: P0 미병합. 현재 check 결과 DEF.PARSE_UNKNOWN_KEY transition 안 알 수 없는 항목 input` |
+| orders/ts (현재 문법과 우회) | typecheck + 8개 | PASS 9, INFO 2(동시 주문, 단가 위조) |
+| orders/target-a (변형 A: 선언만, P0-A·B) | typecheck + 8개 | PASS 9, INFO 다수(거절 코드, 동시 주문) |
+| orders/target-b (변형 B: 확장, P0-B·C) | typecheck + 6개 | PASS 7, INFO 다수 |
 
 "PASS"는 서비스 응답과 함께 psql로 DB 행을 직접 읽어 교차 확인한 것이다. 시험이 실패할 수 있는지는 정의를 일부러 망가뜨려 확인했다(RED, 4절).
 
@@ -108,10 +111,11 @@ DB에서 `task.org_id <> project.org_id`인 행이 없음도 확인했다(비교
 | --- | --- | --- | --- | --- |
 | 협업형 SaaS | 88줄(94) | 0줄 | TS 178줄(207), Python 108줄(138). SDK 호출 지점 TS 50곳(apply 24, read 13, bundle 13) | 시드 SQL 12줄 |
 | 콘텐츠·커뮤니티 | 63줄(69) | 0줄 | TS 162줄(181), Python 71줄(88). 호출 지점 TS 47곳(apply 20, read 19, bundle 8) | 시드 SQL 2줄 |
-| 주문·재고(현재 우회) | 33줄(41) | 17줄(`shop.mjs`) | TS 99줄(115). 호출 지점 16곳(apply 5, bundle 4, writeExtension 7) | 시드 SQL 2줄 |
-| 주문·재고(P0 목표, 미실행) | 34줄(44) | 10줄(`shop.target.mjs`) | 미실행(scenario.target.ts 66줄은 실행 전 초안) | |
+| 주문·재고(현재 우회) | 33줄(41) | 17줄(19)(`shop.mjs`) | TS 106줄(124). 호출 지점 17곳(apply 5, bundle 4, writeExtension 8) | 시드 SQL 3줄 |
+| 주문·재고(P0 변형 A, 선언만) | 26줄(32) | 0줄 | TS 122줄(134). 호출 지점 18곳(apply 8, bundle 10) | |
+| 주문·재고(P0 변형 B, 확장) | 36줄(42) | 12줄(16)(`shopb.mjs`) | TS 72줄(80). 호출 지점 10곳(apply 2, bundle 2, writeExtension 6) | |
 
-주의: 클라이언트 줄 수는 앱 클라이언트가 아니라 시험 코드라서 단언과 부정 시나리오가 섞인 상한이다. 한 기능의 호출 코드는 보통 SDK 호출 한 번(3~6줄)이다. 정의에 `expose`로 열지 않은 것(읽기·쓰기·전이)은 서버가 만들어 주지 않는다. 서버 쪽에 사람이 쓴 Controller·DTO·Service·Repository 코드는 두 앱에서 0이고, 주문·재고에서는 확장 한 파일뿐이다.
+주의: 클라이언트 줄 수는 앱 클라이언트가 아니라 시험 코드라서 단언과 부정 시나리오가 섞인 상한이다. 한 기능의 호출 코드는 보통 SDK 호출 한 번(3~6줄)이다. 정의에 `expose`로 열지 않은 것(읽기·쓰기·전이)은 서버가 만들어 주지 않는다. 서버 쪽에 사람이 쓴 Controller·DTO·Service·Repository 코드는 두 앱에서 0이고, 주문·재고에서는 확장 한 파일뿐이다(변형 A는 0). 주문·재고 세 구현의 비교는 8절이다.
 
 ### 5.2 같은 기능을 NestJS 또는 Spring으로 구현할 때 필요한 계층
 
@@ -156,7 +160,7 @@ AIP가 줄여 주지 않는 것: 인증 서버(JWT 발급·JWKS), principal과 a
 | F12 | 효과 `update many Task ... { status = DONE }`로 cascade했다. 효과 값에는 산술이 없어(audit #6) `version = version + 1`을 함께 올릴 수 없다. 이번 시나리오는 DONE 뒤 edit가 `from`으로 막혀 영향이 없고, version이 안 오르는 것 자체는 단언하지 않았다 | 한계(E2) |
 | F13 | 사용자 초대(`expose create User`)는 행만 만든다. JWT subject와 actor를 잇는 `aip service principal bind`는 운영자 CLI라 앱 API로 로그인 연결까지 끝낼 수 없다. 시나리오는 시드 시점에 바인딩했고 초대 직후 로그인은 실행하지 않았다 | 한계(범위)·문서 |
 | F14 | 확장 입력 타입에 배열이 없다(`List<Int>`와 `Int[]`는 파싱 오류, `Json`만 통과하며 모양 검증은 확장이 한다). 다건 주문 줄은 줄 행을 먼저 만들어야 하고(E1과 결합), P0-C 변형 B도 `Json` 입력이 된다 | 한계(audit에 없던 새 항목) |
-| F15 | 동시 주문 우회: 재고 4개, 2개짜리 주문 6건을 동시에 보냈더니 반복 실행마다 성공은 1건이었고 나머지는 `WORKER_BUSY` 2건과 `EXTENSION_ERROR` 3건이었다(가능했던 성공은 2건). 재고가 음수가 되거나 이중 차감되지는 않았다(안전성 유지, 활성은 나쁨). `WORKER_BUSY`는 한 사용자의 동기 worker 동시 호출 한도(기본 2) 때문이고, 낙관적 충돌은 호출자에게 `CONFLICT`가 아닌 `EXTENSION_ERROR`로 보여 재시도할지 구분할 수 없다 | 한계(E2, P0-B가 해소할 항목)·문서 |
+| F15 | 동시 주문 우회: 재고 4개, 2개짜리 주문 6건을 동시에 보냈더니 반복 실행마다 성공은 1건이었고 나머지는 `WORKER_BUSY` 2건과 `EXTENSION_ERROR` 3건이었다(가능했던 성공은 2건). 재고가 음수가 되거나 이중 차감되지는 않았다(안전성 유지, 활성은 나쁨). `WORKER_BUSY`는 한 사용자의 동기 worker 동시 호출 한도(기본 2) 때문이다. 1차(50f2bc27)에는 낙관적 충돌이 호출자에게 `EXTENSION_ERROR`로 보였고, P0 merge 뒤 같은 시험에서는 `WIRE.CONFLICT`로 보인다(P0-C의 코드 전달 수정). P0-B 변형 A는 같은 상황에서 성공 2건이다(8절) | 한계(E2), P0로 해소 |
 | F16 | `build-sdk.mjs`가 컴파일에 실패하면 `BUILD_FAILED`만 알려 줘 원인을 알 수 없었다. 실패 메시지에 컴파일러 출력(stderr/stdout) 요약을 붙이도록 수정했고, 일부러 문법 오류를 넣어 `TS1110`·`TS1109`가 출력되는 것을 확인했다 | 문서·SDK(진단, 수정) |
 | F17 | JWT의 `exp - iat` 3600초는 `crates/aip-auth/src/lib.rs:648-659`의 `1..=900` 검사로 거부되고, 300초는 허용된다. 하드코딩 제한이며 설정 변경 지점은 없다. `Invalid`는 `spikes/spike-v6-transport/src/lib.rs:1416-1422`에서 `WIRE.UNAUTHENTICATED` / "토큰 검증 실패"로 뭉뚱그려지고 거부 이유 로그도 남기지 않는다. 900초 상한은 `product/IDP-RUNBOOK.md:23,29`, `product/GETTING-STARTED.md:49`, `product/OPERATIONS.md:22`에 이미 적혀 있다 | 문서(진단, 원인 확정) |
 
@@ -180,19 +184,80 @@ AIP가 줄여 주지 않는 것: 인증 서버(JWT 발급·JWKS), principal과 a
 
 audit의 "범위 밖 발견"인 LIMITS E2 본문과 `ctx.reject`의 불일치는 이번에도 확인됐다. 확장이 `ctx.reject("INSUFFICIENT_STOCK", ...)`를 던지면 호출자는 `WIRE.EXTENSION_REJECTED`와 `appCode`를 받았고(시나리오 PASS), LIMITS는 아직 "모든 실패가 `EXTENSION_ERROR`"라고 쓴다.
 
-## 8. 주문·재고: 현재 우회와 P0 목표를 나란히
+### 7.1 P0 병합 뒤(2e94daa0) audit 대조
 
-현재 우회는 모두 실행했고(`orders.current.aip`, `extensions/shop.mjs`, `scenario.current.ts`), 목표 정의(`orders.target.aip`, `extensions/shop.target.mjs`, `scenario.target.ts`)는 **미실행**이다. 목표 정의의 `input` 문법은 decisions.md와 `feat/expr-p0b-arith-20261121`의 시험(`spikes/spike-v3-write/tests/expr_arith.rs`)에서 가져왔다. 이 worktree의 바이너리는 P0를 포함하지 않아 `DEF.PARSE_UNKNOWN_KEY`로 멈춘다(`run.mjs`가 매번 기록). 문법이 실제 구현과 맞는지는 병합 뒤 확인해야 한다.
+| audit # | 1차 등급 | 2차 실행 | 결과 |
+| --- | --- | --- | --- |
+| 2 주문+줄 원자 생성 | D | 변형 A: `bundle` 한 번으로 주문+줄 생성, 부모 실패·자식 실패 모두 고아 없음(A1~A3) | D에서 A로 올라간다(선언만, 단 합계는 클라이언트 값) |
+| 3 입력 수량 재고 차감 | C | `input { qty }`와 `to stock = stock - input.qty`로 확장 없이 실행(A1, A5, A7) | C에서 A로 올라간다 |
+| 7 주문 확정(재고·합계·상태) | C | 변형 A는 재고·원자 생성까지 선언으로 되나 합계 검증은 안 됨, 변형 B가 서버 단가 합계까지 확장 12줄로 한다(B1) | 합계를 서버가 신뢰해야 하면 C(확장) 유지. 확장 입력의 배열 부재(F14)로 다중 줄은 못 한다 |
+| 14 count·sum | B | 변화 없음 | |
 
-| 시나리오 | 현재 우회(실행) | P0 병합 뒤 목표(미실행) |
+## 8. 주문·재고: 우회와 P0 목표 실행 결과
+
+세 구현을 모두 실제 serve와 PostgreSQL 17에서 실행했다. P0-A·B·C 통합 2e94daa0을 merge하고 바이너리를 다시 빌드한 뒤, 이전에 `DEF.PARSE_UNKNOWN_KEY`(`input`)로 멈추던 `orders.target.aip`가 `service check`를 통과하는 것으로 새 소스를 확인했다. 문법과 wire는 `wp1-notes.md`(`input` 블록, 바인딩 규칙)와 `wp2-notes.md`(`refs: {필드: {created: 연산번호}}`, `ctx.data.apply`의 일곱 번째 인자 `input`)를 따랐다.
+
+| 구현 | 정의 | 확장 | 파일 |
+| --- | --- | --- | --- |
+| 우회(현재 문법) | `orders.current.aip` | `extensions/shop.mjs` | `scenario.current.ts` |
+| 변형 A: 선언만(P0-A·B) | `orders.target.aip` | 없음 | `scenario.target-a.ts` |
+| 변형 B: 확장(P0-B·C), 서버가 단가 계산 | `orders.target-b.aip` | `extensions/shopb.mjs` | `scenario.target-b.ts` |
+
+### 8.1 실행한 시나리오와 결과
+
+| 요구 | 실행 결과 |
+| --- | --- |
+| 주문+줄 원자 생성(bundle refs) | A1: 호출 한 번으로 주문 1, 줄 2(만든 주문 id를 가리킴), 재고 10→7, 5→3. A3: 줄의 상품이 없으면 `MISSING_TARGET`이고 주문·줄 수 불변(고아 주문 없음) |
+| 입력 수량 재고 차감 | A1·A5: 서버가 잠근 행에서 계산. 수량 0, 5000(범위 밖), -1, 누락은 `BAD_VALUE`, 재고(3)보다 큰 4는 `INVALID_STATE`, 재고 불변 |
+| 재고 부족 시 전체 롤백 | A2: 묶음 안 두 번째 `take`가 모자라면 `INVALID_STATE`이고 주문·줄·첫 `take`까지 모두 남지 않음. B2: 확장이 `EXTENSION_REJECTED:INSUFFICIENT_STOCK`, 주문·줄·재고 불변 |
+| 같은 key 재전송 | A4: `replayed: true`, 처음 만든 `created` id를 그대로 돌려주고 재고는 한 번만 차감, 같은 key에 다른 본문은 `IDEMPOTENCY_MISMATCH`로 실행 안 됨. B4: 확장 재전송이 같은 주문 id를 재생, 주문 1건 |
+| 가격 위조 | 아래 8.3 |
+| 동시 주문 | 아래 8.2 |
+
+### 8.2 동시 주문: 재고 4개, 2개짜리 6건 동시 전송
+
+| 구현 | 성공 건수(관찰) | 실패 코드 | 비고 |
+| --- | --- | --- | --- |
+| 우회(1차, 50f2bc27) | 1 | `WORKER_BUSY` 2, `EXTENSION_ERROR` 3 | 5회 모두 1건 |
+| 우회(2차, merge 뒤) | 1 | `WORKER_BUSY` 2, `CONFLICT` 3 | 실행마다 1건. 충돌이 `CONFLICT`로 보이는 것만 달라짐 |
+| 변형 A, `take`를 먼저 | **2** | `INVALID_STATE` 4 | 6회 이상 모든 실행에서 2건(40~60ms). 기대치 2건과 일치 |
+| 변형 A, 줄을 먼저 | 0, 1, 2로 실행마다 다름 | `DEADLINE_EXCEEDED` 다수 | 아래 교착 설명 |
+| 변형 B, 사용자당 1건씩 2건 | 2 | | 관찰한 모든 실행(5회) |
+| 변형 B, 6건(`take`를 줄 생성보다 먼저) | 2 | `WORKER_BUSY` 2, `EXTENSION_ERROR` 2 | 관찰한 모든 실행(5회)에서 2건. `WORKER_BUSY`는 한 사용자의 동기 worker 한도(기본 2) |
+
+모든 구현에서 재고는 음수가 되지 않았고 성공 건수 x 2만큼만 줄었으며 실패한 호출의 주문·줄은 남지 않았다(안전성). 차이는 활성이다. 우회는 낙관적 충돌 때문에 가능한 2건 중 1건만 성공하고, 목표 변형은 행 잠금 직렬화로 가능한 만큼 성공한다.
+
+**잠금 순서 함정(실행으로 발견).** 변형 A에서 `create OrderLine`을 `take`보다 먼저 두면 줄의 FK가 상품 행에 공유 잠금을 먼저 잡고, 뒤의 `take`가 같은 행을 갱신 잠금으로 올리려 해서 동시 요청끼리 서로 기다린다. PG 로그에 `deadlock detected`가 찍히고(1초 deadlock_timeout), 서버 재시도가 이어지는 동안 요청 한도에 걸려 `WIRE.DEADLINE_EXCEEDED`가 된다. `take`를 묶음의 맨 앞에 두면 같은 요청들이 2건 성공으로 40ms 안에 끝난다. 정확한 락 모드 설명은 PG 로그의 교착 기록과 락 순서에서 추정한 것이고 `pg_locks`로 직접 확인하지는 않았다. 한 줄 순서가 결과를 가르므로 문서에 "같은 행을 갱신하는 연산을 묶음 앞에 둔다"는 지침이 필요하다(제품 코드는 수정하지 않았고 기록만 한다). 변형 B의 확장도 `take`를 줄 생성 앞에 두었다.
+
+### 8.3 가격 위조 문제를 막는 방법
+
+| 구현 | 호출자가 가격을 속이면 | 실행 결과 |
 | --- | --- | --- |
-| 주문과 줄 원자 생성 | 호출 2회: 부모 `create`, 그 id로 줄 `bundle`, 확장이 확정. 줄 생성 전에 끊기면 줄 없는 주문이 남음(DB로 확인) | P0-A: `bundle` 한 번에 `create Order`, `create OrderLine ... refs {order: {created: 0}}`. 실패 시 부모도 남지 않음(A1) |
-| 입력 수량만큼 재고 차감 | 확장이 읽고 계산해 `setStock`(patch+expect)으로 씀. 확장 17줄 | P0-B: `transition take { input { qty }; from stock >= input.qty; to stock = stock - input.qty }`와 apply의 `input: {qty}`. 확장 없이 선언만(A2) |
-| 동시 주문 | 재고 4, 주문 6건(각 2개): 성공 1건, `WORKER_BUSY` 2, `EXTENSION_ERROR` 3, 재고는 음수 아님(F15) | 행 잠금으로 직렬화되어 가능한 만큼 성공해야 한다. 기대: 재고 3, 수량 1 요청 5건이면 정확히 3건 성공(B1) |
-| 멱등 재전송 | 확장 key 재전송은 `replayed: true`로 재고 한 번만 차감, 확정 주문의 다른 key 재확정은 거부, 부모 `create` 재전송은 중복 주문 없음 | 묶음 전체가 한 key. 재전송이 저장된 `created`를 재생하고 재고를 다시 줄이지 않아야 한다(A3) |
-| 서버가 단가로 합계 계산 | 확장이 줄을 읽어 합계 계산(700) | 변형 A(선언만)는 `total`과 `unitPrice`를 클라이언트가 보내므로 가격 위조가 가능하다. 변형 B(P0-C `ctx.data.create` + `take`)가 서버 단가로 계산하고 원자적이다(B2). 다만 확장 입력에 배열이 없어 `Json` 입력이 된다(F14) |
+| 우회 정의 | 줄의 `unitPrice`와 확장이 계산하는 합계가 그대로 속은 값이 된다 | `unitPrice` 1(실제 200)로 보낸 주문이 합계 1로 확정됨(`workaround-price-forgery-is-accepted`). **우회 정의에도 위조 구멍이 있었다** |
+| 변형 A | 줄 `create allow`에 `unitPrice = product.price`를 두어 단가를 서버가 강제한다. 합계 `total`은 곱셈이 없어(E3) 선언으로 검증할 수 없다 | 단가 위조는 `WIRE.FORBIDDEN`이고 흔적 없음. 합계 위조는 막지 못한다: 정당한 줄 1개(합계 200)에 `total: 1`을 보낸 주문이 그대로 저장됨(A6). 한계로 기록 |
+| 변형 B | 호출자는 단가·합계를 보내지 않는다. 확장이 `Product.price`를 읽어 합계를 계산하고 `internal` 전이 `settle`로 쓴다. 직접 create는 합계 0의 미확정 주문과 단가가 맞는 줄만 허용한다 | 합계 999 직접 create(placed 참과 거짓 모두), 단가 1 줄은 `FORBIDDEN`. `Product.take`·`Order.settle` 직접 호출은 `NOT_EXPOSED`. 남의 `owner`를 넣은 확장 호출은 거절. 서버가 계산한 합계 400(`unit_price` 200, 수량 2)이 저장됨(B1, B3) |
 
-병합 뒤 후속 작업 순서: (1) 새 바이너리로 `orders.target.aip` check, (2) 문법 차이(`refs`, `input`, `ctx.data.apply`의 input 인자 이름. 확인 필요)를 맞춤, (3) `run.mjs`의 `targetOnly` 단위를 일반 단위로 바꾸고 `scenario.target.ts`를 연결, (4) 위 기대값(특히 B1의 정확히 3건)을 실행으로 확인, (5) `shop.mjs`와 현재 우회 시나리오를 목표와 대조해 줄일 수 있는 코드 양을 이번 절의 줄 수와 비교.
+변형 B의 남은 틈: 직접 create로 합계 0의 줄 없는 미확정 주문은 클라이언트가 스스로 만들 수 있다(B3, 재고와 합계에는 영향 없음). `expose create`에는 `internal` 표지가 없어 확장만 만들 수 있게 닫지는 못한다. 확장은 호출자 id를 알 수 없어 `owner`를 입력으로 받고, 다른 사람의 id를 넣으면 create의 `allow owner = actor`가 거절한다. 확장 입력에 배열이 없어(F14) 변형 B는 한 번에 한 상품만 주문한다. 우회와 변형 A는 줄 여러 개를 다룬다.
+
+### 8.4 작성량과 보장 차이 (실제 파일 기준)
+
+줄 수는 5.1절과 같은 방식(빈 줄·`//` 주석 제외, 괄호는 전체 줄)이다. 일반 백엔드 줄 수는 추정하지 않았다.
+
+| 항목 | 우회(현재) | 변형 A(선언만) | 변형 B(확장) |
+| --- | --- | --- | --- |
+| 정의 줄 | 33(41) | 26(32) | 36(42) |
+| 확장 코드 줄 | 17(19) | 0 | 12(16) |
+| 주문 한 건을 넣는 클라이언트 호출 수 | 3: 부모 `bundle`, 줄 `bundle`, `writeExtension` | 1: `bundle` | 1: `writeExtension` |
+| 시나리오 파일(시험 코드) | 106줄(124), 호출 지점 17 | 122줄(134), 호출 지점 18 | 72줄(80), 호출 지점 10 |
+| 다중 줄 주문 | 가능 | 가능 | 한 상품만(F14) |
+| 고아 주문 | 줄 생성 전에 끊기면 줄 없는 미확정 주문이 남음(DB 확인). 정리는 앱 몫 | 남지 않음(A2, A3) | 확장 실패 시 남지 않음(B2). 단 클라이언트가 합계 0 미확정 주문을 직접 만들 수는 있음 |
+| 갱신 유실 | 읽고 계산해 쓰는 확장이 `expect`로 보호해 유실은 없지만 충돌은 거짓 실패가 된다 | 계산을 서버가 잠근 행에서 하므로 읽은 값이 낡을 일이 없다 | `take`는 같다. `settle`의 합계는 확장이 계산한 값을 `patch`로 쓴다 |
+| 동시성(재고 4, 2개짜리 6건) | 성공 1(가능 2) | 성공 2(`take` 먼저). 줄 먼저면 교착 | 성공 2(6건 중 `WORKER_BUSY` 2, `EXTENSION_ERROR` 2) |
+| 재고 부족 판정 | 확장이 읽고 비교 | `from stock >= input.qty` | 확장 사전 확인과 `take`의 `from` |
+| 단가·합계 위조 | 가능(실행 확인) | 단가 차단, 합계는 클라이언트 값 | 둘 다 차단 |
+| 멱등 재전송 | 가능(각 호출마다 key. 부모 `create`와 확장 호출이 따로) | 요청 하나의 key가 전체를 덮음 | 확장 호출 하나의 key |
+
+정의 줄이 변형 B에서 가장 많은 것은 직접 create를 좁히는 조건(`total = 0`, `placed = false`, `unitPrice = product.price`)과 `settle` 전이, 확장 계약 선언 때문이다. 줄 수만 보면 변형 A가 가장 작지만 합계를 선언으로 검증할 수 없다는 보장 차이가 있어, 신뢰가 필요한 합계에는 변형 B가 맞다.
 
 ## 9. 범위 밖 발견과 후속 조치 (`build-sdk.mjs`만 수정)
 
@@ -202,12 +267,15 @@ audit의 "범위 밖 발견"인 LIMITS E2 본문과 `ctx.reject`의 불일치는
 | P-2 | JWT TTL을 주입한 임시 `run.mjs` 사본으로 `CARGO_TARGET_DIR=/tmp/aip-target-apps AIP_BIN=/tmp/aip-target-apps/debug/aip AIP_TEST_TOKEN_TTL=3600 node product/tests/fixtures/expr-apps/.tmp-run-jwt.mjs --app saas --lang ts` 실행 → `FAIL 16`, 모두 `WIRE.UNAUTHENTICATED`; `AIP_TEST_TOKEN_TTL=300` → `PASS 17 / FAIL 0`. 원인은 `crates/aip-auth/src/lib.rs:657`의 900초 상한으로 확정했다. 제한은 설정 불가이며, 응답은 `WIRE.UNAUTHENTICATED` / "토큰 검증 실패"로 일반화되고 로그에 원인은 없다. 제품 문서에는 최대 900초가 이미 명시돼 있다 | 원인 확정(F17) |
 | P-3 | `access x = totalOfVisible(Comment)`를 `Task`의 `commentCount`에 사용하면 `spikes/spike-v1-fixture/src/sema.rs:1721`이 `DEF.ACCESS_MISMATCH`와 실제 문구 `` `visibleTotal`은 `Comment` 기준 groupKey 집계에만 사용 ``을 만든다. 판정은 `p != r.name || a.group_key.is_none()`이며 여기서 `r.name`은 집계 선언 resource(`Task`), `p`는 접근 원본(`Comment`)이다. 즉 Comment 행이 Task를 가리키는 groupKey 집계라는 뜻이 반대로 읽힌다 | `sema.rs`·`codes.rs`는 다른 작업자 소유라 수정하지 않음. 제안: `` `{n}`은 `{r.name}`을 참조하는 `{p}`의 groupKey 집계에서만 사용 ``(예: “`visibleTotal`은 `Task`를 참조하는 `Comment`의 groupKey 집계에서만 사용”) |
 | P-4 | LIMITS.md E2 본문 대 `ctx.reject` 동작 | audit.md가 이미 기록한 항목, 이번에도 재현 |
-| P-5 | 확장의 낙관적 충돌이 호출자에게 `WIRE.EXTENSION_ERROR`로 보임(동시 주문 시험, F15) | `feat/expr-p0c-ext-create-20261121`의 "CONFLICT·ALREADY_EXISTS를 코드 그대로 전달" 커밋이 다루는 것으로 보이나 이 worktree에서 확인하지 못함 |
+| P-5 | 확장의 낙관적 충돌이 호출자에게 `WIRE.EXTENSION_ERROR`로 보임(1차 동시 주문 시험, F15) | P0 merge 뒤 같은 시험에서 `WIRE.CONFLICT`로 보임을 확인했다. 해소됨 |
+| P-6 | 변형 A 묶음에서 `create OrderLine`을 `take`보다 앞에 두고 같은 상품을 6건 동시에 주문 → 0~2건 성공, 나머지 `WIRE.DEADLINE_EXCEEDED`, PG 로그 `deadlock detected`. `take`를 맨 앞으로 옮기면 정확히 2건 | 잠금 순서에 따라 교착이 나는 작성 함정이다. 문서에 순서 지침이 없다. 응답은 `DEADLINE_EXCEEDED`라 교착이 원인임을 호출자가 알기 어렵다 |
+| P-7 | 변형 B 확장 안에서 `take`가 `INVALID_STATE`로 실패하거나 낙관적 충돌이 나면 호출자는 `WIRE.EXTENSION_ERROR`를 받는다. 사전 확인이 못 거른 경쟁 패배는 `EXTENSION_REJECTED`가 아니라 일반 오류로 보인다(6건 동시 시험의 `EXTENSION_ERROR` 원인이 `take` 실패라는 것은 확장 로그를 보지 않은 추정) | 사유 구분이 필요하면 확장이 `ctx.reject`를 쓰도록 `take` 실패를 잡을 수 없다(호출이 poison됨, SDK.md 업무 거절 절). 호출자는 재시도 가능 여부를 알기 어렵다 |
 
 ## 10. 미실행과 한계
 
-- 주문·재고 목표 정의와 시나리오 5개: 미실행(P0-A·B·C 병합 전).
-- 효과 `delete many`·`update many`의 `maxRows` 초과 동작, 초대 직후 로그인(`principal bind`), 비동기 job·파일·실시간, 관계 필드 필터(audit #13)는 실행하지 않았다.
+- 실행하지 않은 것: 효과 `delete many`·`update many`의 `maxRows` 초과 동작, 초대 직후 로그인(`principal bind`), 비동기 job·파일·실시간, 관계 필드 필터(audit #13), 변형 B의 다중 줄 주문(확장 입력에 배열이 없어 시나리오로 만들지 못함), Python SDK로 P0 기능 호출(`created(i)` helper, `apply_*`의 `input=`). 이 SKIP 사유는 모두 범위 밖이며 `run.mjs` 출력의 SKIP은 0이다.
 - Python 시나리오는 SaaS 7개, 커뮤니티 3개로 TypeScript보다 적다. 주문·재고는 TypeScript만 실행했다.
-- 동시 주문 결과는 실행마다 어느 호출이 성공하는지가 달라지고 성공 건수는 모든 실행에서 1건이었다(5회 확인). 시험은 불변식(재고 음수 없음, 성공 건수와 차감량 일치)만 단언하고 성공 건수 자체는 단언하지 않는다.
+- 동시 주문 결과는 어느 호출이 성공하는지가 실행마다 다르다. 시험은 불변식(재고 음수 없음, 성공 건수와 차감량 일치, 성공한 주문의 줄만 남음)을 매번 단언하고, 건수 자체는 변형 A의 `take` 먼저 경우만 정확히 2건으로 단언한다(줄 먼저와 변형 B 6건은 실행마다 달라 건수를 단언하지 않고 기록만 한다).
+- 변형 A `take` 먼저가 항상 2건이라는 결론은 약 6회 관찰에 근거한다. 다른 부하·다른 PG 설정에서는 확인하지 않았다.
+- RED 확인(시험이 실패할 수 있는지): 변형 A의 `unitPrice = product.price` 제거는 A6가, 변형 B의 `total = 0` 제거는 B3가, `take`의 `from` 제거는 A2·A5(`INVALID_STATE`가 `BAD_VALUE`로 바뀜)가 잡았다. 처음 시험은 `from`이 없어도 stock의 `Int(0..)` 범위 검사가 음수를 막아 통과했기 때문에 코드 단언을 보강했다.
 - 일반 백엔드 비교는 계층 목록이며 줄 수나 개발 시간은 측정하지 않았다.
