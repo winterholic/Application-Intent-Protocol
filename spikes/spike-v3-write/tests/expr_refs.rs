@@ -29,10 +29,12 @@ resource Order {
   rows read when owner = actor
   transition confirm { from status = "open"; allow owner = actor; to status = "confirmed" }
   transition hide { from true; allow owner = actor; to status = "hidden" }
+  transition mark { from true; allow owner = actor; to status = "marked" }
   transition sweep { from status = "open"; allow owner = actor; to status = "swept" }
   expose create { allow owner = actor; fields owner, status }
   expose apply confirm { target id; bulk maxRows 5 }
   expose apply hide { target id; bulk maxRows 5; internal }
+  expose apply mark { target id; bulk maxRows 100 }
   expose apply sweep { target where; bulk maxRows 5 }
   expose read { select id, status; filter status.eq; budget { rows 10; depth 1; deadline 1s; cost 100 } }
 }
@@ -381,14 +383,15 @@ async fn refs_are_decided_before_the_transaction_so_no_earlier_operation_runs() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn refs_and_target_created_count_one_row_toward_the_row_limit() {
-    ACTOR.scope(24, async {
-        // 1000행 상한은 `target.created` 하나를 bulkMaxRows(5)가 아니라 1행으로 센다(검토 A-3).
+    ACTOR.scope(40, async {
+        // `mark`이 한 번에 대상 100행까지 열려 있어 19개를 선언 상한으로 세면 1900 > 1000(BULK_LIMIT)이다. `target.created`는 행 하나이므로
+        // 19행으로 세어 묶음이 실행된다(첫 `mark`가 바꾸고 나머지는 이미 목표 상태인 행이라 `unchanged`다, 검토 A-3).
         let mut ops = vec![order()];
         for _ in 0..19 {
-            ops.push(json!({"apply": "Order.confirm", "target": {"created": 0}}));
+            ops.push(json!({"apply": "Order.mark", "target": {"created": 0}}));
         }
         assert_eq!(ops.len(), 20);
-        assert!(bundle_plan(&*facts().await, &ops, &Knobs::default()).is_ok());
+        assert_eq!(code(run(&bundle_of(ops)).await), "OK");
     }).await
 }
 
