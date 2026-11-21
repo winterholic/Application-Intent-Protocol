@@ -276,8 +276,8 @@
 
 범위 밖에서 발견해 고치지 않은 것(한 줄씩):
 
-- 앱 패키저는 `workers`를 읽을 때 JSON 파싱에 실패하면 조용히 `return`한다(`product/tools/app-package.mjs:34`). 5.4절의 소비자 규칙과 반대다.
-- 파일 앞에 BOM이 있으면 `DEF.LEX_UNEXPECTED_CHAR`가 1열에서 난다(2.4절). 위치 계약과 무관하지만 Windows 편집기 사용자에게 혼란을 줄 수 있다.
+- 앱 패키저는 `workers`를 읽을 때 JSON 파싱에 실패하면 조용히 `return`한다(`product/tools/app-package.mjs:34`). 5.4절의 소비자 규칙과 반대다. **고침**: 파싱 실패와 `workers` 누락은 `CHECK_OUTPUT_INVALID`로 패키징을 멈춘다([contract.md](contract.md) C9).
+- 파일 앞에 BOM이 있으면 `DEF.LEX_UNEXPECTED_CHAR`가 1열에서 난다(2.4절). 위치 계약과 무관하지만 Windows 편집기 사용자에게 혼란을 줄 수 있다. **고침**: 다섯 형식 모두 맨 앞 BOM 하나를 무시한다. 위 2.4절 표의 BOM 행은 수정 전 관측이다([contract.md](contract.md) C10).
 - `help`는 영어이고 `message`는 한국어로 섞여 있다. 언어 정책은 이 계약이 정하지 않는다.
 - `aip-cli`의 시험 바이너리는 `AIP_TEST_DATABASE_URL`이 없으면 빌드 단계(`crates/aip-test-support/build.rs:13`)에서 중단된다. 진단 계약 시험은 DB를 쓰지 않는데도 PG 설정 없이는 실행할 수 없다(8.1절).
 

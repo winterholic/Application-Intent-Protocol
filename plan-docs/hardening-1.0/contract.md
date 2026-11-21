@@ -4,7 +4,7 @@
 
 ## 요약
 
-실행으로 확인한 것은 정의 케이스 104건(`syn1`·`syn2`·`syn4`·`syn5`)과 필터 연산 표(타입 14종 × 연산 10종, 영구 시험은 240칸), 코드 레지스트리 3종 218개(DEF 99, WIRE 110, CLIENT 9)의 양방향 대조, 실제 서버(PostgreSQL 17)에서 받은 WIRE 코드 24종, 두 SDK와 생성 binding 호출, 문서의 링크·인용 경로·```aip 예제 13개다. **확정 불일치는 8건**이다. 코드가 틀린 것 1건은 회귀 시험과 함께 고쳤고, 문서가 틀린 것 6건은 문서를 고쳤다. 나머지 1건(C8, 진단 JSON 키)은 다른 작업자 담당이라 고치지 않고 선택지만 적었다.
+실행으로 확인한 것은 정의 케이스 104건(`syn1`·`syn2`·`syn4`·`syn5`)과 필터 연산 표(타입 14종 × 연산 10종, 영구 시험은 240칸), 코드 레지스트리 3종 218개(DEF 99, WIRE 110, CLIENT 9)의 양방향 대조, 실제 서버(PostgreSQL 17)에서 받은 WIRE 코드 24종, 두 SDK와 생성 binding 호출, 문서의 링크·인용 경로·```aip 예제 13개다. **확정 불일치는 11건**이다(C1~C8 최초 대조, C9~C11은 진단 JSON 설계 작업이 범위 밖으로 넘긴 3건). 코드가 틀린 것 3건(C1, C9, C10)은 회귀 시험과 함께 고쳤고, 문서가 틀린 것 6건은 문서를 고쳤다. C8(진단 JSON 키)은 다른 작업자 담당이라 고치지 않았고, C11(시험 빌드 구조)은 영향만 기록하고 제안으로 남겼다.
 
 | # | 불일치 | 어느 쪽이 맞나 | 조치 | 커밋(제목) |
 | --- | --- | --- | --- | --- |
@@ -16,6 +16,9 @@
 | C6 | `GENERAL-UPDATE.md`가 `DEF.ADVISORY_EFFECT_NO_LOWER_BOUND`를 조건 없이 "나온다"고 하지만 `--dev-checks`에서만 나온다 | 코드가 맞다(상시 4종은 `spike-v11-dev-checks`의 `ALWAYS_ON`) | **문서 수정** | `docs: lowercase contract fingerprint, README anchor, dev-checks-only effect advisory` |
 | C7 | `SUPPORT.md`가 object·RAG 헤더 오류를 "코드 확인만"이라 했으나 실행으로 확인된다. 관리형 `/jobs`·`/files`·`/events`·`/messages`도 같은 코드다 | 코드가 맞고 문서가 보수적이었다 | **문서 수정**(실행 증거로 격상) | `docs(support): header error codes for managed routes were executed…` |
 | C8 | 진단 JSON 항목 키를 `COMPATIBILITY.md`와 `definition-diagnostics.md`가 `scope`·`help`를 항상 있는 것처럼 적는다. 실제로 `help`는 같은 코드가 반복되면 두 번째부터 없고, `.h.ts`·`.h.py`에는 `scope`가 없다 | 코드는 의도한 동작이다(`enrich.rs`: "수리 방법은 한 응답에 한 번"). 문서가 틀렸다 | **고치지 않음**: 진단 JSON 호환 범위는 다른 작업자 담당. [diagnostics-contract.md](diagnostics-contract.md)의 G3·G7이 같은 어긋남을 이미 다룬다. 이 대조가 더한 관측은 `help`가 같은 코드의 반복에서 빠진다는 것이다. 선택지는 아래 | |
+| C9 | 앱 패키저가 `aip service check` 성공 출력의 JSON 파싱에 실패하면 조용히 `return`해 worker 확장 검증을 건너뛴다(`product/tools/app-package.mjs`). 확장 선언은 있는데 manifest에 `extensions`나 모듈 파일이 없는 패키지가 만들어지고 운영자의 preflight에서야 실패한다 | 진단 계약 5.4절의 소비자 규칙(읽지 못하면 실패)이 맞다. 정상 check는 항상 `workers` 객체를 가진 JSON을 낸다 | **코드 수정**: `CHECK_OUTPUT_INVALID`로 패키징 중단. 회귀 시험 5개 | `fix(app-package): stop packaging when the definition check output cannot be read` |
+| C10 | 파일 앞 UTF-8 BOM의 결과가 다섯 형식에서 넷으로 갈린다. `.aip`는 1열 `DEF.LEX_UNEXPECTED_CHAR`, `.e.py`·`.h.py`는 오해를 부르는 `DEF.NON_LITERAL`, `.e.ts`·`.h.ts`는 통과 | 의도가 아니다. 문서에 BOM 규칙이 없고, 같은 정의가 형식에 따라 다르게 읽히며, Windows 편집기가 BOM을 쓴다 | **코드 수정**: `load_str`(다섯 형식의 단일 진입점)가 맨 앞 BOM 하나를 무시. 회귀 시험 3개 + 문법 카드에 규칙 추가 | `fix(syntax): ignore one leading UTF-8 BOM in every definition form` |
+| C11 | `aip-cli` 시험은 `AIP_TEST_DATABASE_URL` 없이는 빌드되지 않아 DB가 필요 없는 진단 시험까지 막힌다 | 안전장치(PG 기본값으로 공용 DB에 붙는 일 방지)는 맞다. 막는 범위가 넓다 | **고치지 않음**(구조 변경은 제안). 아래 6절 | |
 
 ## 1. 명세의 문법 규칙 ↔ parser·sema
 
@@ -118,6 +121,24 @@ aip service check /tmp/multi.aip   # stderr: diagnostics[1]와 [2]의 키 집합
 | 호환 표의 MySQL 서술(`WIRE.UNSUPPORTED` 등) | MySQL은 1.0 범위 밖이고 `input`·Decimal `sum`을 거절 | MySQL 어댑터는 이 빌드에 없다 | 미실행(범위 밖) | |
 | COMPATIBILITY "구서버가 새 키를 `WIRE.UNKNOWN_KEY`로 거절" | 이전 바이너리 필요 | 이전 바이너리가 없어 실행 못 함. 선언 없는 전이에 `input`을 보내면 `WIRE.UNKNOWN_KEY`인 것만 확인 | 미실행 | |
 | SDK CORS preflight(`x-aip-sdk`) | 브라우저에서 허용 목록 | CORS를 설정한 서버가 없다 | 미실행 | |
+
+## 6. 진단 JSON 설계에서 넘겨받은 3건
+
+`diagnostics-contract.md` 7절이 범위 밖으로 남긴 것이다. 기준은 `origin/main` `9043286f`다.
+
+| 항목 | 명세/문서 내용 | 실제 동작 | 판정 | 근거 명령 |
+| --- | --- | --- | --- | --- |
+| 앱 패키저의 check 출력 처리(C9) | 소비자는 JSON을 읽지 못하면 실패로 취급한다(진단 계약 5.4절). `app-package.mjs`의 주석은 확장 누락을 패키징 때 잡는다고 말한다 | 수정 전: `verifyWorkerExtensions`의 `try { JSON.parse(…) } catch { return; }`가 빈 출력·앞에 글이 붙은 출력·잘린 JSON·`[]`·`workers` 없는 JSON을 모두 통과시켰다. 영향은 `app-package.mjs` 한 곳뿐이다(`app-deploy.mjs`는 check 출력을 읽지 않고, 다른 도구에 같은 패턴 없음). 실제 바이너리는 성공 시 항상 `workers`를 내므로 정상 경로는 그대로다 | **결함(fail-open) → 고침**. 수정 후 위 다섯 입력이 `CHECK_OUTPUT_INVALID`(단계 `definition-check`)로 멈추고 출력 디렉터리를 남기지 않는다 | `node --test product/tests/app-package.test.mjs`(RED: 새 시험 5개 실패, GREEN: 파일의 30개 전부 통과). 묶음 `app-package`·`app-manifest`·`package-boundaries`·`app-deploy`·`smoke-options` 92개 통과 |
+| UTF-8 BOM(C10) | 문법 카드에 BOM 언급 없음. 진단 계약 2.4절은 `.aip`의 1열 `DEF.LEX_UNEXPECTED_CHAR`를 관측으로만 적었다 | 수정 전 다섯 형식의 결과가 `.aip` 거절, `.e.ts`·`.h.ts` 수락, `.e.py`·`.h.py` 거절(`DEF.NON_LITERAL`)로 갈렸다. 수정 후 다섯 형식 모두 수락하고 facts가 BOM 없는 파일과 같으며, BOM 뒤 진단의 줄·열도 같다. 둘째 BOM과 파일 안 BOM은 `.aip`에서 계속 거절한다. `service gen` 지문이 BOM 유무와 같다 | **결함(형식 간 불일치) → 고침** + 문법 카드에 한 줄 | `cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --test bom`(RED→GREEN), `aip service check`로 BOM 파일 5종 |
+| 시험 빌드의 DB 요구(C11) | CONTRIBUTING: 시험 DB는 전용 인스턴스, `AIP_TEST_DATABASE_URL`·`AIP_TEST_ADMIN_URL` 필수 | `aip-cli`의 dev-dependency `aip-test-support`가 `strict-db`를 켜므로 `crates/aip-test-support/build.rs:13`이 환경 변수가 없으면 패키지의 **모든** 시험 빌드를 중단한다(`AIP_TEST_DATABASE_URL is required; refusing PostgreSQL defaults`). 같은 build.rs가 `PG*` 환경 변수가 하나라도 있으면(이 작업 셸은 `PGHOST`·`PGPORT`가 설정돼 있었다) 역시 중단한다. `tests/*.rs` 41개 가운데 DB 코드를 부르지 않는 파일이 15개이고, 그중 `common`을 쓰지 않는 10개 바이너리(`codes`, `error_codes`, `help_commands`, `service`, `diff`, `contract_golden`, `identifier_length`, `runtime_disabled`, `service_boundaries`, `extensions`, 합 50개 시험)는 닿지 않는 가짜 DSN(`127.0.0.1:55999`, DB 서버 없음)만 줘도 전부 통과한다. 즉 막는 것은 시험이 아니라 빌드 단계다 | **영향 기록, 결함은 아님**(안전장치는 의도). 진단·도움말·계약 시험은 DB 없이도 돌릴 수 있는데 설정 없이는 컴파일조차 못 해서 진단 계약 변경의 시험 루프가 PG 준비에 묶인다 | `env -u AIP_TEST_DATABASE_URL -u PGHOST -u PGPORT cargo test -p aip-cli --test codes --no-run`(실패), 가짜 DSN으로 위 10개 바이너리 실행(통과) |
+
+C11의 제안(적용하지 않음):
+
+| 제안 | 내용 | 호환·위험 |
+| --- | --- | --- |
+| (가) `strict-db`를 시험 대상별로 분리 | DB를 쓰는 시험을 `crates/aip-cli`의 별도 시험 패키지(또는 feature `db-tests`)로 옮기고 `aip-cli` 본체의 dev-dependency에서 `strict-db`를 뺀다 | 시험 실행 명령과 CI 호출(`-p aip-cli --test …`)이 바뀐다. 안전장치는 DB 시험에 그대로 남는다 |
+| (나) build.rs는 값 검증만, 필수 여부는 런타임에서 | build.rs가 환경 변수 **없음**으로는 중단하지 않고 **있을 때만** 형식을 검사한다. `database_url()`·`admin_database_url()`이 이미 런타임에 같은 검사와 "required" 패닉을 한다(`lib.rs`) | 변경이 가장 작다. DB 시험을 설정 없이 돌리면 빌드가 아니라 실행에서 실패하므로 실패 시점만 늦어진다. `PG*` 거부도 런타임으로 옮길지 정해야 한다 |
+| (다) 진단 시험 전용 패키지 | `service check`·`explain-code`·진단 JSON 시험만 DB 의존성이 없는 패키지로 둔다 | 새 패키지가 하나 늘고 시험 파일을 옮겨야 한다 |
 
 ## 공개 계약을 바꾸는 후보(고치지 않음)
 
