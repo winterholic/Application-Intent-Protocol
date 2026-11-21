@@ -28,3 +28,18 @@
 2. **`ops` 응답 키는 compose가 있을 때만 나간다**: 기존 묶음의 응답은 글자까지 그대로다(저장된 멱등 결과 재생도 마찬가지). 구 클라이언트가 `applied[]`·`created[]`만 읽어도 깨지지 않는다. `BundleResult.ops`는 항상 채우므로 라이브러리 사용자(확장 `ctx.data.create` 경로)는 구간을 쓸 수 있다.
 3. **v3 시험 표 공유**: `expr_compose_bundle.rs`도 시험마다 다른 actor(`ACTOR` task-local)를 쓰고 행 수는 `owner_id`로 센다. `race`가 spawn하는 task에 `ACTOR.scope`를 다시 씌워야 한다. 격리 수준 시험은 `slot`·`log` 표의 INSERT 트리거(`seen` 표)로 `transaction_isolation`을 읽는다.
 4. **격리 표지의 출처**: compose의 `isolation`은 그 compose가 부르는 전이와 create의 `allow`가 부재 의존(`not exists`)이면 `serializable`이다(`isolation.rs`). 시험은 `Slot`의 create `allow free(this.owner)`(안에 `not exists`)로 만들었다.
+5. **TS 타입**: `generic.ts`의 `BundleOp`·`BundleRequest`·`BundleResult`·`BundleBuilder`에 세 번째 타입 인자 `Cp`(기본 `{}`)를 더했다. 두 인자만 쓰는 기존 코드는 그대로 컴파일된다. `BundleBuilder.compose(request)`는 핸들을 돌려주지 않는다. `BundleResult.ops?`는 `BundleOpSpan[]`이다. 부정 타입 시험은 `sdk/expr-refs-types.ts`(compose 마커 3개 추가, 계약 fixture에 `expose compose` 추가)이고 v6 TS 실행 시험은 `client/expr-compose-bundle-http.test.ts`다(생성 모듈 `generated-expr-compose.ts`는 시험이 쓴다).
+6. **Python SDK**: `bundle` docstring에 compose 연산과 `ops`만 적었다. 연산은 이미 그대로 전달되므로 코드는 바꾸지 않았다.
+7. **P0-A 시험 수정**: `tests/expr_refs.rs`의 `a_f3_…`에 있던 "compose 연산은 UNKNOWN_KEY 또는 VALUE_SOURCE_NOT_ALLOWED" 확인은 compose가 이제 실제 연산이라 `expr_compose_bundle.rs`의 `nesting_input_transitions_and_references_to_a_compose_are_refused`로 옮겼다(compose를 가리키는 `refs`·`target.created`는 `VALUE_SOURCE_NOT_ALLOWED`).
+
+## 시험과 RED
+
+- v3 `tests/expr_compose_bundle.rs`(7개): D-S1(apply → compose → apply와 구간), 대표 시나리오(input 차감 + compose, 어느 단계 실패든 전체 롤백), D-2(표지와 실제 `transaction_isolation`), D-3(계획 오류와 합산 행 수가 앞 연산 전에), D-F1·D-F2·A-F3(중첩·compose 참조·입력 전이), 반대 순서 묶음 경합, compose 없는 묶음의 구간.
+- v6 `tests/expr_compose_bundle_http.rs`(1개, 안에 TS 실행 포함): 구간·tags·재생·`IDEMPOTENCY_MISMATCH`·`ops` 없음(compose 없는 묶음)·롤백·계획 오류 코드·격리·TS 빌더.
+- RED(각각 해당 시험만 실패): D-2 분기 제거, 계획 오류 무시(D-3), compose를 1행으로 세기, 구간 기록 제거, compose 연산 건너뛰기, `bundle_tags`의 compose 분기 제거(D-1), 응답 `ops` 제거, 암호화 거절 제거(D-5).
+- V-1: 기존 정의 46개의 check·core·digest·gen 출력이 기준 바이너리와 동일(차이는 `facereview-mysql` python 생성 panic 로그의 스레드 번호 하나).
+
+## 남은 것 / 참고
+
+- compose 대상이 많은 묶음은 교착 확률이 올라간다(검토 5절). 연산 배열 순서가 곧 잠금 순서라는 점을 WP5 문서에 적을 것. 서버는 40P01을 최대 3회 재시도한다.
+- 응답 `ops`의 구간은 `[시작, 끝)` 두 수다(검토의 목록 예시 대신 구간으로 했다. 데이터를 중복하지 않는다).
