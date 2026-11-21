@@ -6,7 +6,7 @@
 
 - 반영: 1건. `spikes/spike-v6-transport/tests/audit_bd_idem_race.rs`(같은 멱등 키 12개 동시 요청 시험). 원본은 `audit/semantic-c-policy-20261116`의 b91f80dc.
 - 퇴보라서 제외: 1건. `work/sprint-read-access-declared`의 900f8325(읽기 확장 `ctx.data.read`에 `read.<Resource>` 선언 강제).
-- 보류: 1건. `codex/crypto-target-binding-red-20261107`. main에서 실제로 실패하는 반증 시험이 있으나 고치려면 rekey API 설계 변경이 필요하다.
+- 보류: 1건. `codex/crypto-target-binding-red-20261107`. main에서 실제로 실패하는 반증 시험이 있으나 고치려면 rekey API 설계 변경이 필요하다. 이후 [crypto-rekey.md](crypto-rekey.md)에서 원인을 확정했다: 스키마 그림자는 실제 결함이라 고쳤고, ref 범위와 CAS는 API 공백(선택지는 그 문서)이며 CAS 시험이 오래 걸린 것은 시험 훅 설계 오류였다.
 - 그 밖의 브랜치: 이미 main에 들어 있거나(PR squash 포함) 현재 구현이 대체했거나 일회성 검증·스냅샷이다. 66개 전부 아래 표에 있다.
 - main보다 앞선 커밋이 있는 원격 브랜치는 66개였다. 나머지 61개는 main에 완전히 포함돼 비교 대상이 아니다.
 
@@ -32,7 +32,7 @@
 | work/wbs723-slice13c-python-frame | Slice13-C watch 포팅 4커밋과 Python worker 입력 프레임 한도 정렬(84fb1f5a) | 이미 대체됨 | 프레임 한도 수정은 main에 있다: `spikes/spike-v4-worker/workers/worker.py`의 `MAX_FRAME_BYTES = 1024 * 1024`, `StreamReader(limit=MAX_FRAME_BYTES - 1)`, `tests/python_frame_limit.py`가 브랜치와 같은 blob. watch 포팅은 main의 `slice13f_watch.watchDetail`, `slice13d_recommend.watchRecommended`, `slice14k_watch`가 대체 |
 | work/wbs723-sprint13c-watch | 위와 같은 Slice13-C watch 포팅 4커밋(프레임 수정 제외) | 이미 대체됨 | 위 행과 같은 근거. 추가 1841줄이 main에 0%이지만 같은 화면을 main의 다른 확장이 구현 |
 | work/sprint-uuid-guest-guard | 3커밋. 256a9013(Uuid actor가 자기 비공개 Mongo 문서 읽기), f4270062(guest가 `actor_uuid`로 소유권을 얻지 못하게 함), 900f8325(읽기 확장 `ctx.data.read`에 `read.<Resource>` 선언 강제) | 앞 둘은 이미 대체됨, 셋째는 퇴보 | 앞 둘은 main에 같은 내용이 있다: `capability.rs`의 `actor_uuid`·`private_user_id`·`resolve_actor_uuid`, `lib.rs`의 `invoke_with_host_as`, 시험 `uuid_guest_guard.rs`·`principal_uuid_mongo.rs`. 셋째가 퇴보인 이유는 아래 "퇴보 상세" |
-| codex/crypto-target-binding-red-20261107 | rekey 대상 바인딩 반증 시험 5개와 시험용 `rekey_target_column_with_page_hook`(19줄) | 보류 | 아래 "보류 상세" |
+| codex/crypto-target-binding-red-20261107 | rekey 대상 바인딩 반증 시험 5개와 시험용 `rekey_target_column_with_page_hook`(19줄) | 보류 → 부분 반영 | 아래 "보류 상세"와 [crypto-rekey.md](crypto-rekey.md) |
 
 ### 2. 충돌로 자동 판정이 안 된 브랜치
 
@@ -143,7 +143,7 @@
   - `rekey_ref_change_after_select_is_rejected_by_cas_scope`는 `cargo test` 전체 실행이 600초 안에 끝나지 않았다. 원인은 확인하지 못했다(PG에서 rekey 연결이 클라이언트 대기 상태였다). 따로 실행하는 확인은 하지 않았다.
   - `rekey_checkpoint_identity_does_not_bind_deployment_schema`, `rekey_existing_api_accepts_ref_scope_without_a_ref_column_selector`는 통과.
 - 판정 이유: 시험 2개가 main에서 실패하므로 시험만 가져오면 CI가 빨개진다. 고치려면 스키마 한정과 ref 열 선택 API가 필요해 선별 반영이 아니라 설계 변경이다. 반영하지 않고 worktree 변경은 되돌렸다.
-- 후속: 별도 작업으로 rekey 대상 테이블을 배포 스키마로 한정하고 ref 범위 선택자를 추가한 뒤 이 시험을 가져온다. 운영 경로에서 `search_path`가 어떻게 고정되는지(`aip_runtime::rekey`)는 확인하지 못했다. 확인 필요.
+- 후속(처리됨): [crypto-rekey.md](crypto-rekey.md). 운영 연결은 `search_path`를 고정하지 않는다(`connect_owned_with_url`은 URL을 그대로 쓰고 서버 기본 `"$user", public`을 받는다). 테이블 한정은 고쳤고, ref 열 선택자는 공개 API 변경이라 선택지만 남겼다.
 
 ## 범위 밖에서 본 것
 
