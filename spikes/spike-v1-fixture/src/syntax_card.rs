@@ -200,7 +200,8 @@ pub fn render_markdown() -> String {
          - `fields` 안에서 다른 resource를 가리키는 타입은 참조 `X` 하나뿐이다(외래 키가 생긴다). `X.Id`는 `input`·`access` 인자·operation 입출력처럼 DB 열이 아닌 자리에서만 쓰며, `fields` 안에서는 정의 오류(`DEF.ID_FIELD_NEEDS_REFERENCE`)다. 기본 키는 숫자 `id: Id`(기본) 또는 UUID `id: Uuid`로 선언하며 `id: Item.Id`는 같은 오류다.\n\
          - 다른 행이 없음에 의존하는 `allow`·`from`(`not exists`, predicate 안과 중첩 포함)이나 그런 `check`가 걸린 전이·create는 서버가 SERIALIZABLE 트랜잭션으로 실행하고, 직렬화 실패·교착은 같은 요청을 서버가 최대 3회 다시 실행한다. 유일성·정원이 목적이면 `unique`나 `limit`과 `invariant`가 더 싸다.\n\
          - 알 수 없는 키는 무시하지 않고 오류다.\n\
-         - 문법 오류는 첫 번째에서 멈춘다. 의미 오류는 모아서 보고하며 원인을 먼저 둔다.\n",
+         - 문법 오류는 첫 번째에서 멈춘다. 의미 오류는 모아서 보고하며 원인을 먼저 둔다.\n\
+         - 파일 맨 앞의 UTF-8 BOM(U+FEFF) 하나는 파일 표지로 보고 무시한다(다섯 형식 모두). 둘째 BOM이나 파일 안의 BOM은 `.aip`에서 낯선 문자 오류다.\n",
     );
     out.push_str("\n## 블록과 키\n");
     for (block, keys) in BLOCK_KEYS {

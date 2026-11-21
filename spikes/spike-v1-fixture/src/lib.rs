@@ -54,6 +54,8 @@ pub fn wrong_language(path: &str) -> Option<Vec<Diag>> {
 }
 
 pub fn load_str(src: &str, form: Form) -> Result<sema::Output, Vec<Diag>> {
+    // A UTF-8 byte order mark (Windows editors write one) is a file marker, not part of the definition: every form ignores one leading BOM.
+    let src = src.strip_prefix('\u{feff}').unwrap_or(src);
     limits::check_source(src).map_err(|d| enrich::enrich(vec![d], src, form))?;
     match form {
         Form::A => parser::parse_spec(src, 1, 1),
