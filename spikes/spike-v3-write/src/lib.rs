@@ -595,8 +595,9 @@ async fn update(
     }
     let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
     // UPDATE에도 from 조건을 다시 건다. 잠금이 없거나 우회돼도 이미 바뀐 행을 두 번 바꾸지 않는다.
+    // 검사식이 NULL(판정 불가)이면 거절 쪽으로 읽는다. 위의 `IS NULL` 항이 주된 방어이고 이것은 NULL이 행 읽기에서 터지지 않게 하는 안전망이다.
     ranged.extend(term_guards);
-    let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
+    let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("COALESCE(({}), TRUE)", ranged.join(" OR ")) };
     let audit_table = AUDIT_TABLE.read().map_err(|_| internal("감사 테이블 잠금"))?.clone();
     let up = match audit_table {
         None => format!("UPDATE {} t SET {} WHERE t.id = ANY({ip}) AND {from} RETURNING t.id, {out_of_range}", table(res), sets.join(", ")),
@@ -870,7 +871,7 @@ async fn effects(
                 }
                 sets.push(format!("{col} = {}", cx.value(v, &value_env).map_err(internal)?));
             }
-            let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
+            let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("COALESCE(({}), TRUE)", ranged.join(" OR ")) };
             let ip = cx.params.bind(Some(id_array(effect_change)), id_array_cast(facts, res));
             let children = if let Some(max) = e.get("maxRows") {
                 let max = max.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many update 상한 오류"))?;
