@@ -113,3 +113,12 @@ await scenario("workaround-concurrent-orders-never-oversell", async () => {
   assert.equal(Number(sql(`SELECT count(*) FROM ${schema}."order" WHERE placed=true AND id IN (SELECT order_id FROM ${schema}.order_line WHERE product_id=${productId("C")})`)) - 0, okCount + 0, "확정된 주문 수와 성공 수가 같다");
   console.log(`INFO concurrent-orders: 재고 ${start}개, 주문 6건(각 2개) 동시 -> 성공 ${okCount}건, 결과 ${outcomes.join("|")}, 최종 재고 ${end}`);
 });
+
+// 우회 정의에는 줄의 단가를 서버가 검사하는 곳이 없다. 호출자가 단가를 낮춰 보내면 확장은 저장된 값으로 합계를 계산한다.
+await scenario("workaround-price-forgery-is-accepted", async () => {
+  const o = await createOrder(olga, "1", "ord-forge", [{ sku: "A", qty: 1, price: 1 }]); // 실제 단가는 200
+  const r = await olga.writeExtension("Order.place", { id: o }, { key: "ord-forge-place" });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(sql(`SELECT total FROM ${schema}."order" WHERE id=${o}`), "1", "단가를 1로 보낸 주문이 합계 1로 확정된다");
+  console.log("INFO workaround-price-forgery: 우회 정의에서는 호출자가 보낸 unitPrice 1이 그대로 합계 1이 됨(실제 단가 200)");
+});
