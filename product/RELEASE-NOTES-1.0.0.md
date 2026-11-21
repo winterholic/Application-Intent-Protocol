@@ -34,6 +34,22 @@ AIP(Application Intent Protocol) 1.0.0은 정의 파일 하나로 인증·정책
 - **릴리스 자동화.** 태그 push로 시작하는 `release.yml`: 4개 플랫폼 CLI 아카이브, `SHA256SUMS`, 빌드 provenance attestation, GitHub Release 초안, npm provenance publish, PyPI trusted publishing. 승인(environment `release`)과 태그 조건 없이는 publish하지 않는다.
 - **Linux 바이너리의 glibc 하한을 낮췄다.** Debian 12(glibc 2.36) 이미지에서 빌드해 요구 glibc가 2.39에서 2.34로 내려갔다(aarch64 측정). 자세한 내용은 [INSTALL](INSTALL.md#glibc-하한).
 
+### 표현력 변경 (기준 `4e132564`..`be94d064`)
+
+서버 코드 없이 선언만으로 쓸 수 있는 쓰기를 넓혔다. 모두 PostgreSQL 전용이고 새 정의에서만 쓰인다. 기존 정의의 facts, 계약 지문, 실행 digest, 생성 binding은 바뀌지 않는다(저장소 정의 46개와 63개를 기준 binary와 비교). 호환 경계는 [COMPATIBILITY](../COMPATIBILITY.md#표현력-변경의-호환-경계), 사용법은 [일반·부분 수정](GENERAL-UPDATE.md), [SDK](SDK.md#묶음bundle과-조합compose), [표현력 한계](LIMITS.md)다.
+
+- **결과 참조.** 한 `bundle`에서 앞 create가 만든 행의 ID를 뒤 create의 참조 필드(`refs`)나 뒤 전이의 대상(`target.created`)으로 넘긴다. TypeScript는 `client.bundle(b => ...)` 빌더와 `Created<R>` 핸들, Python은 `aip_sdk.created(i)`다. 주문과 줄을 한 요청에 만들고 중간에 실패하면 고아 행이 남지 않는다(`600b86ad`, `12421f9d`).
+- **제한 산술.** 전이의 `input { … }`와 `to f = f ± 항`(Int·Decimal, 항은 하나이고 양수). 서버가 잠근 행에서 계산하고 범위를 벗어나거나 NULL이면 `WIRE.BAD_VALUE`로 전체를 롤백한다. 곱셈, 두 항 이상, `repeat unchanged`와의 조합은 없다(`acaed2ab`, `b1bda3b2`, `e76efbab`).
+- **bundle 안 compose.** `atomic[]`에 `{"compose","targets","steps"}`를 넣어 compose와 apply·create를 한 트랜잭션에 묶는다. 중첩은 없고 `refs`는 compose 연산을 가리킬 수 없다. compose가 든 묶음의 응답에만 `ops` 구간이 붙고 compose 없는 묶음의 응답은 이전과 같다(`a947289e`, `583c4e07`).
+- **쓰기 확장의 `ctx.data.create`.** `access create.<Resource>`로 호출자의 공개 create 경로를 통해 한 행을 만든다. `ctx.data.apply`는 `input`을 받는다. Node `ctx.d.ts`와 Python `aip_ctx.py` 타입 파일은 저장소 소스에 있고 SDK 패키지에는 포함되지 않는다(`27f87d10`, `c24bede4`, `3a6edf5f`).
+- **Decimal `sum`.** `release sum(f)`가 `Decimal(p,s)`를 받는다. 결과는 `Decimal(p',s)` JSON 문자열(`"50.70"`, 빈 집합 `"0.00"`)이고 `rows read`를 적용한다. 합이 p'를 넘으면 `WIRE.OUTPUT_INVALID`다. `avg`는 아직 없다(`79f2d3e8`).
+- **정책 작성 경고 3종.** `DEF.ADVISORY_TENANT_UNSCOPED_READ`, `DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD`, `DEF.ADVISORY_WRITE_WIDER_THAN_READ`. 조언만 하며 정의를 거부하지 않고 `--dev-checks` 없이도 나온다. 저장소 정의 63개 중 2개에서 3건이 새로 나왔다(FlaskBB `Message` create, FaceReview `Video`·`Comment` create). 경고를 실패로 취급하는 CI가 있으면 영향을 받는다(`79f2d3e8`).
+- **진단 JSON 고정.** `aip service check`의 성공(stdout, 종료 0)과 실패(stderr, 종료 1) JSON의 키 집합과 타입을 시험으로 고정했고 항목에 `severity`(`warning`, `error`)가 더해졌다(`7e367ead`).
+- **완료된 멱등 응답 재생.** PostgreSQL 쓰기 확장의 같은 key 재전송이 이미 커밋된 결과를 worker 슬롯 없이 `replayed: true`로 돌려준다. 이전에는 슬롯이 차면 `WIRE.WORKER_BUSY`였다. 진행 중인 key는 기존 경로를 따른다(`241ae37f`, `7cdfed93`).
+- **암호화 리소스 거절.** `ctx.data.create`는 암호화 필드가 있는 resource를, 암호화가 켜진 서버는 묶음 안 compose·`refs`를 `WIRE.UNSUPPORTED`로 거절한다. 암호화는 1.0 지원 범위 밖이다(`3a6edf5f`, `dc68e4e6`).
+- **행 잠금 모드 조정.** 키를 바꾸지 않는 전이는 `FOR NO KEY UPDATE`, 키 변경·삭제·자식 행 갱신·삭제 효과는 `FOR UPDATE`다. 주문 줄을 먼저 만드는 묶음과 재고 차감 묶음이 동시에 올 때의 교착을 없앴고 응답 값은 같다(`824cc0e1`, `dc68e4e6`).
+- **`DEF.ACCESS_MISMATCH` 문구 정정.** 같은 정의를 같은 코드로 거부하고 실제 틀린 이유를 문구로 알려 준다(`79f2d3e8`).
+
 ## 설치
 
 [INSTALL](INSTALL.md)을 따른다. 요약:
@@ -66,6 +82,11 @@ CI가 네 target 모두에서 증명하는 것은 빌드, `aip --version`, `serv
 - **릴리스 gate의 baseline**: 업그레이드·롤백 경로의 기준을 "직전 릴리스 태그"로 바꾸는 일은 첫 릴리스 뒤에 한다(TBD).
 - **Intel macOS 지원**: runner 제공이 끊기면 제외한다(TBD).
 - **SBOM attestation**: 1.0.1 이후에 검토한다(TBD).
+- **표현력 변경은 PostgreSQL 전용이다.** MySQL 쓰기는 `input`·제한 산술을 `WIRE.UNSUPPORTED`로, 묶음의 `refs`·`target.created`·`compose`를 `WIRE.UNKNOWN_KEY`로 거절하고, **MySQL 읽기는 Decimal `sum`을 `WIRE.UNSUPPORTED`로 거절한다.** MySQL은 1.0 출시 묶음에 없다.
+- **구서버는 새 요청 키를 거절한다.** `refs`, `target.created`, `input`, 묶음의 `compose`는 구서버에서 `WIRE.UNKNOWN_KEY`다. 새 문법을 쓰려면 서버와 SDK가 같은 릴리스여야 한다.
+- **여전히 선언만으로 못 하는 것.** 계산 집계(`Σ 수량×단가`), `avg`, nullable 정렬과 cursor, 관련 필드의 필터·정렬, 확장 입력의 배열, 공개 `count`의 `rows read` 적용(소유자 결정 대기)이다. 같은 정의에서 `count`는 숨은 행을 세고 `sum`은 세지 않는다. [표현력 한계](LIMITS.md)와 [지원 범위](SUPPORT.md)가 기준이다.
+- **정책 작성 경고는 조언이다.** `exists` 정책, 이름이 다른 테넌트 필드, 테넌트 조건을 모든 정책에서 한꺼번에 뺀 정의는 놓치고, allow와 `rows read`가 같은 뜻을 다르게 쓰면 오탐할 수 있다. 자동 tenant 격리는 여전히 1.0 제외다.
+- **진단 JSON 고정의 약속 수준.** 시험으로 키 집합을 고정했을 뿐 호환 약속(제거·타입 변경 금지)으로 문서화할지는 소유자 결정 전이다(TBD).
 
 ## 검증
 
@@ -74,3 +95,5 @@ CI가 네 target 모두에서 증명하는 것은 빌드, `aip --version`, `serv
 ## 업그레이드
 
 0.1.0에서 올릴 때 바뀌는 점: 생성 binding의 헤더 주석(`aip-protocol/1.0`), 앱 패키지 안의 SDK 파일 이름(`aip-sdk-1.0.0.tgz`), Python 배포 이름(`aip-sdk` → `application-intent-protocol-sdk`, 0.1.0은 공개된 적이 없다). 계약 지문은 바뀌지 않고, Core IR 태그를 유지했으므로 배포 저널에 기록된 IR digest도 같다. 기존 배포가 "변경됨"으로 읽히지 않는다는 점은 업그레이드 시험(`upgrade-drill`)으로 확인해야 한다(미실행, TBD).
+
+새 binary로 기존 정의를 `aip service check`하면 정책 작성 경고가 새로 나올 수 있다(오류가 아니고 facts·지문·digest는 같다). `DEF.ACCESS_MISMATCH`와 compose 진단은 코드가 같고 문구만 다르다. 서버에 새 문법을 쓰는 정의를 배포하기 전에 구 listener와 구 SDK를 같은 릴리스로 올린다.
