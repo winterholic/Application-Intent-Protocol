@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 use spike_v2_read::id_wire::{emit_entity_id, emit_id, encode_rows, parse_id, IdWire, MAX_SAFE_ID};
 use spike_v2_read::plan::{plan_read_with_wire, Caller, Reject};
 use spike_v3_write::{
-    apply_in_with_wire, before_commit_rejection, checks_in, classify_write_error, connection_failed, isolation_sql, lost_before_commit, send_commit,
-    CommitFailure, Knobs,
+    apply_in_with_wire, before_commit_rejection, bundle_in, checks_in, classify_write_error, connection_failed, isolation_sql, lost_before_commit,
+    send_commit, CommitFailure, Knobs,
 };
 use std::time::{Duration, Instant};
 use tokio_postgres::{Client, Transaction};
@@ -158,13 +158,17 @@ fn write_invocation<'a>(facts: &'a Value, name: &str, input: &Value, wire: IdWir
     Ok(WriteInvocation { declaration, wire, deadline, expires: Instant::now() + deadline })
 }
 
-/// A write extension may call any declared transition, so its transaction must meet the strictest marker in `access`.
+/// A write extension may call any declared transition or exposed create, so its transaction must meet the strictest marker in `access`.
 pub fn write_needs_serializable(facts: &Value, name: &str) -> bool {
     let Some((resource, extension)) = name.split_once('.') else { return false };
     facts["resources"][resource]["extensions"][extension]["access"].as_object().is_some_and(|access| {
-        access.keys().any(|transition| {
-            let Some((resource, transition)) = transition.split_once('.') else { return false };
-            facts["resources"][resource]["transitions"][transition]["isolation"] == "serializable"
+        access.keys().any(|grant| {
+            let Some((head, rest)) = grant.split_once('.') else { return false };
+            // `create.<Resource>` is the bundle's create, which `bundle_needs_serializable` judges by the same marker.
+            if head == "create" {
+                return facts["resources"][rest]["exposeCreate"]["isolation"] == "serializable";
+            }
+            facts["resources"][head]["transitions"][rest]["isolation"] == "serializable"
         })
     })
 }
@@ -561,8 +565,14 @@ async fn run_write_in(
                         Ok(result) => result,
                         Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 읽기가 기한 안에 끝나지 않음"),
                     }
+                } else if m["op"] == "create" {
+                    let left = expires.saturating_duration_since(Instant::now());
+                    match tokio::time::timeout(left, ctx_create_in(tx, facts, &allowed, &m, caller, &knobs, wire)).await {
+                        Ok(result) => result,
+                        Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 쓰기가 기한 안에 끝나지 않음"),
+                    }
                 } else if m["op"] != "apply" {
-                    rej("WIRE.UNSUPPORTED", "PostgreSQL 쓰기 확장 ctx는 apply·read만(create·mongo·redis 미지원)")
+                    rej("WIRE.UNSUPPORTED", "PostgreSQL 쓰기 확장 ctx는 apply·create·read만(mongo·redis 미지원)")
                 } else if !allowed.iter().any(|a| m["name"] == json!(a)) {
                     rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `{}` 쓰기가 없음", m["name"]))
                 } else {
@@ -666,6 +676,43 @@ async fn ctx_read_in(
         Err(_) => return rej("WIRE.DEADLINE_EXCEEDED", format!("읽기가 {}ms 안에 끝나지 않음", plan.deadline_ms)),
     };
     Ok(json!({"rows": encode_rows(rows, &plan.output_type, wire)?}))
+}
+
+/// `ctx.data.create` of a PostgreSQL write extension (access `create.<Resource>`): one row of the caller's exposed create, run as a
+/// one-operation atomic bundle in the extension's own transaction. It is the bundle a client would send, so the field allow-list,
+/// `expose create allow`, `ensure_refs_readable`, DB defaults and unique constraints are the client's; the principal is `caller`.
+/// The key is only checked (see [`check_ctx_key`]): the outer request's idempotency key already covers every call of the extension.
+async fn ctx_create_in(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    allowed: &[String],
+    message: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+    wire: IdWire,
+) -> Result<Value, Reject> {
+    let resource = message["name"].as_str().unwrap_or("");
+    if !allowed.iter().any(|grant| grant.strip_prefix("create.") == Some(resource)) {
+        return rej("WIRE.ACCESS_NOT_DECLARED", "create가 확장 access에 선언되지 않음");
+    }
+    let request = job_create_request(resource, &message["input"])?;
+    match message["input"].get("key") {
+        None | Some(Value::Null) => {}
+        Some(key) => check_ctx_key(key)?,
+    }
+    let out = bundle_in(tx, facts, &request, caller, knobs, wire).await?;
+    let created = out
+        .created_rows
+        .into_iter()
+        .map(|(resource, id)| {
+            let id = match id {
+                Some(id) => emit_entity_id(id, wire)?,
+                None => Value::Null,
+            };
+            Ok(json!({"resource": resource, "id": id}))
+        })
+        .collect::<Result<Vec<_>, Reject>>()?;
+    Ok(json!({"created": created}))
 }
 
 fn declares_encrypted(output_type: &Value) -> bool {
