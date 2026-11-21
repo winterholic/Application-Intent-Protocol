@@ -186,6 +186,15 @@ with open(os.environ["SDK_RECEIPT"], "a") as receipt:
         self.assertTrue(any(call[0] == "test" and "prototype/Cargo.toml" in call
                             and call[call.index("--target-dir") + 1] == "target" for call in calls))
 
+    def test_node_step_runs_the_external_create_order_regression(self):
+        # 이 시험은 빌드된 target/debug/aip와 PostgreSQL이 필요하다(AIP_BIN, AIP_TEST_DATABASE_URL). 둘 다 갖춘 곳은 Verify core의 이 node 단계뿐이라
+        # 빠지면 외부 저장소 create가 권한 없는 호출자에게 유일 제약 충돌을 알리는 퇴행(policy.md D13)을 CI가 모른다.
+        result, calls, _ = self.run_gate(runtime_stop=False, through_sdk=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        node_calls = [call for call in calls if call[0] == "node"]
+        self.assertEqual(len(node_calls), 1, node_calls)
+        self.assertIn("product/tests/external-create-order.test.mjs", node_calls[0])
+
 
 if __name__ == "__main__":
     unittest.main()

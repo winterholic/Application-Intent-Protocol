@@ -204,3 +204,11 @@ Linux(Docker `rust:1-bookworm`, linux/arm64, PostgreSQL 17, bwrap 없음)에서 
 
 - `cargo clippy --manifest-path spikes/spike-v6-transport/Cargo.toml --all-targets --locked -- -D warnings`가 `tests/concurrency_probe_http.rs:616`(613fab7a에서 추가)에서 `manual RangeInclusive::contains`와 `absurd_extreme_comparisons`로 실패한다(Rust 1.100.0, Linux 컨테이너). `tools/verify.sh`가 같은 명령을 `spike-v6-transport`에 돌리므로 Verify의 clippy 단계가 이 파일 때문에 막힐 수 있다. 이 후속 작업의 파일은 이 명령에서 오류가 없었다.
 - `v14_apply`는 이 Linux 컨테이너에 `tsc`가 없어 실패한다(4.3절이 `v14_apply`·`v16_bundle`로 기록한 것과 같은 원인, CI에는 `npm ci`가 있다). `v16_bundle`은 이번에 돌리지 않았다.
+
+### 8.7 `external-create-order.test.mjs`를 Verify에 연결 (policy.md D13)
+
+- 확인: 이 시험은 빌드된 `target/debug/aip`(`AIP_BIN`)와 PostgreSQL(`AIP_TEST_DATABASE_URL`, 호스트 `psql`)이 필요하다(`plan-docs/hardening-1.0/policy-probes/h.mjs`의 `setup`이 `aip service introspect·adopt-external·provision·serve`를 실제로 실행한다). 1457d7fa 시점에는 어떤 워크플로·스크립트도 이 파일을 부르지 않았다.
+- 연결: `tools/verify.sh`의 `node --test` 목록에 추가했다. 이 목록은 같은 스크립트 앞에서 `cargo build -p aip-cli --locked`를 마친 뒤이고, Verify core job이 PostgreSQL 17(`127.0.0.1:5433`)을 서비스로 띄운다. 스키마 이름(`ext_order`, `aip_h_ext_create_order`)은 다른 시험과 겹치지 않는다.
+- 연결을 빼면 실패하는 확인: `product/tests/test_rust_lint_gate.py`에 `test_node_step_runs_the_external_create_order_regression`을 추가했다(verify.sh가 `python3 -m unittest ... test_rust_lint_gate`로 Verify에서 돈다). `verify.sh`에서 그 줄을 지우면 `AssertionError: 'product/tests/external-create-order.test.mjs' not found in [...]`로 실패하고(12건 중 1건), 되돌리면 12건 통과한다.
+- 시험이 실제로 결함을 잡는지: 0e5344ee의 `spike-v3-write/src/lib.rs` 변경만 되돌리고 빌드해 이 시험을 돌리면 `{"code":"WIRE.ALREADY_EXISTS","msg":"생성: 유일 제약 위반"...}`로 실패했고, 원래 코드에서는 통과했다(`ℹ pass 1`). macOS 로컬(PG 17 컨테이너, `PGHOST`·`PGPORT` 제거)에서 실행한 결과이고, GitHub Verify에서의 실행은 이 문서 작성 시점에 확인하지 못했다.
+- 범위 밖 발견: `product/tests/upgrade-drill.test.mjs`도 어떤 워크플로·스크립트에도 연결돼 있지 않다(이름 검색 기준). 이번에는 손대지 않았다.
