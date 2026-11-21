@@ -24,6 +24,50 @@ fn before_commit_failure(error: &tokio_postgres::Error) -> Value {
     }
 }
 
+/// Read a committed result before taking a worker slot. An absent row (including an in-flight,
+/// uncommitted claim) is a miss so the caller keeps the existing slot/backpressure path.
+pub async fn replay_completed(db: &mut Client, facts: &Value, body: &Value, actor_id: Option<i64>, wire: IdWire) -> Result<Option<Value>, Value> {
+    let exact_body = body.as_object().is_some_and(|object| object.len() == 2 && object.contains_key("key") && object.contains_key("request"));
+    let request = &body["request"];
+    let exact_request =
+        request.as_object().is_some_and(|object| object.len() == 2 && object.contains_key("extension") && object.contains_key("input"));
+    let Some(key) = body["key"].as_str().filter(|key| exact_body && !key.is_empty() && key.len() <= 100) else {
+        return Ok(None);
+    };
+    let Some(name) = request["extension"].as_str().filter(|_| exact_request) else {
+        return Ok(None);
+    };
+    if validate_write(facts, name, &request["input"], wire).is_err() {
+        return Ok(None);
+    }
+    let principal = super::principal_key(actor_id, wire);
+    let schema = spike_v2_read::sqlgen::schema();
+    let stored =
+        match db.query_opt(&format!("SELECT request,result::text FROM {schema}.aip_idem WHERE principal=$1 AND key=$2"), &[&principal, &key]).await {
+            Ok(stored) => stored,
+            Err(error) => return Err(before_commit_failure(&error)),
+        };
+    let Some(row) = stored else { return Ok(None) };
+    let stored_request: String = row.get(0);
+    let matches = match crate::encryption::stored_request_matches(facts, &stored_request, request, schema, &principal, key) {
+        Ok(matches) => matches,
+        Err(error) => return Err(failure(error.code)),
+    };
+    if !matches {
+        return Ok(Some(failure("WIRE.IDEMPOTENCY_MISMATCH")));
+    }
+    let mut result: Value = match serde_json::from_str(&row.get::<_, String>(1)) {
+        Ok(result) => result,
+        Err(_) => return Err(failure("WIRE.INTERNAL")),
+    };
+    // A committed claim placeholder is not a completed response and must not bypass backpressure.
+    if result["ok"] != true {
+        return Ok(None);
+    }
+    result["replayed"] = json!(true);
+    Ok(Some(result))
+}
+
 fn transaction_setup(facts: &Value, name: &str, deadline: Duration) -> String {
     let isolation = spike_v3_write::isolation_sql(write_needs_serializable(facts, name));
     format!("{isolation}; SET LOCAL statement_timeout='{}ms'; SET LOCAL TimeZone='UTC'", deadline.as_millis())

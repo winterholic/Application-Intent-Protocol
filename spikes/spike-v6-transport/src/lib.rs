@@ -1708,6 +1708,40 @@ async fn serve_request(
         });
         return reply(&mut w, &result.to_string()).await;
     }
+    let mut early_write_db = None;
+    if write_extension && runtime.infrastructure.relational.is_none() {
+        if let Some(pool) = runtime.db_pool.as_ref() {
+            let mut db = match pool.acquire_until(deadline).await {
+                Ok(db) => db,
+                Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB 연결 또는 pool checkout 기한 초과")).await,
+            };
+            let replay = tokio::time::timeout_at(
+                deadline,
+                write_extension::replay_completed(&mut db, &facts, &body, session.as_ref().map(|session| session.actor_id), wire),
+            )
+            .await;
+            match replay {
+                Ok(Ok(Some(mut result))) => {
+                    if result["ok"] == true {
+                        if let Some(fingerprint) = contract_fingerprint.as_deref() {
+                            result["contractFingerprint"] = json!(fingerprint);
+                        }
+                    }
+                    let _ = db.release().await;
+                    return reply(&mut w, &result.to_string()).await;
+                }
+                Ok(Ok(None)) => early_write_db = Some(db),
+                Ok(Err(result)) => {
+                    let _ = db.release().await;
+                    return reply(&mut w, &result.to_string()).await;
+                }
+                Err(_) => {
+                    let _ = db.release().await;
+                    return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "완료 멱등 결과 조회 기한 초과")).await;
+                }
+            }
+        }
+    }
     let _extension_slot = if path == "/extension" || path == "/operation" || write_extension {
         match runtime.extension_slots.try_acquire() {
             Ok(slot) => Some(slot),
@@ -1853,9 +1887,12 @@ async fn serve_request(
     let Some(pool) = runtime.db_pool.as_ref() else {
         return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB pool 설정 없음")).await;
     };
-    let mut db = match pool.acquire_until(deadline).await {
-        Ok(db) => db,
-        Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB 연결 또는 pool checkout 기한 초과")).await,
+    let mut db = match early_write_db.take() {
+        Some(db) => db,
+        None => match pool.acquire_until(deadline).await {
+            Ok(db) => db,
+            Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB 연결 또는 pool checkout 기한 초과")).await,
+        },
     };
     if let Some(fence) = &runtime.deployment {
         let checked = tokio::time::timeout_at(deadline, async {
