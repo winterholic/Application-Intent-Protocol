@@ -41,6 +41,7 @@ await scenario("A2-insufficient-stock-rolls-back-order-lines-and-earlier-take", 
   }, { key: "tgt-a2" });
   assert.equal(r.ok, false);
   console.log(`INFO A2-rollback-code: 재고 부족 묶음 거절 코드 ${code(r)}`);
+  assert.equal(code(r), "WIRE.INVALID_STATE", "from stock >= input.qty가 판정한다(Int range 사후 검사만이면 BAD_VALUE)");
   assert.deepEqual([count('"order"'), count("order_line"), stock("A"), stock("B")], before, "주문·줄·첫 차감이 모두 남지 않는다");
 });
 
@@ -84,6 +85,7 @@ await scenario("A5-input-validation-before-and-inside-transaction", async () => 
   const missing = await olga.bundle({ atomic: [{ apply: "Product.take", target: { ids: [pD] } }] } as never, { key: "tgt-a5-missing" });
   for (const [name, r] of Object.entries({ ...results, missing })) assert.equal((r as { ok: boolean }).ok, false, name);
   console.log(`INFO A5-input-codes: qty0=${code(results.zero)} qty5000=${code(results.big)} qty4>stock3=${code(results.over)} qty-1=${code(results.neg)} 누락=${code(missing)}`);
+  assert.equal(code(results.over), "WIRE.INVALID_STATE", "재고보다 큰 수량은 from이 거절한다");
   assert.equal(stock("D"), 3, "거절된 요청은 재고를 건드리지 않는다");
 });
 

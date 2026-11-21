@@ -35,6 +35,7 @@ await scenario("B3-forgery-paths-closed", async () => {
   const pA = pid("A");
   const create = (values: Record<string, unknown>, resource: string, key: string) => olga.bundle({ atomic: [{ create: resource, values }] } as never, { key });
   const forgedTotal = await create({ owner: OLGA, total: 999, placed: true }, "Order", "tgt-b3-total");
+  const forgedTotalUnplaced = await create({ owner: OLGA, total: 999, placed: false }, "Order", "tgt-b3-total2"); // placed 조건과 따로 total 조건만 시험
   const forgedLine = await olga.bundle((b) => {
     const order = b.create("Order", { owner: OLGA, total: 0, placed: false });
     b.create("OrderLine", { product: pA, qty: 1, unitPrice: 1 }, { order });
@@ -42,7 +43,7 @@ await scenario("B3-forgery-paths-closed", async () => {
   const directTake = await olga.apply({ apply: "Product.take", target: { ids: [pA] }, input: { qty: 1 } } as never, { key: "tgt-b3-take" });
   const directSettle = await olga.apply({ apply: "Order.settle", target: { ids: ["1"] }, values: { total: 1 } } as never, { key: "tgt-b3-settle" });
   const spoofOwner = await olga.writeExtension("Order.placeAtomic", { owner: PAVEL, product: pA, qty: 1 }, { key: "tgt-b3-owner" });
-  for (const [name, r] of Object.entries({ forgedTotal, forgedLine, directTake, directSettle, spoofOwner })) assert.equal((r as { ok: boolean }).ok, false, `${name} 거부돼야 함: ${JSON.stringify(r)}`);
+  for (const [name, r] of Object.entries({ forgedTotal, forgedTotalUnplaced, forgedLine, directTake, directSettle, spoofOwner })) assert.equal((r as { ok: boolean }).ok, false, `${name} 거부돼야 함: ${JSON.stringify(r)}`);
   console.log(`INFO B3-forgery-codes: 합계999 직접 create=${code(forgedTotal as never)} 단가1 줄=${code(forgedLine as never)} take 직접=${code(directTake as never)} settle 직접=${code(directSettle as never)} 남의 owner=${code(spoofOwner as never)}`);
   assert.equal(stock("A"), 8, "차감 통로는 확장뿐");
   assert.equal(sql(`SELECT count(*) FROM ${schema}."order" WHERE total=999 OR owner_id=2`), "0");
