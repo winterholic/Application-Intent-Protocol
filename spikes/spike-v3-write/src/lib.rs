@@ -172,16 +172,16 @@ mod row_lock_tests {
     #[test]
     fn only_key_changing_or_deleting_transitions_keep_for_update() {
         let facts = json!({"resources": {"Item": {
-            "unique": [["sku"]],
-            "invariants": {"one": {"enforcement": {"kind": "partialUniqueIndex", "columns": ["slot"]}}},
-            "transitions": {
-                "take": {"to": {"stock": {"arith": {}}}},
-                "rename": {"to": {"sku": {}}},
-                "park": {"to": {"slot": {}}},
-                "patchSku": {"to": {}, "patch": ["sku"]},
-                "patchNote": {"to": {}, "patch": ["note"]},
-                "drop": {"delete": true, "to": {}}
-            }}}});
+        "unique": [["sku"]],
+        "invariants": {"one": {"enforcement": {"kind": "partialUniqueIndex", "columns": ["slot"]}}},
+        "transitions": {
+            "take": {"to": {"stock": {"arith": {}}}},
+            "rename": {"to": {"sku": {}}},
+            "park": {"to": {"slot": {}}},
+            "patchSku": {"to": {}, "patch": ["sku"]},
+            "patchNote": {"to": {}, "patch": ["note"]},
+            "drop": {"delete": true, "to": {}}
+        }}}});
         let lock = |names: &[&str]| row_lock(&facts, "Item", names);
         assert_eq!(lock(&["take"]), " FOR NO KEY UPDATE OF t");
         assert_eq!(lock(&["patchNote"]), " FOR NO KEY UPDATE OF t");
@@ -905,7 +905,11 @@ async fn effects(
                 conds.push(format!("u.{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
             }
             let use_pre_row = e.get("when").is_some();
-            let value_env = if use_pre_row { Env { this: Some(("pre_t".into(), res.to_string())), input: env.input.clone(), ..Default::default() } } else { env.clone() };
+            let value_env = if use_pre_row {
+                Env { this: Some(("pre_t".into(), res.to_string())), input: env.input.clone(), ..Default::default() }
+            } else {
+                env.clone()
+            };
             let mut sets = vec![];
             // 증감 효과가 바꾼 Int 필드의 선언 범위. 효과 대상 resource에도 DDL CHECK가 없으므로 같은 문장의 RETURNING에서 확인한다.
             let mut ranged = vec![];
@@ -1568,7 +1572,8 @@ fn transition_args(facts: &Value, res: &str, tr: &str, request: &Map<String, Val
         }
         return Ok(vec![]);
     };
-    let given = request.get("input").and_then(Value::as_object).ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: "input 객체 필요".into() })?;
+    let given =
+        request.get("input").and_then(Value::as_object).ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: "input 객체 필요".into() })?;
     if let Some(unknown) = given.keys().find(|key| !declared.iter().any(|field| field[0] == **key)) {
         return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{tr}`의 input `{unknown}`는 계약에 없음"));
     }
@@ -2188,7 +2193,11 @@ async fn compose_exec(
             if cp["sameScope"].is_null() { "NULL::text".into() } else { format!("({})::text", cx.value(&cp["sameScope"], &env).map_err(internal)?) };
         let p = cx.params.bind(Some(id_array(ids)), id_array_cast(facts, res));
         let step_transitions: Vec<&str> = plan.steps.iter().filter_map(|step| if let Step::Tr(t, _) = step { Some(*t) } else { None }).collect();
-        let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id{}", table(res), row_lock(facts, res, &step_transitions));
+        let sql = format!(
+            "SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id{}",
+            table(res),
+            row_lock(facts, res, &step_transitions)
+        );
         let params = cx.params.values.clone();
         let rows = typed_query(tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
         if rows.len() != ids.len() {

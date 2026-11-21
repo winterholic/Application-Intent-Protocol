@@ -43,7 +43,13 @@ async fn stock(db: &tokio_postgres::Client, schema: &str) -> String {
     db.query_one(&format!("SELECT stock::text FROM {schema}.product WHERE id = 7"), &[]).await.unwrap().get::<_, String>(0)
 }
 
-async fn run(db: &mut tokio_postgres::Client, worker: &mut Worker, facts: &Value, extension: &str, input: Value) -> Result<Value, spike_v2_read::plan::Reject> {
+async fn run(
+    db: &mut tokio_postgres::Client,
+    worker: &mut Worker,
+    facts: &Value,
+    extension: &str,
+    input: Value,
+) -> Result<Value, spike_v2_read::plan::Reject> {
     let tx = db.transaction().await.unwrap();
     let result = prepare_write_in_with_wire(&tx, worker, facts, &format!("Product.{extension}"), &input, &caller(), IdWire::DecimalString).await;
     match result {
@@ -72,7 +78,9 @@ async fn ctx_data_apply_forwards_input_from_node_and_python_extensions() {
     for statement in sqlgen::create_ddl(&facts).unwrap() {
         db.batch_execute(&statement).await.unwrap();
     }
-    db.batch_execute(&format!("INSERT INTO {schema}.member(id) VALUES (1); INSERT INTO {schema}.product(id, owner_id, stock) VALUES (7, 1, 50)")).await.unwrap();
+    db.batch_execute(&format!("INSERT INTO {schema}.member(id) VALUES (1); INSERT INTO {schema}.product(id, owner_id, stock) VALUES (7, 1, 50)"))
+        .await
+        .unwrap();
     let isolation = if cfg!(target_os = "macos") { Isolation::MacNetDeny } else { Isolation::None };
     for lang in [Lang::Node, Lang::Python] {
         let mut worker = Worker::try_start_with(lang, dir.0.to_str().unwrap(), isolation, WorkerLimits::default()).await.expect("official worker");

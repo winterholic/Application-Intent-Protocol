@@ -49,8 +49,11 @@ async fn post_with(address: SocketAddr, token: &str, fingerprint: &str, body: &V
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
         .write_all(
-            format!("POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\nx-aip-contract: {fingerprint}\r\ncontent-length: {}\r\n\r\n{body}", body.len())
-                .as_bytes(),
+            format!(
+                "POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\nx-aip-contract: {fingerprint}\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .await
         .unwrap();
@@ -152,15 +155,24 @@ async fn a_bundle_with_refs_replays_its_created_ids_and_never_runs_twice() {
     // Refusals decided before the transaction come back as wire codes and store nothing.
     let before = rows().await;
     for (body, code) in [
-        (json!({"key": "e1", "request": {"atomic": [
+        (
+            json!({"key": "e1", "request": {"atomic": [
             {"create": "Order", "values": {"owner": "1", "status": "open"}},
-            {"create": "OrderLine", "values": {"owner": "1", "product": "3", "qty": 1}, "refs": {"order": {"created": 7}}}]}}), "WIRE.BAD_VALUE"),
-        (json!({"key": "e2", "request": {"atomic": [
+            {"create": "OrderLine", "values": {"owner": "1", "product": "3", "qty": 1}, "refs": {"order": {"created": 7}}}]}}),
+            "WIRE.BAD_VALUE",
+        ),
+        (
+            json!({"key": "e2", "request": {"atomic": [
             {"create": "Order", "values": {"owner": "1", "status": "open"}},
-            {"create": "OrderLine", "values": {"owner": "1", "qty": 1}, "refs": {"product": {"created": 0}, "order": {"created": 0}}}]}}), "WIRE.TYPE_MISMATCH"),
-        (json!({"key": "e3", "request": {"atomic": [
+            {"create": "OrderLine", "values": {"owner": "1", "qty": 1}, "refs": {"product": {"created": 0}, "order": {"created": 0}}}]}}),
+            "WIRE.TYPE_MISMATCH",
+        ),
+        (
+            json!({"key": "e3", "request": {"atomic": [
             {"apply": "Product.take", "target": {"ids": ["3"]}, "input": {"qty": 1}},
-            {"apply": "Order.confirm", "target": {"created": 0}}]}}), "WIRE.VALUE_SOURCE_NOT_ALLOWED"),
+            {"apply": "Order.confirm", "target": {"created": 0}}]}}),
+            "WIRE.VALUE_SOURCE_NOT_ALLOWED",
+        ),
     ] {
         assert_eq!(post(body.clone()).await["code"], code, "{body}");
     }
@@ -212,9 +224,14 @@ async fn a_bundle_with_refs_replays_its_created_ids_and_never_runs_twice() {
 
     // I-3: the response is lost after COMMIT. The server says COMMIT_UNKNOWN; the same key replays the committed ids.
     let (proxy_address, fired) = aip_test_fault_proxy::start(Fault::AckDropFin).await;
-    let proxied = listen_with_apply_contract(facts.clone(), IdWire::DecimalString, "127.0.0.1:0".parse().unwrap(), aip_test_support::database_url_via_proxy(proxy_address.port()))
-        .await
-        .unwrap();
+    let proxied = listen_with_apply_contract(
+        facts.clone(),
+        IdWire::DecimalString,
+        "127.0.0.1:0".parse().unwrap(),
+        aip_test_support::database_url_via_proxy(proxy_address.port()),
+    )
+    .await
+    .unwrap();
     let lossy_token = proxied.keys.issue(1, 600);
     let before = rows().await;
     let lost = post_with(proxied.address, &lossy_token, &fingerprint, &flow("lost-1", 6, 5)).await;
@@ -228,7 +245,14 @@ async fn a_bundle_with_refs_replays_its_created_ids_and_never_runs_twice() {
     assert_eq!(made.iter().map(|c| c["resource"].as_str().unwrap()).collect::<Vec<_>>(), ["Order", "OrderLine"]);
     let order_id = made[0]["id"].as_str().unwrap();
     assert_eq!(
-        number(&db, format!("SELECT count(*) FROM {schema}.\"order\" o JOIN {schema}.order_line l ON l.order_id = o.id WHERE o.id = {order_id} AND l.id = {}", made[1]["id"].as_str().unwrap())).await,
+        number(
+            &db,
+            format!(
+                "SELECT count(*) FROM {schema}.\"order\" o JOIN {schema}.order_line l ON l.order_id = o.id WHERE o.id = {order_id} AND l.id = {}",
+                made[1]["id"].as_str().unwrap()
+            )
+        )
+        .await,
         1,
         "the replayed ids are the committed rows"
     );

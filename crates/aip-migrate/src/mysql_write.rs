@@ -1349,12 +1349,19 @@ fn uses_limited_arithmetic(facts: &Value, res: &str, tr: &str) -> bool {
     let t = &facts["resources"][res]["transitions"][tr];
     t.get("input").is_some()
         || t["to"].as_object().into_iter().flat_map(|to| to.values()).any(|v| v.get("arith").is_some())
-        || t["effects"].as_array().into_iter().flatten().any(|e| e["values"].as_object().into_iter().flat_map(|v| v.values()).any(|v| v.get("arith").is_some()))
+        || t["effects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|e| e["values"].as_object().into_iter().flat_map(|v| v.values()).any(|v| v.get("arith").is_some()))
 }
 
 fn refuse_limited_arithmetic(facts: &Value, res: &str, tr: &str) -> Result<(), Reject> {
     if uses_limited_arithmetic(facts, res, tr) {
-        return rej("WIRE.UNSUPPORTED", format!("MySQL 어댑터는 `{res}.{tr}`의 input·제한 산술(`f = f ± 항`)을 지원하지 않음. PostgreSQL에서만 쓸 수 있음"));
+        return rej(
+            "WIRE.UNSUPPORTED",
+            format!("MySQL 어댑터는 `{res}.{tr}`의 input·제한 산술(`f = f ± 항`)을 지원하지 않음. PostgreSQL에서만 쓸 수 있음"),
+        );
     }
     Ok(())
 }

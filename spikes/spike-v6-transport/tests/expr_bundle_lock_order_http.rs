@@ -4,8 +4,15 @@
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{id_wire::IdWire, sqlgen};
-use std::{net::SocketAddr, time::{Duration, Instant}};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream, time::timeout};
+use std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+    time::timeout,
+};
 
 const SPEC: &str = r#"
 resource Member { fields { id: Id } }
@@ -32,7 +39,13 @@ async fn post(address: SocketAddr, token: &str, fingerprint: &str, body: &Value)
     let body = body.to_string();
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
-        .write_all(format!("POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\nx-aip-contract: {fingerprint}\r\ncontent-length: {}\r\n\r\n{body}", body.len()).as_bytes())
+        .write_all(
+            format!(
+                "POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\nx-aip-contract: {fingerprint}\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
+        )
         .await
         .unwrap();
     let mut response = String::new();
@@ -71,7 +84,8 @@ async fn six_racing_orders_get_exactly_two_successes_in_either_operation_order()
         let started = Instant::now();
         let calls: Vec<_> = (1..=6)
             .map(|actor| {
-                let (token, fingerprint, body) = (keys.issue(actor, 300), fingerprint.clone(), flow(&format!("{name}-{actor}"), actor, product, line_first));
+                let (token, fingerprint, body) =
+                    (keys.issue(actor, 300), fingerprint.clone(), flow(&format!("{name}-{actor}"), actor, product, line_first));
                 tokio::spawn(async move { post(address, &token, &fingerprint, &body).await })
             })
             .collect();

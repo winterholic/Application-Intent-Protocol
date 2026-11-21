@@ -75,8 +75,10 @@ pub fn contract_ts_with_apply(facts: &Value, wire: IdWire) -> String {
                 }
             }
             if let Some(fields) = rf["transitions"][action]["input"].as_array() {
-                let fields: serde_json::Map<String, Value> =
-                    fields.iter().map(|field| (field[0].as_str().unwrap().to_string(), serde_json::json!({"ty":field[1],"range":field[2]}))).collect();
+                let fields: serde_json::Map<String, Value> = fields
+                    .iter()
+                    .map(|field| (field[0].as_str().unwrap().to_string(), serde_json::json!({"ty":field[1],"range":field[2]})))
+                    .collect();
                 descriptor.insert("input".into(), Value::Object(fields));
             }
             if !descriptor.is_empty() {

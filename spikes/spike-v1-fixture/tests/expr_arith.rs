@@ -219,7 +219,11 @@ fn b_f4_null_is_excluded_at_definition_time() {
     expect_code(&DEF.replace("input { qty: Int(1..100) }", "input { qty: Bool }"), "DEF.TYPE_MISMATCH");
     expect_code(&DEF.replace("to stock = stock - this.reserved", "to stock = stock - this.maybe"), "DEF.TYPE_MISMATCH");
     expect_code(&DEF.replace("stock: Int(0..1000);", "stock: Int(0..1000)?;"), "DEF.TYPE_MISMATCH");
-    expect_code(&DEF.replace("label: Text(1..20)", "label: Text(1..20)\n    reserved2: Int?").replace("to stock = stock - this.reserved", "to stock = stock - this.reserved2"), "DEF.TYPE_MISMATCH");
+    expect_code(
+        &DEF.replace("label: Text(1..20)", "label: Text(1..20)\n    reserved2: Int?")
+            .replace("to stock = stock - this.reserved", "to stock = stock - this.reserved2"),
+        "DEF.TYPE_MISMATCH",
+    );
 }
 
 #[test]
@@ -243,13 +247,21 @@ fn b_f5_decimal_scale_and_int_field_rules() {
 
 #[test]
 fn b_f6_fields_with_read_policy_are_not_arithmetic_operands() {
-    let hidden = |field: &str| DEF.replace("rows read when true\n  transition take", &format!("rows read when true\n  field {field} read when owner = actor\n  transition take"));
+    let hidden = |field: &str| {
+        DEF.replace(
+            "rows read when true\n  transition take",
+            &format!("rows read when true\n  field {field} read when owner = actor\n  transition take"),
+        )
+    };
     // 가려진 대상(input 항)과 가려진 항(this.g) 둘 다.
     expect_code(&hidden("stock"), "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION");
     expect_code(&hidden("reserved"), "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION");
     expect_code(&hidden("total"), "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION");
     // 효과 update의 대상 필드에도 같다.
-    let wallet = DEF.replace("funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true", "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true\n  field funds read when owner = actor");
+    let wallet = DEF.replace(
+        "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true",
+        "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true\n  field funds read when owner = actor",
+    );
     expect_code(&wallet, "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION");
 }
 
@@ -279,7 +291,13 @@ fn input_declaration_limits_and_shapes() {
     // 같은 키를 두 번 선언하지 못한다.
     expect_code(&DEF.replace("input { qty: Int(1..100) }", "input { qty: Int(1..100) }\n    input { qty: Int(1..9) }"), "DEF.DUPLICATE");
     // 효과 값(create)에는 input을 쓸 수 없다.
-    expect_code(&DEF.replace("update Wallet where owner = this.owner { funds = funds - this.total }", "update Wallet where owner = this.owner { count = input.qty }"), "DEF.UNKNOWN_FIELD");
+    expect_code(
+        &DEF.replace(
+            "update Wallet where owner = this.owner { funds = funds - this.total }",
+            "update Wallet where owner = this.owner { count = input.qty }",
+        ),
+        "DEF.UNKNOWN_FIELD",
+    );
 }
 
 #[test]
@@ -303,7 +321,10 @@ fn b1_terms_are_positive_int_input_needs_a_lower_bound_of_one() {
     facts(&DEF.replace("input { qty: Int(1..100) }", "input { qty: Int(1..1) }"));
     // 음수·0 리터럴 항. 음수 정수 리터럴은 문법에 없어 파서가 막고, 0과 Decimal 문자열은 sema가 막는다.
     for term in ["0"] {
-        expect_code(&DEF.replace("to likes = likes + 1, balance = balance + \"1.50\"", &format!("to balance = balance + {term}")), "DEF.ARITH_NOT_ALLOWED");
+        expect_code(
+            &DEF.replace("to likes = likes + 1, balance = balance + \"1.50\"", &format!("to balance = balance + {term}")),
+            "DEF.ARITH_NOT_ALLOWED",
+        );
     }
     for term in ["\"-1.50\"", "\"0.00\"", "\"0\""] {
         expect_code(&DEF.replace("balance = balance + \"1.50\"", &format!("balance = balance + {term}")), "DEF.ARITH_NOT_ALLOWED");
@@ -314,7 +335,8 @@ fn b1_terms_are_positive_int_input_needs_a_lower_bound_of_one() {
 /// B-2: `allow`·`from`·효과 `when` 어디서든 `input.*`과 가려진 필드를 같은 비교식에 쓰면 이분 탐색 통로가 된다.
 #[test]
 fn b2_allow_cannot_compare_input_with_a_hidden_field() {
-    let hidden = DEF.replace("rows read when true\n  transition take", "rows read when true\n  field risk read when owner = actor\n  transition take");
+    let hidden =
+        DEF.replace("rows read when true\n  transition take", "rows read when true\n  field risk read when owner = actor\n  transition take");
     // 가려진 필드는 risk다. take의 allow만 reserved와 input을 견주게 바꾼다.
     for allow in [
         "allow actor != null and risk >= input.qty",
@@ -327,18 +349,24 @@ fn b2_allow_cannot_compare_input_with_a_hidden_field() {
         assert!(got.contains("DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION") || got.contains("DEF.ARITH_NOT_ALLOWED"), "{allow}: {got}");
     }
     // 두 비교식이 따로 and로 묶인 것은 호출자가 가려진 값을 상수와 견주는 기존 한 비트라 막지 않는다.
-    let separate = hidden.replace("allow actor != null\n    to stock = stock - input.qty", "allow risk >= 1 and input.qty <= 5\n    to stock = stock - input.qty");
+    let separate = hidden
+        .replace("allow actor != null\n    to stock = stock - input.qty", "allow risk >= 1 and input.qty <= 5\n    to stock = stock - input.qty");
     facts(&separate);
     // 가려지지 않은 필드와 input의 비교(allow)는 된다.
-    facts(&DEF.replace("allow actor != null\n    to stock = stock - input.qty", "allow actor != null and stock >= input.qty\n    to stock = stock - input.qty"));
+    facts(&DEF.replace(
+        "allow actor != null\n    to stock = stock - input.qty",
+        "allow actor != null and stock >= input.qty\n    to stock = stock - input.qty",
+    ));
     // exists 안쪽 resource의 가려진 필드도 같다.
-    let wallet = DEF.replace("balance: Decimal(12,2); credit", "balance: Decimal(12,2); credit").replace(
-        "rows read when true\n  transition take",
-        "rows read when true\n  transition take",
-    );
+    let wallet = DEF
+        .replace("balance: Decimal(12,2); credit", "balance: Decimal(12,2); credit")
+        .replace("rows read when true\n  transition take", "rows read when true\n  transition take");
     let _ = wallet;
     let exists = DEF
-        .replace("funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true", "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true\n  field count read when owner = actor")
+        .replace(
+            "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true",
+            "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true\n  field count read when owner = actor",
+        )
         .replace(
             "allow actor != null\n    to stock = stock - input.qty",
             "allow exists Wallet where count >= input.qty\n    to stock = stock - input.qty",
@@ -348,7 +376,8 @@ fn b2_allow_cannot_compare_input_with_a_hidden_field() {
 
 #[test]
 fn b2_from_and_effect_when_keep_refusing_the_same_mix() {
-    let hidden = DEF.replace("rows read when true\n  transition take", "rows read when true\n  field risk read when owner = actor\n  transition take");
+    let hidden =
+        DEF.replace("rows read when true\n  transition take", "rows read when true\n  field risk read when owner = actor\n  transition take");
     expect_code(&hidden.replace("from stock >= input.qty", "from risk >= input.qty"), "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION");
     // 효과 when에서는 input이 보이지 않는다. 호출자 값이 효과 조건으로 들어가는 길 자체가 없다.
     let when = DEF.replace(
@@ -364,14 +393,17 @@ fn b2_from_and_effect_when_keep_refusing_the_same_mix() {
 fn b3_effect_leading_operand_is_the_target_rows_bare_field() {
     expect_code(&DEF.replace("funds = funds - this.total }", "funds = this.funds - this.total }"), "DEF.ARITH_NOT_ALLOWED");
     // 전이 행(Product)에도 balance가 있는 Wallet 필드를 효과로 줄이면 모호하다.
-    let clash = DEF.replace("funds: Decimal(12,2); credit", "balance: Decimal(12,2); credit").replace("funds = funds - this.total", "balance = balance - this.total");
+    let clash = DEF
+        .replace("funds: Decimal(12,2); credit", "balance: Decimal(12,2); credit")
+        .replace("funds = funds - this.total", "balance = balance - this.total");
     expect_code(&clash, "DEF.AMBIGUOUS_NAME");
 }
 
 /// B-4: 효과로 줄이는 Decimal 필드에 하한을 지키는 `check`가 없으면 개발 조언을 낸다(Int range는 사후 검사가 지킨다).
 #[test]
 fn b4_effect_decrease_without_a_lower_bound_check_is_advised() {
-    let advisories = |src: &str| -> Vec<&'static str> { load_str(src, Form::A).unwrap_or_else(|e| panic!("{e:?}")).advisories.iter().map(|d| d.code).collect() };
+    let advisories =
+        |src: &str| -> Vec<&'static str> { load_str(src, Form::A).unwrap_or_else(|e| panic!("{e:?}")).advisories.iter().map(|d| d.code).collect() };
     assert_eq!(advisories(&DEF), ["DEF.ADVISORY_EFFECT_NO_LOWER_BOUND"]);
     let guarded = DEF.replace("rows read when true\n  transition take", "rows read when true\n  transition take").replacen(
         "funds: Decimal(12,2); credit: Decimal(12,4); count: Int }\n  rows read when true",
@@ -382,6 +414,9 @@ fn b4_effect_decrease_without_a_lower_bound_check_is_advised() {
     // 더하는 효과(항은 양수)는 하한을 깎지 못하므로 조언하지 않는다.
     assert!(advisories(&DEF.replace("funds = funds - this.total", "funds = funds + this.total")).is_empty());
     // Int 필드는 range 사후 검사가 지킨다.
-    let int_effect = DEF.replace("update Wallet where owner = this.owner { funds = funds - this.total }", "update Wallet where owner = this.owner { count = count - 1 }");
+    let int_effect = DEF.replace(
+        "update Wallet where owner = this.owner { funds = funds - this.total }",
+        "update Wallet where owner = this.owner { count = count - 1 }",
+    );
     assert!(advisories(&int_effect.replace("count: Int }", "count: Int(0..1000) }")).is_empty());
 }

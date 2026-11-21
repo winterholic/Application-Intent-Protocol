@@ -59,8 +59,11 @@ async fn post_with(address: SocketAddr, token: &str, fingerprint: &str, body: &V
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
         .write_all(
-            format!("POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\nx-aip-contract: {fingerprint}\r\ncontent-length: {}\r\n\r\n{body}", body.len())
-                .as_bytes(),
+            format!(
+                "POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\nx-aip-contract: {fingerprint}\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .await
         .unwrap();
@@ -128,11 +131,17 @@ async fn a_bundle_with_a_compose_reports_its_boundaries_tags_and_replays_whole()
 
     // D-S1 + D-4 + D-1: input transition and compose in one bundle; the response names each operation's entries and the cache tags
     // include the compose's resources (an `Order` change that only the compose makes must still invalidate `Order`).
-    let first = post(json!({"key": "c1", "request": {"atomic": [take(1, 3), compose_order(&[1, 2, 3], vec![json!({"transition": "confirm"}), log_step()])]}})).await;
+    let first = post(
+        json!({"key": "c1", "request": {"atomic": [take(1, 3), compose_order(&[1, 2, 3], vec![json!({"transition": "confirm"}), log_step()])]}}),
+    )
+    .await;
     assert_eq!(first["ok"], true, "{first}");
     assert_eq!(first["applied"].as_array().unwrap().len(), 2);
     assert_eq!(first["created"].as_array().unwrap().len(), 3);
-    assert_eq!(first["ops"], json!([{"kind": "apply", "applied": [0, 1], "created": [0, 0]}, {"kind": "compose", "applied": [1, 2], "created": [0, 3]}]));
+    assert_eq!(
+        first["ops"],
+        json!([{"kind": "apply", "applied": [0, 1], "created": [0, 0]}, {"kind": "compose", "applied": [1, 2], "created": [0, 3]}])
+    );
     assert_eq!(first["tags"], json!(["Log", "Order", "Product"]));
     assert_eq!((stock(1).await, confirmed().await, logs().await), (7, 3, 3));
 
@@ -142,11 +151,19 @@ async fn a_bundle_with_a_compose_reports_its_boundaries_tags_and_replays_whole()
 
     // I-1: the same key replays the stored result (boundaries included) and runs nothing again.
     let before = (stock(1).await, confirmed().await, logs().await, stored().await);
-    let resent = post(json!({"key": "c1", "request": {"atomic": [take(1, 3), compose_order(&[1, 2, 3], vec![json!({"transition": "confirm"}), log_step()])]}})).await;
-    assert_eq!((resent["ok"].clone(), resent["replayed"].clone(), resent["ops"].clone(), resent["created"].clone()), (json!(true), json!(true), first["ops"].clone(), first["created"].clone()));
+    let resent = post(
+        json!({"key": "c1", "request": {"atomic": [take(1, 3), compose_order(&[1, 2, 3], vec![json!({"transition": "confirm"}), log_step()])]}}),
+    )
+    .await;
+    assert_eq!(
+        (resent["ok"].clone(), resent["replayed"].clone(), resent["ops"].clone(), resent["created"].clone()),
+        (json!(true), json!(true), first["ops"].clone(), first["created"].clone())
+    );
     assert_eq!((stock(1).await, confirmed().await, logs().await, stored().await), before);
     // I-2: the same key with a different compose is a different request.
-    let other = post(json!({"key": "c1", "request": {"atomic": [take(1, 3), compose_order(&[1, 2], vec![json!({"transition": "confirm"}), log_step()])]}})).await;
+    let other =
+        post(json!({"key": "c1", "request": {"atomic": [take(1, 3), compose_order(&[1, 2], vec![json!({"transition": "confirm"}), log_step()])]}}))
+            .await;
     assert_eq!(other["code"], "WIRE.IDEMPOTENCY_MISMATCH");
 
     // A bundle without a compose answers exactly as before: no `ops` key (older clients read `applied[]` and `created[]` only).
@@ -157,17 +174,30 @@ async fn a_bundle_with_a_compose_reports_its_boundaries_tags_and_replays_whole()
 
     // R-1: a later operation fails (stock 10 < 100) or the compose's own step fails (a shipped order): nothing stays, no idempotency record.
     let (stock_before, confirmed_before, logs_before, stored_before) = (stock(3).await, confirmed().await, logs().await, stored().await);
-    let late = post(json!({"key": "r1", "request": {"atomic": [compose_order(&[5, 6], vec![json!({"transition": "confirm"}), log_step()]), take(3, 100)]}})).await;
+    let late =
+        post(json!({"key": "r1", "request": {"atomic": [compose_order(&[5, 6], vec![json!({"transition": "confirm"}), log_step()]), take(3, 100)]}}))
+            .await;
     assert_eq!(late["code"], "WIRE.INVALID_STATE", "{late}");
-    let inner = post(json!({"key": "r2", "request": {"atomic": [take(3, 2), compose_order(&[7, 8], vec![json!({"transition": "confirm"}), log_step()])]}})).await;
+    let inner =
+        post(json!({"key": "r2", "request": {"atomic": [take(3, 2), compose_order(&[7, 8], vec![json!({"transition": "confirm"}), log_step()])]}}))
+            .await;
     assert_eq!(inner["code"], "WIRE.INVALID_STATE", "{inner}");
     assert_eq!((stock(3).await, confirmed().await, logs().await, stored().await), (stock_before, confirmed_before, logs_before, stored_before));
 
     // D-3 over the wire: a compose plan error comes back as its code and stores nothing; nesting is refused as an unknown key.
     for (body, code) in [
-        (json!({"key": "e1", "request": {"atomic": [take(3, 1), compose_order(&[9], vec![json!({"transition": "nothing"})])]}}), "WIRE.STEP_NOT_ALLOWED"),
-        (json!({"key": "e2", "request": {"atomic": [take(3, 1), compose_order(&[9], vec![compose_order(&[9], vec![json!({"transition": "confirm"})])])]}}), "WIRE.UNKNOWN_KEY"),
-        (json!({"key": "e3", "request": {"atomic": [take(3, 1), {"compose": "Product", "targets": {"ids": ["3"]}, "steps": [{"transition": "take"}]}]}}), "WIRE.NOT_EXPOSED"),
+        (
+            json!({"key": "e1", "request": {"atomic": [take(3, 1), compose_order(&[9], vec![json!({"transition": "nothing"})])]}}),
+            "WIRE.STEP_NOT_ALLOWED",
+        ),
+        (
+            json!({"key": "e2", "request": {"atomic": [take(3, 1), compose_order(&[9], vec![compose_order(&[9], vec![json!({"transition": "confirm"})])])]}}),
+            "WIRE.UNKNOWN_KEY",
+        ),
+        (
+            json!({"key": "e3", "request": {"atomic": [take(3, 1), {"compose": "Product", "targets": {"ids": ["3"]}, "steps": [{"transition": "take"}]}]}}),
+            "WIRE.NOT_EXPOSED",
+        ),
     ] {
         assert_eq!(post(body.clone()).await["code"], code, "{body}");
     }
@@ -177,7 +207,13 @@ async fn a_bundle_with_a_compose_reports_its_boundaries_tags_and_replays_whole()
     let room = json!({"compose": "Room", "targets": {"ids": ["1"]}, "steps": [{"transition": "touch"}, {"create": "Slot", "values": {"owner": {"item": "owner"}, "taken": {"const": true}}}]});
     assert_eq!(post(json!({"key": "s1", "request": {"atomic": [room]}})).await["ok"], true);
     assert_eq!(post(json!({"key": "s2", "request": {"atomic": [compose_order(&[10], vec![log_step()])]}})).await["ok"], true);
-    let seen: Vec<(String, String)> = db.query(&format!("SELECT tbl, level FROM {schema}.seen WHERE tbl = 'slot' OR tbl = 'log' ORDER BY tbl, level"), &[]).await.unwrap().iter().map(|r| (r.get(0), r.get(1))).collect();
+    let seen: Vec<(String, String)> = db
+        .query(&format!("SELECT tbl, level FROM {schema}.seen WHERE tbl = 'slot' OR tbl = 'log' ORDER BY tbl, level"), &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
     assert!(seen.contains(&("slot".to_string(), "serializable".to_string())), "{seen:?}");
     assert!(!seen.iter().any(|(tbl, level)| tbl == "slot" && level != "serializable"), "{seen:?}");
 

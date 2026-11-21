@@ -293,11 +293,17 @@ async fn effect_arith_may_use_a_validated_input_and_rolls_back_with_the_transiti
     let caller = Caller { actor_id: Some(4), now: "2026-11-21T00:00:00Z".into() };
     let both = |qty: i64| json!({"apply": "Product.both", "target": {"ids": ["401"]}, "input": {"qty": qty}});
     apply(&mut conn, &facts, &both(4), &caller, &Knobs::default()).await.unwrap();
-    assert_eq!((stock(&db, 401).await.as_str(), text(&db, format!("SELECT credits::text FROM {s}.wallet WHERE id = 401")).await.as_str()), ("46", "6"));
+    assert_eq!(
+        (stock(&db, 401).await.as_str(), text(&db, format!("SELECT credits::text FROM {s}.wallet WHERE id = 401")).await.as_str()),
+        ("46", "6")
+    );
     // 효과의 결과(6 - 7 < 0)가 범위를 벗어나면 전이도 함께 롤백된다.
     let rejected = apply(&mut conn, &facts, &both(7), &caller, &Knobs::default()).await.unwrap_err();
     assert_eq!(rejected.code, "WIRE.BAD_VALUE", "{}", rejected.msg);
-    assert_eq!((stock(&db, 401).await.as_str(), text(&db, format!("SELECT credits::text FROM {s}.wallet WHERE id = 401")).await.as_str()), ("46", "6"));
+    assert_eq!(
+        (stock(&db, 401).await.as_str(), text(&db, format!("SELECT credits::text FROM {s}.wallet WHERE id = 401")).await.as_str()),
+        ("46", "6")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -327,7 +333,19 @@ async fn b_f10_input_range_type_and_decimal_digits_are_checked_before_the_databa
         assert_eq!(code(run(&take(&[202], bad.clone())).await), "WIRE.BAD_VALUE", "{bad}");
     }
     // B-1: 음수·0 Decimal 항(`-`가 더하기가 되는 경로)도 DB 전에 거절한다.
-    for amount in [json!("1.234"), json!("abc"), json!(1.25), json!(12), json!(null), json!("1e2"), json!("12345678901.00"), json!("-12.50"), json!("-0.01"), json!("0.00"), json!("0")] {
+    for amount in [
+        json!("1.234"),
+        json!("abc"),
+        json!(1.25),
+        json!(12),
+        json!(null),
+        json!("1e2"),
+        json!("12345678901.00"),
+        json!("-12.50"),
+        json!("-0.01"),
+        json!("0.00"),
+        json!("0"),
+    ] {
         let req = json!({"apply": "Product.pay", "target": {"ids": ["202"]}, "input": {"amount": amount}});
         assert_eq!(code(run(&req).await), "WIRE.BAD_VALUE", "{amount}");
     }
@@ -340,9 +358,7 @@ async fn b_f11_overflow_is_bad_value_and_rolls_back_every_target() {
     insert_product(&db, 211, 990).await;
     insert_product(&db, 212, 5).await;
     // Int range(0..1000) 밖. 같은 요청의 다른 대상(212)도 함께 롤백된다.
-    let restock = |ids: &[i64], qty: i64| {
-        json!({"apply": "Product.restock", "target": {"ids": ids.iter().map(i64::to_string).collect::<Vec<_>>()}, "input": {"qty": qty}})
-    };
+    let restock = |ids: &[i64], qty: i64| json!({"apply": "Product.restock", "target": {"ids": ids.iter().map(i64::to_string).collect::<Vec<_>>()}, "input": {"qty": qty}});
     assert_eq!(code(run(&restock(&[212, 211], 20)).await), "WIRE.BAD_VALUE");
     assert_eq!((stock(&db, 211).await.as_str(), stock(&db, 212).await.as_str()), ("990", "5"));
     // 범위 안 경계값은 성공한다.
@@ -535,7 +551,9 @@ async fn b1_this_field_terms_must_be_positive_at_run_time_in_to_and_in_effects()
     .unwrap();
     let caller6 = Caller { actor_id: Some(6), now: "2026-11-21T00:00:00Z".into() };
     let mut conn = connect_with_url(DB).await.unwrap();
-    let rejected = apply(&mut conn, &*facts().await, &json!({"apply": "Purchase.pay", "target": {"ids": ["601"]}}), &caller6, &Knobs::default()).await.unwrap_err();
+    let rejected = apply(&mut conn, &*facts().await, &json!({"apply": "Purchase.pay", "target": {"ids": ["601"]}}), &caller6, &Knobs::default())
+        .await
+        .unwrap_err();
     assert_eq!(rejected.code, "WIRE.BAD_VALUE", "{}", rejected.msg);
     assert_eq!(text(&db, format!("SELECT balance::text FROM {s}.wallet WHERE id = 601")).await, "100.00");
     assert_eq!(text(&db, format!("SELECT paid::text FROM {s}.purchase WHERE id = 601")).await, "false");

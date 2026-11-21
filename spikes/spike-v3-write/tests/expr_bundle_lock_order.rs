@@ -87,7 +87,10 @@ async fn racing_bundles_converge_whether_the_line_or_the_deduction_comes_first()
             let summary: Vec<String> = outcomes.iter().map(|(o, ms)| format!("{o}@{ms}ms")).collect();
             // 재고 4, 2개짜리 6건: 정확히 2건이 성공하고 나머지는 업무 거절이다. 교착·기한 초과·충돌이 새지 않고 기한(2초)보다 훨씬 빨리 끝난다.
             assert_eq!((ok, stock), (2, 0), "{name} round {round}: {summary:?}");
-            assert!(outcomes.iter().all(|(o, ms)| (o == "OK" || o.starts_with("WIRE.INVALID_STATE")) && *ms < 1000), "{name} round {round}: {summary:?}");
+            assert!(
+                outcomes.iter().all(|(o, ms)| (o == "OK" || o.starts_with("WIRE.INVALID_STATE")) && *ms < 1000),
+                "{name} round {round}: {summary:?}"
+            );
             let lines: i64 = db.query_one(&format!("SELECT count(*) FROM {s}.order_line WHERE product_id = {product}"), &[]).await.unwrap().get(0);
             assert_eq!(lines, 2, "실패한 묶음의 줄은 남지 않는다");
         }

@@ -68,7 +68,19 @@ fn tsc_path() -> String {
 fn tsc(dir: &std::path::Path, file: &str) -> (bool, String) {
     let out = Command::new(tsc_path())
         .current_dir(dir)
-        .args(["--noEmit", "--strict", "--target", "esnext", "--module", "nodenext", "--moduleResolution", "nodenext", "--allowImportingTsExtensions", "--skipLibCheck", file])
+        .args([
+            "--noEmit",
+            "--strict",
+            "--target",
+            "esnext",
+            "--module",
+            "nodenext",
+            "--moduleResolution",
+            "nodenext",
+            "--allowImportingTsExtensions",
+            "--skipLibCheck",
+            file,
+        ])
         .output()
         .expect("tsc 실행");
     (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string())
@@ -132,5 +144,10 @@ print("ok")
     let mut child = Command::new("python3").args(["-", python]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     let out = child.wait_with_output().unwrap();
-    assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "ok", "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "ok",
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

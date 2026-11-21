@@ -531,7 +531,19 @@ impl<'a> Ctx<'a> {
     /// 곱셈·나눗셈·두 항 이상·COALESCE는 받지 않는다. 계산은 서버가 잠근 행에서 하고 호출자는 증감량만 정한다.
     /// 정수 리터럴을 Int 필드에 쓰는 기존 형태는 계속 `{"increment": n}`으로 낸다(기존 정의의 facts 불변).
     #[allow(clippy::too_many_arguments)]
-    fn arith(&self, target: &str, this_res: &str, f: &str, ft: &TT, op: &str, l: &Expr, r: &Expr, sp: Span, sc: &Scope, effect: bool) -> Result<Value, Diag> {
+    fn arith(
+        &self,
+        target: &str,
+        this_res: &str,
+        f: &str,
+        ft: &TT,
+        op: &str,
+        l: &Expr,
+        r: &Expr,
+        sp: Span,
+        sc: &Scope,
+        effect: bool,
+    ) -> Result<Value, Diag> {
         let target_ok = !ft.nullable && matches!(ft.ty, Ty::Int | Ty::Decimal(_, _));
         if !target_ok {
             return Err(Diag::new("DEF.TYPE_MISMATCH", format!("증감 대입은 null이 아닌 Int·Decimal 필드만, `{f}`는 `{}`", ft.show()), sp));
@@ -541,7 +553,8 @@ impl<'a> Ctx<'a> {
             Expr::Path(segs, _) => (segs.len() == 1 && segs[0] == f) || (segs.len() == 2 && segs[0] == "this" && segs[1] == f),
             _ => false,
         };
-        let shape = "증감 대입은 `f = f + 항` 또는 `f = f - 항`(항은 하나: 0이 아닌 정수 리터럴, \"Decimal 리터럴\", `input.이름`, 같은 행의 `this.필드`)만";
+        let shape =
+            "증감 대입은 `f = f + 항` 또는 `f = f - 항`(항은 하나: 0이 아닌 정수 리터럴, \"Decimal 리터럴\", `input.이름`, 같은 행의 `this.필드`)만";
         // 효과의 앞 `f`는 효과 대상 행의 필드다. 전이 행에도 같은 이름이 있으면 읽는 사람이 전이 행으로 오해하므로 받지 않는다.
         if effect && same && self.res.get(this_res).is_some_and(|t| t.fields.iter().any(|x| x.name == f)) {
             return Err(Diag::new(
@@ -572,7 +585,9 @@ impl<'a> Ctx<'a> {
         self.reject_encrypted_path(target, f, sp)?;
         let (term, tt) = match r {
             Expr::Int(0) => return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp)),
-            Expr::Int(n) if *n < 0 => return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("항은 양수만 받는다(방향은 `+`·`-`로 정한다). {shape}"), sp)),
+            Expr::Int(n) if *n < 0 => {
+                return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("항은 양수만 받는다(방향은 `+`·`-`로 정한다). {shape}"), sp))
+            }
             Expr::Int(n) => (json!({ "lit": n }), TT::new(Ty::Int)),
             Expr::Str(value) if !decimal_is_positive(value) && matches!(ft.ty, Ty::Decimal(..)) => {
                 return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("항은 양수만 받는다(방향은 `+`·`-`로 정한다). {shape}"), sp));
@@ -618,7 +633,11 @@ impl<'a> Ctx<'a> {
             _ => false,
         };
         if tt.nullable || !fits {
-            let why = if tt.nullable { "null이 될 수 없는 항만 쓸 수 있음" } else { "Int 필드에는 Int 항, Decimal(p,s) 필드에는 Int 항 또는 소수 자릿수가 s 이하인 Decimal 항만 쓸 수 있음" };
+            let why = if tt.nullable {
+                "null이 될 수 없는 항만 쓸 수 있음"
+            } else {
+                "Int 필드에는 Int 항, Decimal(p,s) 필드에는 Int 항 또는 소수 자릿수가 s 이하인 Decimal 항만 쓸 수 있음"
+            };
             return Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{f}`({}) {op} `{}`: {why}", ft.show(), tt.show()), sp));
         }
         Ok(json!({ "arith": { "op": op, "term": term } }))
@@ -641,9 +660,11 @@ impl<'a> Ctx<'a> {
                 Ok((json!({ op: args }), b))
             }
             Expr::Not(x) => Ok((json!({ "not": self.bool_of(x, sc)? }), b)),
-            Expr::Arith(_, _, _, sp) => {
-                Err(Diag::new("DEF.ARITH_NOT_ALLOWED", "산술식은 transition `to`와 update 효과 값의 `필드 = 필드 ± 항`(항 하나)에서만 쓸 수 있음", *sp))
-            }
+            Expr::Arith(_, _, _, sp) => Err(Diag::new(
+                "DEF.ARITH_NOT_ALLOWED",
+                "산술식은 transition `to`와 update 효과 값의 `필드 = 필드 ± 항`(항 하나)에서만 쓸 수 있음",
+                *sp,
+            )),
             Expr::Cmp(op, l, r) => {
                 let (lv, lt, rv, rt) = if matches!(l.as_ref(), Expr::Str(_)) {
                     let (rv, rt) = self.ex(r, sc)?;
@@ -922,7 +943,9 @@ impl<'a> Ctx<'a> {
         for h in hits {
             self.d(
                 "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
-                format!("{what}가 호출자의 `input`과 field read 정책이 있는 `{h}`를 같은 비교식에서 읽을 수 없음(성공·거절의 경계로 가려진 값이 추론됨)"),
+                format!(
+                    "{what}가 호출자의 `input`과 field read 정책이 있는 `{h}`를 같은 비교식에서 읽을 수 없음(성공·거절의 경계로 가려진 값이 추론됨)"
+                ),
                 sp,
             );
         }
@@ -1547,7 +1570,11 @@ impl<'a> Ctx<'a> {
                         self.d("DEF.UNKNOWN_SYMBOL", format!("compose 전이 `{t}` 없음"), *sp);
                     }
                     if r.transitions.iter().any(|x| &x.name == t && (!x.patch.is_empty() || !x.expect.is_empty() || !x.input.is_empty())) {
-                        self.d("DEF.UNSUPPORTED", "compose의 전이 단계는 patch/expect/input 입력을 제공하지 않는다. 이 전이는 bundle.apply로 묶는다", *sp);
+                        self.d(
+                            "DEF.UNSUPPORTED",
+                            "compose의 전이 단계는 patch/expect/input 입력을 제공하지 않는다. 이 전이는 bundle.apply로 묶는다",
+                            *sp,
+                        );
                     }
                     if r.expose_apply.iter().any(|x| &x.transition == t && x.internal) {
                         self.d("DEF.UNSUPPORTED", "compose는 internal 전이를 부를 수 없다(compose는 공개 호출이다)", *sp);
@@ -1680,7 +1707,11 @@ impl<'a> Ctx<'a> {
         let (typed, json) = self.params(&t.input);
         for (n, ty) in &typed {
             if ty.nullable || !matches!(ty.ty, Ty::Int | Ty::Decimal(_, _)) {
-                self.d("DEF.TYPE_MISMATCH", format!("transition `{}`의 input `{n}`은 null이 아닌 Int 또는 Decimal만, `{}`", t.name, ty.show()), t.span);
+                self.d(
+                    "DEF.TYPE_MISMATCH",
+                    format!("transition `{}`의 input `{n}`은 null이 아닌 Int 또는 Decimal만, `{}`", t.name, ty.show()),
+                    t.span,
+                );
             }
         }
         // 증감 항은 양수만 받는다. 음수나 0이 들어오면 `-`가 더하기가 되어 호출자가 잔액·재고를 늘릴 수 있다.
@@ -1751,7 +1782,9 @@ impl<'a> Ctx<'a> {
                         };
                         // `f = f ± 항`: 앞의 f는 갱신 대상 행의 현재 값이고 항의 맨 이름·`this.`는 전이 대상 행이다.
                         if let (false, Expr::Arith(op, l, rhs, sp)) = (match_value, v) {
-                            if let Some(val) = cx.run(cx.arith(resource, &r.name, f, &ft, op, l, rhs, *sp, &Scope { allow_latest: false, ..tsc.clone() }, true)) {
+                            if let Some(val) =
+                                cx.run(cx.arith(resource, &r.name, f, &ft, op, l, rhs, *sp, &Scope { allow_latest: false, ..tsc.clone() }, true))
+                            {
                                 if let Some(term) = val["arith"].get("term") {
                                     cx.reject_hidden_reads(term, &r.name, &format!("update `{resource}.{f}`의 항"), *span);
                                 }
@@ -1912,7 +1945,9 @@ impl<'a> Ctx<'a> {
                 match self.field_tt(&source, field) {
                     Some(TT { ty: Ty::Int, .. }) => {}
                     Some(TT { ty: Ty::Decimal(p, sc), .. }) if release == "sum" => decimal_sum = Some((p, sc)),
-                    Some(t) if release == "sum" => self.d("DEF.TYPE_MISMATCH", format!("`sum({field})`는 Int 또는 Decimal 필드만, `{}`", t.show()), a.span),
+                    Some(t) if release == "sum" => {
+                        self.d("DEF.TYPE_MISMATCH", format!("`sum({field})`는 Int 또는 Decimal 필드만, `{}`", t.show()), a.span)
+                    }
                     Some(t) => self.d("DEF.TYPE_MISMATCH", format!("`{release}({field})`는 Int 필드만, `{}`", t.show()), a.span),
                     None => self.d("DEF.UNKNOWN_FIELD", format!("집계 대상 `{source}.{field}` 없음"), a.span),
                 }

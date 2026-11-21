@@ -127,7 +127,14 @@ async fn a_resent_key_never_deducts_twice_and_a_changed_input_under_the_same_key
     assert_eq!(stock(2).await, "5");
 
     // The same key sent 12 times at once: one execution, eleven replays, one deduction.
-    let same_key: Vec<_> = (0..12).map(|_| tokio::spawn({ let token = token.clone(); async move { post(address, &token, &take("race-same", "3", 4)).await } })).collect();
+    let same_key: Vec<_> = (0..12)
+        .map(|_| {
+            tokio::spawn({
+                let token = token.clone();
+                async move { post(address, &token, &take("race-same", "3", 4)).await }
+            })
+        })
+        .collect();
     let mut replayed = 0;
     for call in same_key {
         let result = call.await.unwrap();
@@ -137,7 +144,14 @@ async fn a_resent_key_never_deducts_twice_and_a_changed_input_under_the_same_key
     assert_eq!((replayed, stock(3).await.as_str()), (11, "6"));
 
     // 20 different keys, one unit each, stock 10: exactly 10 deduct and the rest are INVALID_STATE; stock ends at 0.
-    let calls: Vec<_> = (0..20).map(|n| tokio::spawn({ let token = token.clone(); async move { post(address, &token, &take(&format!("race-{n}"), "4", 1)).await } })).collect();
+    let calls: Vec<_> = (0..20)
+        .map(|n| {
+            tokio::spawn({
+                let token = token.clone();
+                async move { post(address, &token, &take(&format!("race-{n}"), "4", 1)).await }
+            })
+        })
+        .collect();
     let (mut done, mut refused) = (0, 0);
     for call in calls {
         let result = call.await.unwrap();

@@ -72,7 +72,9 @@ async fn decimal_sum_is_exact_scaled_policy_filtered_and_bounded_by_the_declared
     assert!(rows.iter().all(|r| r["total"].is_string()), "Decimal is a string on the wire: {rows:?}");
 
     // The standalone aggregate (no groupKey, guard access) returns the same exact string, over every order's visible items.
-    let alone = |actor: Option<i64>| plan_read(&f, &json!({"aggregate": "Order.allTotal", "input": {}}), &Caller { actor_id: actor, now: "2026-11-21T00:00:00Z".into() }).unwrap();
+    let alone = |actor: Option<i64>| {
+        plan_read(&f, &json!({"aggregate": "Order.allTotal", "input": {}}), &Caller { actor_id: actor, now: "2026-11-21T00:00:00Z".into() }).unwrap()
+    };
     let total = execute(&mut db, &alone(Some(1))).await.unwrap();
     assert_eq!(total, vec![json!("50.70")], "a standalone Decimal sum is a JSON string, not the number 50.7: {total:?}");
 

@@ -286,7 +286,9 @@ fn val_to_str(v: &Value) -> Option<String> {
 pub fn reject_unsupported_bundle_ops(req: &Value) -> Result<(), Reject> {
     for op in req.get("atomic").and_then(Value::as_array).into_iter().flatten() {
         if op.get("compose").is_some() || op.get("refs").is_some() {
-            return Err(Reject { code: "WIRE.UNSUPPORTED", msg: "암호화가 켜진 서버는 묶음 안의 compose와 refs를 지원하지 않음".into() });
+            return Err(Reject {
+                code: "WIRE.UNSUPPORTED", msg: "암호화가 켜진 서버는 묶음 안의 compose와 refs를 지원하지 않음".into()
+            });
         }
     }
     Ok(())
@@ -571,7 +573,10 @@ mod bundle_op_tests {
             let refused = reject_unsupported_bundle_ops(&json!({"atomic": [{"create": "Order", "values": {}}, op]})).unwrap_err();
             assert_eq!(refused.code, "WIRE.UNSUPPORTED");
         }
-        assert!(reject_unsupported_bundle_ops(&json!({"atomic": [{"create": "Order", "values": {}}, {"apply": "Order.mark", "target": {"ids": ["1"]}}]})).is_ok());
+        assert!(reject_unsupported_bundle_ops(
+            &json!({"atomic": [{"create": "Order", "values": {}}, {"apply": "Order.mark", "target": {"ids": ["1"]}}]})
+        )
+        .is_ok());
         assert!(reject_unsupported_bundle_ops(&json!({"compose": "Order", "targets": {"ids": ["1"]}, "steps": []})).is_ok());
     }
 }
