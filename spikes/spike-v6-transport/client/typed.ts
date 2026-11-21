@@ -29,7 +29,12 @@ function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>
      * 서버가 만든 행의 id로 풀게 한다(`bundle(b => { const o = b.create("Order", {...}); b.create("Line", {...}, { order: o }); })`).
      */
     bundle(request: BundleRequest<A, Cr> | ((builder: BundleBuilder<A, Cr>) => void), options?: ApplyOptions): Promise<BundleResult<A, Cr>> {
-      const body = typeof request === "function" ? buildBundle<A, Cr>(request) : request;
+      let body: BundleRequest<A, Cr>;
+      try {
+        body = typeof request === "function" ? buildBundle<A, Cr>(request) : request;
+      } catch (error) {
+        return Promise.reject(error);
+      }
       return client.apply(body, options) as Promise<BundleResult<A, Cr>>;
     },
     /** 서버가 공개한 조합(`expose compose`): 대상 목록에 허용된 전이·생성 단계를 조합한다. */

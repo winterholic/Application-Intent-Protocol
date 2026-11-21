@@ -184,6 +184,32 @@ async fn a_bundle_with_refs_replays_its_created_ids_and_never_runs_twice() {
     assert_eq!((replayed, created.len(), stock(4).await), (11, 1, 8));
     assert_eq!(rows().await, (before.0 + 1, before.1 + 1, before.2 + 1));
 
+    // The generated TypeScript client builds the same bundle with handles and sends it over this server (A-S4 end to end).
+    db.batch_execute(&format!("INSERT INTO {schema}.product(id,owner_id,stock) VALUES (7,1,10)")).await.unwrap();
+    let client_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/client");
+    std::fs::write(
+        format!("{client_dir}/generated-expr-refs.ts"),
+        spike_v5_sdk::contract_module_with_apply(&facts, "../../spike-v5-sdk/sdk/generic.ts", IdWire::DecimalString),
+    )
+    .unwrap();
+    let before = rows().await;
+    let node_token = keys.issue(1, 600);
+    let node = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("node")
+            .current_dir(client_dir)
+            .env("AIP_REFS_URL", format!("http://127.0.0.1:{port}"))
+            .env("AIP_REFS_TOKEN", node_token)
+            .args(["--test", "expr-refs-http.test.ts"])
+            .output()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let output = format!("{}{}", String::from_utf8_lossy(&node.stdout), String::from_utf8_lossy(&node.stderr));
+    assert!(node.status.success(), "{output}");
+    assert_eq!(stock(7).await, 8, "only the first TypeScript bundle deducted (its replay and the refused bundle did not)");
+    assert_eq!(rows().await, (before.0 + 1, before.1 + 1, before.2 + 1));
+
     // I-3: the response is lost after COMMIT. The server says COMMIT_UNKNOWN; the same key replays the committed ids.
     let (proxy_address, fired) = aip_test_fault_proxy::start(Fault::AckDropFin).await;
     let proxied = listen_with_apply_contract(facts.clone(), IdWire::DecimalString, "127.0.0.1:0".parse().unwrap(), aip_test_support::database_url_via_proxy(proxy_address.port()))
