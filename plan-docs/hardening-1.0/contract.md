@@ -6,16 +6,16 @@
 
 실행으로 확인한 것은 정의 케이스 104건(`syn1`·`syn2`·`syn4`·`syn5`)과 필터 연산 표(타입 14종 × 연산 10종, 영구 시험은 240칸), 코드 레지스트리 3종 218개(DEF 99, WIRE 110, CLIENT 9)의 양방향 대조, 실제 서버(PostgreSQL 17)에서 받은 WIRE 코드 24종, 두 SDK와 생성 binding 호출, 문서의 링크·인용 경로·```aip 예제 13개다. **확정 불일치는 8건**이다. 코드가 틀린 것 1건은 회귀 시험과 함께 고쳤고, 문서가 틀린 것 6건은 문서를 고쳤다. 나머지 1건(C8, 진단 JSON 키)은 다른 작업자 담당이라 고치지 않고 선택지만 적었다.
 
-| # | 불일치 | 어느 쪽이 맞나 | 조치 | 커밋 |
+| # | 불일치 | 어느 쪽이 맞나 | 조치 | 커밋(제목) |
 | --- | --- | --- | --- | --- |
-| C1 | `spec/client-errors.md`는 SDK가 올리는 모든 오류가 `CLIENT.*` `code`를 가진다고 하고 Python은 그렇게 하지만, TypeScript의 `WriteUnsettled`·`ScopeConflict`에는 `code`가 없었다 | 레지스트리와 Python이 맞다. TypeScript 클래스에 속성이 빠져 있었다 | **코드 수정**: 두 클래스에 `code` 추가. 회귀 시험 2개 | `37299322`, `47ecc53c` |
-| C2 | `product/MANAGED-EXECUTION.md`의 outbox 예제가 `expose apply`에 `bulk maxRows`를 쓰지 않아 `DEF.MISSING_ITEM`으로 거부된다 | 검사기가 맞다(명세는 `bulk maxRows` 필수) | **문서 수정** + 문서 예제 검사 시험 | `66ee93bb` |
-| C3 | 문법 카드가 필터 연산을 "필드 타입이 지원하는 것"이라고만 하고, `min`·`max`를 "Int 필드만"이라고만 한다. 실제로는 Int에 `in`이 없고 `min`·`max`는 groupKey와 `Int?` 결과가 필요하다(`DEF.UNSUPPORTED`) | 파서가 맞다. 작성자가 어긋난 정의를 쓰게 만드는 빈칸이다 | **문서 수정**(생성 원천 `syntax_card.rs`) + 표를 파서에 묶는 시험 2개 | `fcca4b1b` |
-| C4 | `SUPPORT.md`·`GETTING-STARTED.md`가 계약 지문을 "64자리 16진수"라고 하지만 서버는 소문자만 받는다. 대문자 16진수는 `WIRE.BAD_REQUEST`다 | 서버가 맞다(생성 binding과 두 SDK도 소문자만 낸다) | **문서 수정** | `79727c7f` |
-| C5 | `README.md`가 `plan-docs/README.md#이번-결과물-ae`를 링크하지만 그 제목은 없다(`기존 의도 정렬 결과물 A~E (2026-10-03)`) | 대상 문서가 맞다 | **문서 수정** | `79727c7f` |
-| C6 | `GENERAL-UPDATE.md`가 `DEF.ADVISORY_EFFECT_NO_LOWER_BOUND`를 조건 없이 "나온다"고 하지만 `--dev-checks`에서만 나온다 | 코드가 맞다(상시 4종은 `spike-v11-dev-checks`의 `ALWAYS_ON`) | **문서 수정** | `79727c7f` |
-| C7 | `SUPPORT.md`가 object·RAG 헤더 오류를 "코드 확인만"이라 했으나 실행으로 확인된다. 관리형 `/jobs`·`/files`·`/events`·`/messages`도 같은 코드다 | 코드가 맞고 문서가 보수적이었다 | **문서 수정**(실행 증거로 격상) | `2d583c6c` |
-| C8 | 진단 JSON 항목 키를 `COMPATIBILITY.md`와 `definition-diagnostics.md`가 `scope`·`help`를 항상 있는 것처럼 적는다. 실제로 `help`는 같은 코드가 반복되면 두 번째부터 없고, `.h.ts`·`.h.py`에는 `scope`가 없다 | 코드는 의도한 동작이다(`enrich.rs`: "수리 방법은 한 응답에 한 번"). 문서가 틀렸다 | **고치지 않음**: 진단 JSON 호환 범위는 다른 작업자 담당. 선택지는 아래 | |
+| C1 | `spec/client-errors.md`는 SDK가 올리는 모든 오류가 `CLIENT.*` `code`를 가진다고 하고 Python은 그렇게 하지만, TypeScript의 `WriteUnsettled`·`ScopeConflict`에는 `code`가 없었다 | 레지스트리와 Python이 맞다. TypeScript 클래스에 속성이 빠져 있었다 | **코드 수정**: 두 클래스에 `code` 추가. 회귀 시험 2개 | `fix(sdk-ts): WriteUnsettled and ScopeConflict carry the CLIENT.* code…`, `docs(client-errors): say which SDK raises which CLIENT code…` |
+| C2 | `product/MANAGED-EXECUTION.md`의 outbox 예제가 `expose apply`에 `bulk maxRows`를 쓰지 않아 `DEF.MISSING_ITEM`으로 거부된다 | 검사기가 맞다(명세는 `bulk maxRows` 필수) | **문서 수정** + 문서 예제 검사 시험 | `docs(managed-execution): add bulk maxRows to the outbox example…` |
+| C3 | 문법 카드가 필터 연산을 "필드 타입이 지원하는 것"이라고만 하고, `min`·`max`를 "Int 필드만"이라고만 한다. 실제로는 Int에 `in`이 없고 `min`·`max`는 groupKey와 `Int?` 결과가 필요하다(`DEF.UNSUPPORTED`) | 파서가 맞다. 작성자가 어긋난 정의를 쓰게 만드는 빈칸이다 | **문서 수정**(생성 원천 `syntax_card.rs`) + 표를 파서에 묶는 시험 2개 | `docs(syntax): state the per-type filter operators and the min/max aggregate rules…` |
+| C4 | `SUPPORT.md`·`GETTING-STARTED.md`가 계약 지문을 "64자리 16진수"라고 하지만 서버는 소문자만 받는다. 대문자 16진수는 `WIRE.BAD_REQUEST`다 | 서버가 맞다(생성 binding과 두 SDK도 소문자만 낸다) | **문서 수정** | `docs: lowercase contract fingerprint, README anchor, dev-checks-only effect advisory` |
+| C5 | `README.md`가 `plan-docs/README.md#이번-결과물-ae`를 링크하지만 그 제목은 없다(`기존 의도 정렬 결과물 A~E (2026-10-03)`) | 대상 문서가 맞다 | **문서 수정** | `docs: lowercase contract fingerprint, README anchor, dev-checks-only effect advisory` |
+| C6 | `GENERAL-UPDATE.md`가 `DEF.ADVISORY_EFFECT_NO_LOWER_BOUND`를 조건 없이 "나온다"고 하지만 `--dev-checks`에서만 나온다 | 코드가 맞다(상시 4종은 `spike-v11-dev-checks`의 `ALWAYS_ON`) | **문서 수정** | `docs: lowercase contract fingerprint, README anchor, dev-checks-only effect advisory` |
+| C7 | `SUPPORT.md`가 object·RAG 헤더 오류를 "코드 확인만"이라 했으나 실행으로 확인된다. 관리형 `/jobs`·`/files`·`/events`·`/messages`도 같은 코드다 | 코드가 맞고 문서가 보수적이었다 | **문서 수정**(실행 증거로 격상) | `docs(support): header error codes for managed routes were executed…` |
+| C8 | 진단 JSON 항목 키를 `COMPATIBILITY.md`와 `definition-diagnostics.md`가 `scope`·`help`를 항상 있는 것처럼 적는다. 실제로 `help`는 같은 코드가 반복되면 두 번째부터 없고, `.h.ts`·`.h.py`에는 `scope`가 없다 | 코드는 의도한 동작이다(`enrich.rs`: "수리 방법은 한 응답에 한 번"). 문서가 틀렸다 | **고치지 않음**: 진단 JSON 호환 범위는 다른 작업자 담당. [diagnostics-contract.md](diagnostics-contract.md)의 G3·G7이 같은 어긋남을 이미 다룬다. 이 대조가 더한 관측은 `help`가 같은 코드의 반복에서 빠진다는 것이다. 선택지는 아래 | |
 
 ## 1. 명세의 문법 규칙 ↔ parser·sema
 
