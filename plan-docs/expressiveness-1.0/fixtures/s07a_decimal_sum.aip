@@ -1,0 +1,9 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Order {
+  fields { id: Id; org: Org; amount: Decimal(12,2) }
+  rows read when org = actor.org
+  aggregate total: Decimal(12,2) { sourceAccess orgOnly; where org = actor.org; callerFilter none; rowOutput none; release sum(amount) }
+}
+access orgOnly = totalOfVisible(Order)

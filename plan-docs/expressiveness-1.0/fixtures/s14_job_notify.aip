@@ -1,0 +1,18 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Invoice {
+  fields { id: Id; owner: Member; sent: Bool }
+  rows read when owner = actor
+  transition send { allow owner = actor; from sent = false; to sent = true
+    notify owner "invoice.sent" }
+  expose apply send { target id; bulk maxRows 1 }
+}
+operation job renderPdf {
+  input { invoice: Invoice.Id }
+  output { pages: Int(0..1000) }
+  allow actor != null
+  effect none
+  deadline 30s
+  implementation "billing.renderPdf"
+}

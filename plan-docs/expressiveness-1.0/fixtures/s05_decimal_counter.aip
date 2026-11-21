@@ -1,0 +1,9 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Wallet {
+  fields { id: Id; owner: Member; balance: Decimal(12,2) }
+  rows read when owner = actor
+  transition bonus { allow owner = actor; from true; to balance = balance + "1.00" }
+  expose apply bonus { target id; bulk maxRows 1 }
+}

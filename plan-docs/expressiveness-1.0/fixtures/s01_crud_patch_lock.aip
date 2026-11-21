@@ -1,0 +1,13 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Post {
+  fields { id: Id; owner: Member; org: Org; title: Text(1..100); body: Text?; version: Int(0..1000000) }
+  rows read when org = actor.org
+  transition edit { allow owner = actor; from true; patch title, body; expect version; to version = version + 1 }
+  transition remove { allow owner = actor; from true; delete }
+  expose read { select id, title, body, version; filter title.prefix; sort id; budget { rows 50; depth 1; deadline 1s; cost 100; cursor } }
+  expose create { allow owner = actor and org = actor.org; fields owner, org, title, body, version }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose apply remove { target id; bulk maxRows 1 }
+}

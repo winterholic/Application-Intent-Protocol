@@ -1,0 +1,17 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+enum DocStatus { DRAFT, SUBMITTED, APPROVED, REJECTED }
+resource Approver { fields { id: Id; member: Member; org: Org } rows read when org = actor.org }
+predicate approver(m: Member, o: Org) = exists Approver where member = m and org = o
+resource Doc {
+  fields { id: Id; owner: Member; org: Org; status: DocStatus; reviewedBy: Member?; reviewedAt: Time? }
+  rows read when org = actor.org
+  transition submit { allow owner = actor; from status = DRAFT; to status = SUBMITTED; repeat unchanged }
+  transition approve { allow approver(actor, org) and owner != actor; from status = SUBMITTED; to status = APPROVED, reviewedBy = actor, reviewedAt = now }
+  transition reject { allow approver(actor, org); from status = SUBMITTED; to status = REJECTED, reviewedBy = actor, reviewedAt = now }
+  expose read { select id, status, reviewedAt; filter status.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
+  expose apply submit { target id; bulk maxRows 1 }
+  expose apply approve { target id, where; bulk maxRows 20 }
+  expose apply reject { target id; bulk maxRows 1 }
+}

@@ -1,0 +1,11 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Post {
+  fields { id: Id; owner: Member; org: Org; title: Text(1..100); createdAt: Time }
+  rows read when org = actor.org
+  expose read { select id, title, createdAt, owner; filter createdAt.gte, title.like; sort createdAt, id; traverse owner { select id } traverse comments via Comment.post { select id, body; limit 5 } budget { rows 50; depth 2; deadline 1s; cost 1000; cursor } }
+  aggregate commentCount: Int { source Comment; sourceAccess orgPosts; groupKey post; where post.org = actor.org; callerFilter none; rowOutput none; release count }
+}
+resource Comment { fields { id: Id; post: Post; body: Text(1..500) } rows read when post.org = actor.org expose read { select id, body } }
+access orgPosts = totalOfVisible(Post)

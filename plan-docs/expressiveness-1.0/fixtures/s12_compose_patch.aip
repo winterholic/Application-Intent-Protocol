@@ -1,0 +1,12 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Ticket {
+  fields { id: Id; org: Org; note: Text?; closed: Bool }
+  rows read when org = actor.org
+  transition annotate { allow org = actor.org; from true; patch note }
+  transition close { allow org = actor.org; from closed = false; to closed = true }
+  expose apply annotate { target id; bulk maxRows 10 }
+  expose apply close { target id; bulk maxRows 10 }
+  expose compose { bulk maxRows 10; transitions annotate, close }
+}

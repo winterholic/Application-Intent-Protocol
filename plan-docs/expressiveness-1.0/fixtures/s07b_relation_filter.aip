@@ -1,0 +1,8 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Post {
+  fields { id: Id; owner: Member; org: Org }
+  rows read when org = actor.org
+  expose read { select id; filter owner.org.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
+}

@@ -1,0 +1,9 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Product {
+  fields { id: Id; org: Org; stock: Int(0..1000000) }
+  rows read when org = actor.org
+  transition take { input { qty: Int(1..100) } allow org = actor.org; from stock >= input.qty; to stock = stock - input.qty }
+  expose apply take { target id; bulk maxRows 1 }
+}

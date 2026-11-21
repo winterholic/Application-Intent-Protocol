@@ -1,0 +1,12 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Cart { fields { id: Id; owner: Member; sku: Text(1..40); qty: Int(1..100); ordered: Bool }
+  rows read when owner = actor
+  transition checkout { allow owner = actor; from ordered = false; to ordered = true }
+  expose apply checkout { target id; bulk maxRows 20 }
+  expose compose { bulk maxRows 20; sameScope owner; transitions checkout; create OrderItem from this.owner, this.sku, this.qty }
+}
+resource OrderItem { fields { id: Id; owner: Member; sku: Text(1..40); qty: Int(1..100) }
+  rows read when owner = actor
+  expose create { allow owner = actor; fields owner, sku, qty } }

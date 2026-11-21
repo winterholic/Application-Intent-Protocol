@@ -1,0 +1,8 @@
+actor Member
+resource Member { fields { id: Id }
+  rows read when actor != null
+  expose read { select id, postCount; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } }
+  aggregate postCount: Int { source Post; sourceAccess fixed; groupKey author; callerFilter none; rowOutput none; release count }
+}
+resource Post { fields { id: Id; author: Member; hidden: Bool } rows read when hidden = false or author = actor }
+access fixed = totalOfVisible(Member)

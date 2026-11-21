@@ -1,0 +1,10 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Todo {
+  fields { id: Id; owner: Member; title: Text(1..100); done: Bool }
+  rows read when owner = actor
+  transition complete { allow owner = actor; from done = false; to done = true
+    create Todo { owner = this.owner; title = this.title; done = false } }
+  expose apply complete { target id; bulk maxRows 1 }
+}

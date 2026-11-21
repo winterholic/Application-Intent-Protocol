@@ -1,0 +1,11 @@
+actor Member
+resource Member { fields { id: Id } rows read when id = actor }
+resource Wallet { fields { id: Id; owner: Member; balance: Int(0..100000000) } rows read when owner = actor }
+predicate canPay(m: Member, o: Order) = exists Wallet where owner = m and balance >= o.total
+resource Order {
+  fields { id: Id; owner: Member; total: Int(0..1000000); paid: Bool }
+  rows read when owner = actor
+  transition pay { allow owner = actor and canPay(actor, this); from paid = false; to paid = true
+    update Wallet where owner = this.owner { balance = balance - this.total } }
+  expose apply pay { target id; bulk maxRows 1 }
+}

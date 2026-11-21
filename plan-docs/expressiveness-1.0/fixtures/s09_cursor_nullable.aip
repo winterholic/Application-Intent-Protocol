@@ -1,0 +1,8 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Task {
+  fields { id: Id; org: Org; dueAt: Time? }
+  rows read when org = actor.org
+  expose read { select id, dueAt; sort dueAt, id; budget { rows 50; depth 1; deadline 1s; cost 100; cursor } }
+}

@@ -1,0 +1,7 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Line { fields { id: Id; org: Org; qty: Int(1..100); unitPrice: Int(0..100000) } rows read when org = actor.org }
+resource Org2 { fields { id: Id }
+  aggregate total: Int { source Line; sourceAccess v; groupKey org; where org = actor.org; callerFilter none; rowOutput none; release sum(qty * unitPrice) } }
+access v = totalOfVisible(Org2)

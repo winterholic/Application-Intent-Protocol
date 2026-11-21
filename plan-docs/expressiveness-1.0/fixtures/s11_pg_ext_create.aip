@@ -1,0 +1,19 @@
+actor Member
+resource Org { fields { id: Id; name: Text(1..40) } rows read when id = actor.org }
+resource Member { fields { id: Id; org: Org } rows read when org = actor.org expose read { select id; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } } }
+resource Todo {
+  fields { id: Id; owner: Member; title: Text(1..100); done: Bool }
+  rows read when owner = actor
+  transition complete { allow owner = actor; from done = false; to done = true }
+  expose read { select id, title, done; filter id.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
+  expose create { allow owner = actor; fields owner, title, done }
+  expose apply complete { target id; bulk maxRows 1; internal }
+  extension write completeAndRepeat {
+    input { id: Todo.Id }
+    output { next: Todo.Id }
+    access read.Todo, Todo.complete, create.Todo
+    effect db
+    deadline 2s
+    implementation "todo.completeAndRepeat"
+  }
+}
