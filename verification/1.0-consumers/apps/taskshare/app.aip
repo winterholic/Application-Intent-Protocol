@@ -1,0 +1,120 @@
+// TaskShare: 여러 사용자가 목록을 만들고 다른 사용자에게 공유하는 할일 앱
+enum Priority { LOW, NORMAL, HIGH }
+enum ShareRole { VIEWER, EDITOR }
+enum Recurrence { DAILY, WEEKDAYS, WEEKLY }
+
+resource Member {
+  fields { id: Id; name: Text(1..60); email: Email }
+  rows read when actor != null
+  field email read when id = actor.id
+  expose read {
+    select id, name, email
+    sort id
+    budget { rows 10; depth 1; deadline 1s; cost 100 }
+  }
+}
+actor Member
+
+predicate canSee(l: TodoList, m: Member) =
+  l.owner = m or exists ListShare where list = l and member = m
+predicate canEdit(l: TodoList, m: Member) =
+  l.owner = m or exists ListShare where list = l and member = m and role = EDITOR
+
+access visibleItems = totalOfVisible(TodoList)
+
+resource TodoList {
+  fields { id: Id; owner: Member; title: Text(1..100); archived: Bool }
+  rows read when canSee(this, actor)
+  expose read {
+    select id, title, archived, owner, openCount
+    filter archived.eq, title.prefix
+    sort id, title
+    traverse owner { select id, name }
+    traverse TodoItem via TodoItem.list { select id, title, done, priority; sort id; limit 50 }
+    traverse ListShare via ListShare.list { select id, role; limit 20 }
+    budget { rows 50; depth 2; deadline 2s; cost 2000 }
+  }
+  aggregate openCount: Int {
+    source TodoItem
+    sourceAccess visibleItems
+    groupKey list
+    where done = false
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  expose create {
+    allow owner = actor and archived = false
+    fields owner, title, archived
+  }
+  transition archive { from archived = false; to archived = true; allow owner = actor }
+  expose apply archive { target id; bulk maxRows 1 }
+}
+
+resource ListShare {
+  fields { id: Id; list: TodoList; member: Member; role: ShareRole }
+  rows read when member = actor or list.owner = actor
+  unique list, member
+  expose read {
+    select id, list, member, role
+    sort id
+    budget { rows 50; depth 1; deadline 1s; cost 100 }
+  }
+  expose create {
+    allow list.owner = actor
+    fields list, member, role
+  }
+  transition unshare { from role = VIEWER or role = EDITOR; delete; allow list.owner = actor }
+  expose apply unshare { target id; bulk maxRows 10 }
+}
+
+resource TodoItem {
+  fields {
+    id: Id
+    list: TodoList
+    createdBy: Member
+    assignee: Member?
+    title: Text(1..200)
+    notes: Text(0..2000)?
+    priority: Priority
+    dueAt: Time?
+    done: Bool
+    version: Int(0..1000000)
+    label: Text(1..30)?
+  }
+  rows read when canSee(list, actor)
+  expose read {
+    select id, list, title, notes, priority, dueAt, done, version, assignee, label
+    filter id.eq, done.eq, priority.eq, dueAt.lte, dueAt.gte, title.contains, list.eq, label.eq
+    sort id, dueAt, priority
+    traverse list { select id, title }
+    traverse assignee { select id, name }
+    budget { rows 100; depth 2; deadline 2s; cost 3000; offset 1000 }
+  }
+  expose create {
+    allow canEdit(list, actor) and createdBy = actor and done = false and version = 0
+    fields list, createdBy, assignee, title, notes, priority, dueAt, done, version, label
+  }
+  transition complete { from done = false; to done = true, version = version + 1; allow canEdit(list, actor) }
+  transition reopen { from done = true; to done = false, version = version + 1; allow canEdit(list, actor) }
+  transition edit {
+    from version >= 0
+    allow canEdit(list, actor)
+    patch title, notes, priority, dueAt, assignee, label
+    expect version
+    to version = version + 1
+  }
+  transition remove { from done = true or done = false; delete; allow list.owner = actor or createdBy = actor }
+  expose apply complete { target id, where; bulk maxRows 20 }
+  expose apply reopen { target id; bulk maxRows 20 }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose apply remove { target id; bulk maxRows 20 }
+  extension write reschedule {
+    input { id: TodoItem.Id; rule: Recurrence }
+    output { id: TodoItem.Id; dueAt: Time }
+    access read.TodoItem, TodoItem.edit
+    effect db
+    deadline 3s
+    implementation "todo.reschedule"
+  }
+}

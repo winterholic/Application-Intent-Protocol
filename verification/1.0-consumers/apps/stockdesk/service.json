@@ -1,0 +1,12 @@
+{
+  "schema": "aip_stockdesk",
+  "database_url_env": "STOCKDESK_DATABASE_URL",
+  "listen": "127.0.0.1:18082",
+  "wire": "decimal",
+  "auth": {
+    "issuer": "https://issuer.example",
+    "audience": "aip-api",
+    "jwks": {"kind": "file", "path": "./dev-idp/jwks.json"}
+  },
+  "workers": { "directory": "./extensions", "language": "python", "enable_writes": true }
+}

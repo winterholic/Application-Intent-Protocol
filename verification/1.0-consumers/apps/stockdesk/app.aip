@@ -1,0 +1,136 @@
+// StockDesk: 테넌트(매장)별 재고와 주문. 직원은 자기 테넌트의 데이터만 본다.
+enum StaffRole { MANAGER, CLERK }
+enum OrderStatus { OPEN, CONFIRMED, CANCELLED }
+
+resource Tenant {
+  fields { id: Id; name: Text(1..80) }
+  rows read when this = actor.tenant
+  expose read {
+    select id, name
+    sort id
+    budget { rows 5; depth 1; deadline 1s; cost 50 }
+  }
+}
+
+resource Staff {
+  fields { id: Id; tenant: Tenant; name: Text(1..60); role: StaffRole }
+  rows read when tenant = actor.tenant
+  expose read {
+    select id, name, role
+    sort id
+    budget { rows 100; depth 1; deadline 1s; cost 200 }
+  }
+}
+actor Staff
+
+predicate manager(s: Staff) = s.role = MANAGER
+
+resource Product {
+  fields {
+    id: Id
+    tenant: Tenant
+    sku: Text(1..40)
+    name: Text(1..120)
+    unitPrice: Decimal(12,2)
+    stock: Int(0..1000000)
+    reorderLevel: Int(0..1000000)
+  }
+  rows read when tenant = actor.tenant
+  unique tenant, sku
+  expose read {
+    select id, sku, name, unitPrice, stock, reorderLevel
+    filter id.in, sku.eq, sku.prefix, name.contains, stock.lte, stock.gte
+    sort id, sku, stock
+    budget { rows 200; depth 1; deadline 2s; cost 1000; offset 5000 }
+  }
+  expose create {
+    allow manager(actor) and tenant = actor.tenant
+    fields tenant, sku, name, unitPrice, stock, reorderLevel
+  }
+  transition restock {
+    from stock >= 0
+    allow manager(actor) and tenant = actor.tenant
+    patch stock
+    expect stock
+  }
+  transition reprice {
+    from stock >= 0
+    allow manager(actor) and tenant = actor.tenant
+    patch unitPrice, name, reorderLevel
+  }
+  transition take {
+    from stock >= 0
+    allow tenant = actor.tenant
+    patch stock
+    expect stock
+  }
+  expose apply restock { target id; bulk maxRows 1 }
+  expose apply reprice { target id; bulk maxRows 1 }
+  expose apply take { target id; bulk maxRows 1; internal }
+}
+
+resource Order {
+  fields {
+    id: Id
+    tenant: Tenant
+    placedBy: Staff
+    number: Text(1..30)
+    status: OrderStatus
+    total: Decimal(14,2)
+  }
+  rows read when tenant = actor.tenant
+  unique tenant, number
+  expose read {
+    select id, number, status, total, placedBy, lineCount
+    filter status.eq, number.eq
+    sort id, number
+    traverse placedBy { select id, name }
+    traverse OrderLine via OrderLine.order { select id, qty, unitPrice, product; sort id; limit 100 }
+    budget { rows 100; depth 2; deadline 2s; cost 2000; offset 5000 }
+  }
+  aggregate lineCount: Int {
+    source OrderLine
+    sourceAccess allOrders
+    groupKey order
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  expose create {
+    allow tenant = actor.tenant and placedBy = actor and status = OPEN and total = "0.00"
+    fields tenant, placedBy, number, status, total
+  }
+  transition confirm {
+    from status = OPEN
+    allow tenant = actor.tenant
+    to status = CONFIRMED
+    patch total
+  }
+  transition cancel { from status = OPEN; to status = CANCELLED; allow tenant = actor.tenant and (placedBy = actor or manager(actor)) }
+  expose apply cancel { target id; bulk maxRows 1 }
+  expose apply confirm { target id; bulk maxRows 1; internal }
+  extension write place {
+    input { order: Order.Id }
+    output { order: Order.Id; total: Decimal(14,2); lines: Int }
+    access read.Order, read.OrderLine, read.Product, Product.take, Order.confirm
+    effect db
+    deadline 5s
+    implementation "stock.place"
+  }
+}
+access allOrders = totalOfVisible(Order)
+
+resource OrderLine {
+  fields { id: Id; order: Order; product: Product; qty: Int(1..10000); unitPrice: Decimal(12,2) }
+  rows read when order.tenant = actor.tenant
+  expose read {
+    select id, order, product, qty, unitPrice
+    filter order.eq
+    sort id
+    budget { rows 100; depth 1; deadline 1s; cost 200 }
+  }
+  expose create {
+    allow order.tenant = actor.tenant and order.status = OPEN and product.tenant = actor.tenant and unitPrice = product.unitPrice
+    fields order, product, qty, unitPrice
+  }
+}
