@@ -180,6 +180,8 @@ with open(os.environ["SDK_RECEIPT"], "a") as receipt:
         self.assertEqual(len(node_calls), 1, node_calls)
         self.assertIn("product/tests/sdk-package.test.mjs", node_calls[0])
         self.assertIn("prototype/tests/sdk-package.test.mjs", node_calls[0])
+        # 문서 ```aip 예제 검사는 위에서 빌드한 target/debug/aip로 도는 Verify의 node 단계에 있어야 한다. 빠지면 예제가 낡아도 CI가 모른다.
+        self.assertIn("product/tests/doc-aip-examples.test.mjs", node_calls[0])
         self.assertIn(["prototype-binary", "target/debug/aip-prototype"], calls)
         self.assertTrue(any(call[0] == "test" and "prototype/Cargo.toml" in call
                             and call[call.index("--target-dir") + 1] == "target" for call in calls))

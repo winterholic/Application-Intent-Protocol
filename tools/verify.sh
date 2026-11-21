@@ -137,6 +137,7 @@ node --test \
   product/tests/app-package.test.mjs \
   product/tests/app-deploy.test.mjs \
   product/tests/smoke-options.test.mjs \
+  product/tests/doc-aip-examples.test.mjs \
   product/tests/dev-jwt.test.mjs \
   product/tests/google-storage-provider.test.mjs
 python3 -W error::ResourceWarning -m unittest product.tests.google_storage_provider_test product.tests.password_auth_test product.tests.python_sdk_test product.tests.dedicated_db_test product.tests.test_facereview_ui_browser_evidence product.tests.test_facereview_write_deployments product.tests.test_facereview_e2e_suites product.tests.test_rust_lint_gate
