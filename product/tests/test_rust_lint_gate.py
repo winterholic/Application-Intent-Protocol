@@ -195,6 +195,15 @@ with open(os.environ["SDK_RECEIPT"], "a") as receipt:
         self.assertEqual(len(node_calls), 1, node_calls)
         self.assertIn("product/tests/external-create-order.test.mjs", node_calls[0])
 
+    def test_node_step_runs_the_upgrade_drill_unit_tests(self):
+        # product/tools/upgrade-drill.mjs itself runs in the release gate (scripts/release-gate.sh) against a baseline build. Its decision
+        # logic (stored-result preservation, rollback refusal, cleanup ownership) has unit tests that need only Node, so they run on every Verify.
+        result, calls, _ = self.run_gate(runtime_stop=False, through_sdk=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        node_calls = [call for call in calls if call[0] == "node"]
+        self.assertEqual(len(node_calls), 1, node_calls)
+        self.assertIn("product/tests/upgrade-drill.test.mjs", node_calls[0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -613,7 +613,7 @@ async fn n1_concurrent_increment_bounds_and_overflow() {
         let big = e.num("SELECT big FROM {S}.product WHERE id=1").await;
         let sample = results.iter().find(|r| r["ok"] != true).map(|r| r.to_string()).unwrap_or_default();
         probe("n1-grow-overflow", round, &tally, elapsed, &format!("big={big} {sample}"));
-        assert!(big >= 9223372036854775557 && big <= i64::MAX);
+        assert!((9223372036854775557..=i64::MAX).contains(&big));
         // decrement below zero: stock 5, ten callers take 1..: exactly five fit
         e.db.batch_execute(&format!("UPDATE {}.product SET stock=5", e.schema)).await.unwrap();
         let calls: Vec<_> = (1..=10).map(|i| (1 + i % 6, json!({"key": format!("n1t-{round}-{i}"), "request": {"atomic": [take(1, 1)]}}))).collect();

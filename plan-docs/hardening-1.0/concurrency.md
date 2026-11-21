@@ -212,3 +212,18 @@ Linux(Docker `rust:1-bookworm`, linux/arm64, PostgreSQL 17, bwrap 없음)에서 
 - 연결을 빼면 실패하는 확인: `product/tests/test_rust_lint_gate.py`에 `test_node_step_runs_the_external_create_order_regression`을 추가했다(verify.sh가 `python3 -m unittest ... test_rust_lint_gate`로 Verify에서 돈다). `verify.sh`에서 그 줄을 지우면 `AssertionError: 'product/tests/external-create-order.test.mjs' not found in [...]`로 실패하고(12건 중 1건), 되돌리면 12건 통과한다.
 - 시험이 실제로 결함을 잡는지: 0e5344ee의 `spike-v3-write/src/lib.rs` 변경만 되돌리고 빌드해 이 시험을 돌리면 `{"code":"WIRE.ALREADY_EXISTS","msg":"생성: 유일 제약 위반"...}`로 실패했고, 원래 코드에서는 통과했다(`ℹ pass 1`). macOS 로컬(PG 17 컨테이너, `PGHOST`·`PGPORT` 제거)에서 실행한 결과이고, GitHub Verify에서의 실행은 이 문서 작성 시점에 확인하지 못했다.
 - 범위 밖 발견: `product/tests/upgrade-drill.test.mjs`도 어떤 워크플로·스크립트에도 연결돼 있지 않다(이름 검색 기준). 이번에는 손대지 않았다.
+
+### 8.8 `concurrency_probe_http.rs`의 clippy 경고 (8.6절 첫 항목 처리)
+
+- CI가 이 파일을 검사하는지: 한다. `tools/verify.sh`가 `spike-v6-transport`에 `cargo clippy --manifest-path spikes/spike-v6-transport/Cargo.toml --all-targets --locked --target-dir target -- -D warnings`를 돌리고, `all-targets`가 `tests/`를 포함한다. `spike-v6-transport`의 dev-dependency가 자기 자신을 `test-db` feature로 켜므로 별도 feature 옵션 없이 이 파일(`#[ignore]` 시험이라도 컴파일 대상)이 검사된다. 추가로 이 명령은 `lib.rs`와 `server.rs`도 포함한다.
+- 원인: 613fab7a가 넣은 `assert!(big >= 9223372036854775557 && big <= i64::MAX)`가 Rust 1.100.0 clippy에서 `manual_range_contains`와 `absurd_extreme_comparisons`(`<= i64::MAX`는 항상 참)로 걸린다. CI의 `rustup update stable`은 최신 stable을 쓰므로 같은 결과가 나올 수 있다. 이 Mac의 rustc 1.98.1에서는 걸리지 않았다.
+- 수정: `assert!((9223372036854775557..=i64::MAX).contains(&big))`. 단언의 의미(하한 이상, `i64::MAX` 이하)는 같다. 상한 비교는 원래도 항상 참이라 그대로 남겼다.
+- 확인(Linux 컨테이너, rustc 1.100.0): 수정을 되돌리면 `cargo clippy ... --all-targets --locked -- -D warnings`가 `tests/concurrency_probe_http.rs:616`의 오류 2건과 `exit=101`로 실패했고, 수정 후에는 `Finished`와 `exit=0`이었다. `cargo fmt --check`도 통과했다. 이 Mac(rustc 1.98.1)에서도 같은 명령이 `exit=0`이었다.
+
+### 8.9 `upgrade-drill.test.mjs`를 Verify에 연결 (8.7절 범위 밖 발견 처리)
+
+- 필요 조건 확인: 이 파일은 `product/tools/upgrade-drill.mjs`의 판정 함수(`upgradeJobResultOutcome`, `rollbackBinaryOutcome`, `finalizeDrill` 등)를 가짜 입력으로 검사하는 단위 시험 7건이다. 바이너리, PostgreSQL, 이전 버전 산출물이 필요 없다. 실행에 필요한 것은 Node뿐이고(PG가 떠 있지 않은 상태에서 `ℹ tests 7`, `ℹ pass 7`), 도구가 가져오는 `postgres-guard.mjs`가 DSN 형식을 검사할 뿐 연결하지 않는다.
+- 드릴 자체(이전 릴리스 `4c27040`을 빌드해 새 바이너리로 업그레이드하고 롤백)는 이미 연결돼 있다. `aip-release-gate.yml`이 `scripts/release-gate.sh --baseline 4c27040c...`를 실행하고, 그 안의 `upgrade-drill` 단계가 `node product/tools/upgrade-drill.mjs --old-bin ... --new-bin ...`를 돈다. 그 단계는 이 변경 전에도 있었고 이번에 건드리지 않았다. 연결이 빠져 있던 것은 판정 로직의 단위 시험뿐이었다.
+- 연결: `tools/verify.sh`의 `node --test` 목록에 추가했다(Verify core, 모든 push). 인프라 추가는 필요 없다.
+- 연결을 빼면 실패하는 확인: `product/tests/test_rust_lint_gate.py`에 `test_node_step_runs_the_upgrade_drill_unit_tests`를 추가했다. `verify.sh`에서 그 줄을 지우면 `AssertionError: 'product/tests/upgrade-drill.test.mjs' not found in [...]`로 13건 중 1건이 실패하고, 되돌리면 13건이 통과한다.
+- 시험 자체의 RED는 이번에 다시 보이지 않았다. 이 시험은 bd54d919가 추가했고 그 커밋 기록(`plan-docs/reviews/2026-11-16-semantic-stabilization-results.md`)에 실제 거부 응답에서 `2 failed/5 passed`를 본 것으로 적혀 있다(이번에 확인한 것이 아니라 기록을 인용).
