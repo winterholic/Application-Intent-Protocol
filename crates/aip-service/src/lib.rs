@@ -1037,6 +1037,8 @@ fn generate_binding(facts: &Value, sdk_import: &str, wire: Wire, lang: BindingLa
 }
 
 pub async fn run(command: Command) -> Result<Value, Value> {
+    // `/capabilities` reports the protocol this engine speaks, so a caller can warn when its SDK speaks another major.
+    spike_v6_transport::set_protocol_version(aip_contract::PROTOCOL_VERSION);
     match command {
         Command::IdpReadiness { issuer, discovery_url, expected_issuer } => {
             let (issuer, endpoint) = match (issuer, discovery_url, expected_issuer) {

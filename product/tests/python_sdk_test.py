@@ -63,6 +63,31 @@ class PythonSdkTest(unittest.TestCase):
         for path, headers, _body in server.calls:
             self.assertEqual(headers.get("x-aip-sdk"), aip_sdk.SDK_IDENTITY, path)
 
+    def test_a_different_server_protocol_major_warns_but_discovery_still_works(self):
+        import warnings
+
+        import aip_sdk
+
+        def discover(extra):
+            server = FakeServer()
+            server.script("/capabilities", {"ok": True, "contractFingerprint": FP, "operations": {}, **extra})
+            client = connect("http://aip", "t1", transport=server)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                response = client.discover()
+            self.assertEqual(client.contract_fingerprint, FP, "the contract check is unchanged")
+            return response, [w for w in caught if issubclass(w.category, aip_sdk.AipProtocolWarning)]
+
+        same_minor_newer = f"aip-protocol/{aip_sdk.PROTOCOL.split('/')[1].split('.')[0]}.9"
+        for label, extra in (("same major", {"protocol": aip_sdk.PROTOCOL}), ("same major, newer minor", {"protocol": same_minor_newer}), ("older engine without the field", {})):
+            _, warned = discover(extra)
+            self.assertEqual(warned, [], label)
+        for label, value in (("other major", "aip-protocol/9.0"), ("0.x engine", "aip-protocol/0.1"), ("garbage", "not-a-protocol"), ("non string", 7)):
+            response, warned = discover({"protocol": value})
+            self.assertEqual(len(warned), 1, label)
+            self.assertIn("major", str(warned[0].message))
+            self.assertEqual(response["protocol"], value)
+
     def test_discovers_fingerprint_and_sends_it_on_contract_paths(self):
         server = FakeServer()
         server.script("/capabilities", {"ok": True, "contractFingerprint": FP, "operations": {}})

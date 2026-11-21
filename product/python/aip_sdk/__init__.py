@@ -16,17 +16,31 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import warnings
 from typing import Any, Callable, Iterator, Optional
 
 __all__ = [
     "connect", "Client", "AipError", "ExtensionRejected", "WriteUnsettled", "ScopeConflict", "extension_rejection", "validate_operation_output", "PROTOCOL",
-    "SDK_IDENTITY", "created",
+    "SDK_IDENTITY", "created", "AipProtocolWarning",
 ]
 __version__ = "1.0.0"
 # 이 SDK가 말하는 wire protocol. 호환 경계는 major다. scripts/sync-version.mjs가 crates/aip-contract의 PROTOCOL_VERSION에서 쓴다.
 PROTOCOL = "aip-protocol/1.0"
 # 요청마다 `x-aip-sdk`로 보내는 자기 선언. 서버는 로그와 진단에만 쓰고 거부하지 않는다.
 SDK_IDENTITY = f"python/{__version__}"
+
+_PROTOCOL = re.compile(r"^aip-protocol/(\d+)\.\d+$")
+
+
+class AipProtocolWarning(UserWarning):
+    """The server reports an `aip-protocol` major this SDK does not speak. Only a warning: the contract fingerprint stays the
+    compatibility check, and the call that follows may still work or fail with a typed error."""
+
+
+def _protocol_major(value: Any) -> Optional[int]:
+    match = _PROTOCOL.match(value) if isinstance(value, str) else None
+    return int(match.group(1)) if match else None
+
 
 _FINGERPRINT = re.compile(r"^[a-f0-9]{64}$")
 _ACTOR_ID = re.compile(r"^(0|[1-9][0-9]*|-[1-9][0-9]*|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
@@ -367,6 +381,14 @@ class Client:
         if self._pinned and served != self.contract_fingerprint:
             raise AipError("WIRE.CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름", _request_id(response))
         self.contract_fingerprint = served
+        # Optional field: engines before it was added omit it, and that is not a mismatch.
+        served_protocol = response.get("protocol")
+        if served_protocol is not None and _protocol_major(served_protocol) != _protocol_major(PROTOCOL):
+            shown = served_protocol[:40] if isinstance(served_protocol, str) else type(served_protocol).__name__
+            warnings.warn(
+                AipProtocolWarning(f"서버 protocol {shown!r}의 major가 이 SDK의 {PROTOCOL}과 다릅니다. 서버와 같은 릴리스의 SDK와 binding을 쓰십시오"),
+                stacklevel=2,
+            )
         id_wire = response.get("idWire")
         if id_wire in {"legacy", "safe-number-v13", "decimal-string-v13"}:
             self._id_wire = id_wire

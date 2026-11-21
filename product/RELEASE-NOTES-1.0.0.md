@@ -76,7 +76,7 @@ CI가 네 target 모두에서 증명하는 것은 빌드, `aip --version`, `serv
 ## 알려진 한계와 미정 항목
 
 - **패키지 이름 확정**: npm scope와 PyPI 이름은 소유자 승인 전이다(TBD).
-- **SDK의 protocol 런타임 비교 없음**: 서버가 `/capabilities`로 protocol을 알리고 SDK가 지원 major와 비교하는 검사는 이번에 넣지 않았다. SDK는 계약 지문 불일치만 검사한다(TBD, 1.0.x 후보).
+- **protocol 비교는 경고뿐**: 엔진이 `/capabilities`에 `protocol`을 싣고 Python SDK가 major 불일치를 `AipProtocolWarning`으로 알린다. 호출을 막지는 않는다(호환 판단은 계약 지문). TypeScript 클라이언트는 `/capabilities`를 부르지 않아 자동 경고가 없고 `protocolWarning()` 함수만 공개한다(자동 경고는 TBD).
 - **Core IR 태그 `aip-core/0.11` 유지**: 배포 저널에 저장되는 값이라 올리지 않았다. IR 의미가 바뀔 때 올린다.
 - **공개 Docker 이미지 없음**: 앱 패키지를 받아 직접 빌드한다.
 - **릴리스 gate의 baseline**: 업그레이드·롤백 경로의 기준을 "직전 릴리스 태그"로 바꾸는 일은 첫 릴리스 뒤에 한다(TBD).

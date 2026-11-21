@@ -6,6 +6,13 @@
 //! actor는 `authorization: Bearer <서명 토큰>`에서만 온다(V8, auth.rs). 토큰이 없으면 익명, 있는데 틀리면 거부.
 //! `x-spike-drop-response: 1`이면 커밋 뒤 응답 없이 연결을 끊는다(시험용).
 mod admission;
+static PROTOCOL_VERSION: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// The wire protocol (`aip-protocol/1.0`) the hosting product speaks. `/capabilities` reports it when set. The first call wins.
+pub fn set_protocol_version(protocol: &'static str) {
+    let _ = PROTOCOL_VERSION.set(protocol);
+}
+
 pub mod auth;
 pub mod client_codes;
 mod cors;
@@ -1992,7 +1999,13 @@ async fn serve_request(
                 json!(capability_available(operation, runtime.extensions.is_some(), runtime.authenticator.is_some(), runtime.deployment.is_some()));
             operation["authorization"] = json!("checked-on-call");
         }
-        json!({"ok":true,"catalogVersion":"aip-capabilities/1","operations":operations,"infrastructure":runtime.infrastructure.catalog()})
+        let mut catalog =
+            json!({"ok":true,"catalogVersion":"aip-capabilities/1","operations":operations,"infrastructure":runtime.infrastructure.catalog()});
+        // Optional field (the contract document only gains optional keys within a protocol major): absent when the host did not set it.
+        if let Some(protocol) = PROTOCOL_VERSION.get() {
+            catalog["protocol"] = json!(protocol);
+        }
+        catalog
     } else if path == "/operation" {
         let operation_deadline =
             std::time::Duration::from_millis(facts["operations"][body["operation"].as_str().unwrap()]["deadlineMs"].as_u64().unwrap());

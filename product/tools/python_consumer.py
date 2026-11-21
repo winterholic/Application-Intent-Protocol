@@ -5,7 +5,9 @@ that both SDKs share one idempotency namespace and one contract fingerprint.
 """
 import json
 import os
+import warnings
 
+import aip_sdk
 from aip_sdk import AipError, connect
 
 base = os.environ["AIP_SMOKE_BASE"]
@@ -15,7 +17,12 @@ wire = os.environ["AIP_SMOKE_WIRE"]
 target = "11" if wire == "decimal" else 11
 
 client = connect(base, token, fingerprint)
-catalog = client.discover()
+# A real engine reports its protocol in /capabilities, and a matching major must not warn.
+with warnings.catch_warnings():
+    warnings.simplefilter("error", aip_sdk.AipProtocolWarning)
+    catalog = client.discover()
+if catalog.get("protocol") != aip_sdk.PROTOCOL:
+    raise SystemExit(f"capabilities protocol mismatch: {catalog.get('protocol')!r} != {aip_sdk.PROTOCOL!r}")
 rows = client.read({"read": "Event", "select": ["id", "checked"]})
 if rows != [{"id": target, "checked": True}]:
     raise SystemExit(f"python read mismatch: {rows}")

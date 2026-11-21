@@ -278,6 +278,7 @@ name = "aip-service"
 version = "1.0.0"
 dependencies = [
  "aip-auth",
+ "aip-contract",
  "aip-crypto",
  "aip-execution",
  "aip-migrate",

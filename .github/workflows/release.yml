@@ -168,7 +168,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ldd --version | head -1
+          ldd --version | sed -n 1p
           floor="$(objdump -T target/release/aip | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | uniq | tail -1)"
           echo "${{ matrix.target }}: binary requires glibc >= $floor (allowed: <= $GLIBC_FLOOR)" | tee -a "$GITHUB_STEP_SUMMARY"
           highest="$(printf '%s\n%s\n' "$floor" "$GLIBC_FLOOR" | sort -V | tail -1)"
@@ -368,7 +368,7 @@ jobs:
           set -euo pipefail
           # npm Trusted Publishing(OIDC)은 npm CLI 11.5.1 이상이 필요하다.
           npm_version="$(npm --version)"
-          lowest="$(printf '%s\n%s\n' "$npm_version" "11.5.1" | sort -V | head -1)"
+          lowest="$(printf '%s\n%s\n' "$npm_version" "11.5.1" | sort -V | sed -n 1p)"
           [[ "$lowest" == "11.5.1" ]] || { echo "::error::npm $npm_version은 11.5.1보다 낮아 trusted publishing을 쓸 수 없습니다"; exit 1; }
           if npm view "$PACKAGE@$VERSION" version >/dev/null 2>&1; then
             echo "$PACKAGE@$VERSION은 이미 publish돼 있어 건너뜁니다"
