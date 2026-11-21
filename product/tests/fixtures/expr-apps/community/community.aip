@@ -1,0 +1,69 @@
+enum MemberRole { USER, MODERATOR }
+enum PostStatus { DRAFT, PUBLISHED, HIDDEN }
+
+resource Member {
+  fields { id: Id; name: Text(1..50); role: MemberRole }
+  rows read when true
+  expose read { select id, name, role; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
+}
+actor Member
+
+predicate isModerator(m: Member) = m.role = MODERATOR
+access totalOfBoardPosts = totalOfVisible(Board)
+access totalOfPostComments = totalOfVisible(Post)
+
+resource Board {
+  fields { id: Id; name: Text(1..50) }
+  rows read when true
+  expose read { select id, name, publishedCount; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } }
+  aggregate publishedCount: Int { source Post; sourceAccess totalOfBoardPosts; groupKey board; where status = PUBLISHED; callerFilter none; rowOutput none; release count }
+}
+
+resource Post {
+  fields {
+    id: Id; board: Board; author: Member; title: Text(1..200); body: Text
+    status: PostStatus; views: Int(0..1000000000); publishedAt: Time?; version: Int(0..1000000)
+  }
+  rows read when status = PUBLISHED or author = actor or isModerator(actor)
+  transition publish { allow author = actor; from status = DRAFT; to status = PUBLISHED, publishedAt = now, version = version + 1 }
+  transition unpublish { allow author = actor; from status = PUBLISHED; to status = DRAFT, version = version + 1 }
+  transition hide { allow isModerator(actor); from status = PUBLISHED; to status = HIDDEN, version = version + 1 }
+  transition restore { allow isModerator(actor); from status = HIDDEN; to status = PUBLISHED, version = version + 1 }
+  transition edit { allow author = actor; from status != HIDDEN; patch title, body; expect version; to version = version + 1 }
+  transition view { allow actor != null; from status = PUBLISHED; to views = views + 1 }
+  aggregate commentCount: Int { source Comment; sourceAccess totalOfPostComments; groupKey post; where hidden = false; callerFilter none; rowOutput none; release count }
+  aggregate reactionCount: Int { source Reaction; sourceAccess totalOfPostComments; groupKey post; where post.status = PUBLISHED; callerFilter none; rowOutput none; release count }
+  aggregate scoreSum: Int { source Reaction; sourceAccess totalOfPostComments; groupKey post; where post.status = PUBLISHED; callerFilter none; rowOutput none; release sum(score) }
+  expose read {
+    select id, board, author, title, body, status, views, publishedAt, version, commentCount, reactionCount, scoreSum
+    filter id.eq, board.eq, status.eq, author.eq, title.contains, views.gte
+    sort id, views
+    traverse board { select id, name }
+    traverse author { select id, name }
+    traverse comments via Comment.post { select id, body, author; limit 20 }
+    budget { rows 20; depth 2; deadline 1s; cost 2000; cursor }
+  }
+  expose create { allow author = actor and status = DRAFT and views = 0 and version = 0; fields board, author, title, body, status, views, version }
+  expose apply publish { target id; bulk maxRows 20 }
+  expose apply unpublish { target id; bulk maxRows 1 }
+  expose apply hide { target id; bulk maxRows 20 }
+  expose apply restore { target id; bulk maxRows 1 }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose apply view { target id; bulk maxRows 1 }
+}
+
+resource Comment {
+  fields { id: Id; post: Post; author: Member; body: Text(1..2000); hidden: Bool }
+  rows read when hidden = false and post.status = PUBLISHED
+  transition hide { allow isModerator(actor) or author = actor; from hidden = false; to hidden = true }
+  expose read { select id, post, author, body; filter post.eq; sort id; traverse author { select id, name }; budget { rows 100; depth 2; deadline 1s; cost 300; offset 200 } }
+  expose create { allow author = actor and hidden = false and post.status = PUBLISHED; fields post, author, body, hidden }
+  expose apply hide { target id; bulk maxRows 1 }
+}
+
+resource Reaction {
+  fields { id: Id; post: Post; member: Member; score: Int(1..5) }
+  rows read when member = actor
+  unique post, member
+  expose create { allow member = actor and post.status = PUBLISHED; fields post, member, score }
+}

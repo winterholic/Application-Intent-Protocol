@@ -1,0 +1,94 @@
+enum Role { OWNER, ADMIN, MEMBER, VIEWER }
+enum TaskStatus { TODO, DOING, DONE }
+enum ProjectStatus { ACTIVE, ARCHIVED }
+
+resource Org {
+  fields { id: Id; name: Text(1..100) }
+  rows read when id = actor.org
+  expose read { select id, name; sort id; budget { rows 10; depth 1; deadline 1s; cost 100 } }
+}
+
+resource User {
+  fields { id: Id; org: Org; name: Text(1..100); email: Email; role: Role }
+  rows read when org = actor.org
+  field email read when id = actor.id or actor.role in (OWNER, ADMIN)
+  expose read {
+    select id, org, name, email, role
+    sort id
+    budget { rows 50; depth 1; deadline 1s; cost 200 }
+  }
+  expose create { allow org = actor.org and isAdmin(actor) and role in (MEMBER, VIEWER); fields org, name, email, role }
+}
+actor User
+
+predicate canWrite(u: User) = u.role in (OWNER, ADMIN, MEMBER)
+predicate isAdmin(u: User) = u.role in (OWNER, ADMIN)
+access visibleTotal = totalOfVisible(Task)
+
+resource Project {
+  fields { id: Id; org: Org; name: Text(1..100); status: ProjectStatus; owner: User; version: Int(0..1000000) }
+  rows read when org = actor.org
+  transition rename { allow org = actor.org and (owner = actor or isAdmin(actor)); from status = ACTIVE; patch name; expect version; to version = version + 1 }
+  transition archive { allow org = actor.org and isAdmin(actor); from status = ACTIVE
+    to status = ARCHIVED, version = version + 1
+    update many Task maxRows 200 where project = this { status = DONE }
+  }
+  expose read {
+    select id, org, name, status, owner, version
+    filter status.eq
+    sort id
+    traverse owner { select id, name }
+    budget { rows 50; depth 2; deadline 1s; cost 300 }
+  }
+  expose create { allow org = actor.org and owner = actor and isAdmin(actor) and status = ACTIVE and version = 0; fields org, name, status, owner, version }
+  expose apply rename { target id; bulk maxRows 1 }
+  expose apply archive { target id; bulk maxRows 1 }
+}
+
+resource Task {
+  fields {
+    id: Id; org: Org; project: Project; title: Text(1..200); description: Text?
+    assignee: User?; creator: User; status: TaskStatus; priority: Int(1..5); version: Int(0..1000000)
+  }
+  rows read when org = actor.org
+  transition edit {
+    allow org = actor.org and canWrite(actor) and (creator = actor or assignee = actor or isAdmin(actor))
+    from status != DONE
+    patch title, description, assignee, priority
+    expect version
+    to version = version + 1
+  }
+  transition start { allow org = actor.org and canWrite(actor) and (assignee = actor or isAdmin(actor)); from status = TODO; to status = DOING, version = version + 1 }
+  transition complete { allow org = actor.org and canWrite(actor) and (assignee = actor or isAdmin(actor)); from status = DOING; to status = DONE, version = version + 1 }
+  transition remove {
+    allow org = actor.org and isAdmin(actor)
+    from true
+    delete
+    delete many Comment maxRows 500 where task = this
+  }
+  expose read {
+    select id, org, project, title, description, assignee, creator, status, priority, version, commentCount
+    filter id.eq, status.eq, project.eq, assignee.eq, priority.gte
+    sort id, priority
+    traverse project { select id, name }
+    traverse assignee { select id, name }
+    traverse comments via Comment.task { select id, body, author; limit 20 }
+    budget { rows 50; depth 2; deadline 1s; cost 1500; cursor }
+  }
+  aggregate commentCount: Int { source Comment; sourceAccess visibleTotal; groupKey task; where org = actor.org; callerFilter none; rowOutput none; release count }
+  expose create {
+    allow org = actor.org and canWrite(actor) and creator = actor and status = TODO and version = 0 and project.org = actor.org
+    fields org, project, title, description, assignee, creator, status, priority, version
+  }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose apply start { target id; bulk maxRows 1 }
+  expose apply complete { target id; bulk maxRows 1 }
+  expose apply remove { target id; bulk maxRows 1 }
+}
+
+resource Comment {
+  fields { id: Id; org: Org; task: Task; author: User; body: Text(1..2000) }
+  rows read when org = actor.org
+  expose read { select id, org, task, author, body; filter task.eq; sort id; traverse author { select id, name }; budget { rows 100; depth 2; deadline 1s; cost 300 } }
+  expose create { allow org = actor.org and author = actor and canWrite(actor) and task.org = actor.org; fields org, task, author, body }
+}
