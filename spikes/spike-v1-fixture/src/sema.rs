@@ -204,6 +204,9 @@ pub fn analyze(spec: &Spec) -> Result<Output, Vec<Diag>> {
         return Err(cx.diags);
     }
     let (metadata, spans) = metadata_of(spec);
+    for (code, msg, span) in crate::policy_advice::advise(spec, &execution) {
+        cx.advisory(code, msg, span);
+    }
     Ok(Output { execution, metadata, spans, advisories: cx.advisories })
 }
 
@@ -1904,8 +1907,12 @@ impl<'a> Ctx<'a> {
             None if tt.ty != Ty::Int => self.d("DEF.TYPE_MISMATCH", "count 집계 타입은 Int", a.span),
             None => {}
             Some(field) => {
+                // sum만 Decimal 필드를 받는다. 결과는 정확한 합이라 소수 자릿수는 같고 정수부만 넓힐 수 있다(반올림 없음).
+                let mut decimal_sum = None;
                 match self.field_tt(&source, field) {
                     Some(TT { ty: Ty::Int, .. }) => {}
+                    Some(TT { ty: Ty::Decimal(p, sc), .. }) if release == "sum" => decimal_sum = Some((p, sc)),
+                    Some(t) if release == "sum" => self.d("DEF.TYPE_MISMATCH", format!("`sum({field})`는 Int 또는 Decimal 필드만, `{}`", t.show()), a.span),
                     Some(t) => self.d("DEF.TYPE_MISMATCH", format!("`{release}({field})`는 Int 필드만, `{}`", t.show()), a.span),
                     None => self.d("DEF.UNKNOWN_FIELD", format!("집계 대상 `{source}.{field}` 없음"), a.span),
                 }
@@ -1917,8 +1924,24 @@ impl<'a> Ctx<'a> {
                         a.span,
                     );
                 }
-                if tt.ty != Ty::Int {
-                    self.d("DEF.TYPE_MISMATCH", format!("{release} 집계 타입은 Int"), a.span);
+                // 암호문은 더할 수 없다. 암호화는 Decimal에서만 가능하므로 Int 집계에는 해당하지 않던 검사다.
+                if self.res.get(source.as_str()).is_some_and(|s| s.fields.iter().any(|x| &x.name == field && x.ty.encrypted.is_some())) {
+                    self.d("DEF.UNSUPPORTED", format!("암호화 필드 `{source}.{field}`는 {release}로 집계할 수 없음"), a.span);
+                }
+                match decimal_sum {
+                    Some((p, sc)) => match tt.ty {
+                        Ty::Decimal(rp, rs) if rs == sc && rp >= p && !tt.nullable => {}
+                        _ => self.d(
+                            "DEF.TYPE_MISMATCH",
+                            format!(
+                                "`sum({field})`는 Decimal 필드(`Decimal({p},{sc})`)의 합이라 집계 타입은 null이 아닌 `Decimal(p',{sc})`(p' >= {p})여야 함, `{}`. 합이 p'의 정수부를 넘으면 `WIRE.OUTPUT_INVALID`이고 반올림은 하지 않는다",
+                                tt.show()
+                            ),
+                            a.span,
+                        ),
+                    },
+                    None if tt.ty != Ty::Int => self.d("DEF.TYPE_MISMATCH", format!("{release} 집계 타입은 Int"), a.span),
+                    None => {}
                 }
                 // 빈 집합의 min/max는 NULL이다. 단독 집계는 NULL을 접근 거부로 읽으므로 행별(groupKey) 집계에서만 연다.
                 if release != "sum" && (a.group_key.is_none() || !tt.nullable) {
@@ -1941,7 +1964,18 @@ impl<'a> Ctx<'a> {
             Some(AccessRef::Name(n)) => match self.accesses.get(n.as_str()).map(|x| &x.body) {
                 Some(AccessBody::TotalOfVisible(p, _)) => {
                     if p != &r.name || a.group_key.is_none() {
-                        self.d("DEF.ACCESS_MISMATCH", format!("`{n}`은 `{p}` 기준 groupKey 집계에만 사용"), a.span);
+                        let mut why = vec![];
+                        if p != &r.name {
+                            why.push(format!("인자가 `{p}`이지만 집계를 선언한 `{}`여야 함", r.name));
+                        }
+                        if a.group_key.is_none() {
+                            why.push(format!("aggregate `{}`에 groupKey가 없음", a.name));
+                        }
+                        self.d(
+                            "DEF.ACCESS_MISMATCH",
+                            format!("`{n}`은 `{}`를 참조하는 `{source}`의 groupKey 집계에서만 사용({})", r.name, why.join(", ")),
+                            a.span,
+                        );
                     }
                     json!({ "ref": n })
                 }

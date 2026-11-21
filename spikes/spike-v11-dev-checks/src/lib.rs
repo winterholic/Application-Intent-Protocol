@@ -13,8 +13,15 @@ pub struct Advisory {
     pub msg: String,
 }
 
-/// Compiler advisories reported even when the development checks are off.
-const ALWAYS_ON: [&str; 1] = ["DEF.ADVISORY_PUBLIC_COUNT"];
+/// Compiler advisories reported even when the development checks are off. The policy advisories are here because AIP
+/// has no automatic tenant isolation: a forgotten tenant condition is exposure, and `service check` without
+/// `--dev-checks` is what most definitions are checked with.
+const ALWAYS_ON: [&str; 4] = [
+    "DEF.ADVISORY_PUBLIC_COUNT",
+    "DEF.ADVISORY_TENANT_UNSCOPED_READ",
+    "DEF.ADVISORY_WRITE_WIDER_THAN_READ",
+    "DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD",
+];
 
 pub struct Checked {
     pub output: Output,
@@ -166,7 +173,7 @@ pub fn load_checked(src: &str, form: Form, options: &Value) -> Result<Checked, V
     let output = spike_v1_fixture::load_str(src, form)?;
     let compiler_advisory =
         |diag: &Diag| Advisory { code: diag.code, anchor: format!("line:{}:col:{}", diag.span.line, diag.span.col), msg: diag.msg.clone() };
-    // 공개 count 경고는 계약 고지라서 개발 조언을 꺼도 낸다. 나머지 컴파일러 조언은 devChecks일 때만 낸다.
+    // 공개 count와 정책 작성 경고는 계약·노출 고지라서 개발 조언을 꺼도 낸다. 나머지 컴파일러 조언은 devChecks일 때만 낸다.
     let mut advisories: Vec<Advisory> =
         output.advisories.iter().filter(|diag| enabled || ALWAYS_ON.contains(&diag.code)).map(compiler_advisory).collect();
     if enabled {

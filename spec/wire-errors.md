@@ -555,8 +555,8 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 
 `class` server, `retry` never
 
-- 원인: An extension returned output that does not match its declaration.
-- 수정: Fix the extension or its `output` declaration.
+- 원인: An extension returned output that does not match its declaration, or a Decimal `sum` aggregate is larger than the `Decimal(p', s)` it declares.
+- 수정: Fix the extension or its `output` declaration. For a Decimal sum, declare a larger `p'` (the scale must stay that of the summed field; nothing is rounded).
 
 ### `WIRE.OUTPUT_TOO_LARGE`
 

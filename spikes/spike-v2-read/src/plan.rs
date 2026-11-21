@@ -133,6 +133,9 @@ fn measure(facts: &Value, cx: &mut Ctx<'_>, aggregate: &Value, alias: &str) -> R
     let visible = cx.cond(&facts["resources"][source]["rowRead"], &env).map_err(internal)?;
     match (release, field) {
         // bigint 합은 numeric이 된다. 범위를 넘으면 캐스트가 실패해 잘린 값 대신 오류가 난다.
+        (Some("sum"), Some(_)) if cx.dialect.is_mysql() && decimal_sum_type(facts, aggregate).is_some() => {
+            rej("WIRE.UNSUPPORTED", "MySQL에서는 Decimal sum을 아직 지원하지 않음")
+        }
         (Some("sum"), Some(f)) if cx.dialect.is_mysql() => {
             // MySQL은 FILTER가 없고 DECIMAL을 SIGNED로 줄일 때 범위 밖 값을 조용히 자른다. 합은 DECIMAL 그대로 내보내 정규화 단계가 i64를 확인한다.
             Ok(format!("COALESCE(SUM(CASE WHEN {visible} THEN {} END), 0)", cx.qualified(alias, &col(f)?)))
@@ -140,10 +143,46 @@ fn measure(facts: &Value, cx: &mut Ctx<'_>, aggregate: &Value, alias: &str) -> R
         (Some(op @ ("min" | "max")), Some(f)) if cx.dialect.is_mysql() => {
             Ok(format!("{op}(CASE WHEN {visible} THEN {} END)", cx.qualified(alias, &col(f)?)))
         }
+        (Some("sum"), Some(f)) if decimal_sum_type(facts, aggregate).is_some() => {
+            Ok(format!("coalesce(sum({alias}.{}) FILTER (WHERE {visible}), 0)", col(f)?))
+        }
         (Some("sum"), Some(f)) => Ok(format!("coalesce(sum({alias}.{}) FILTER (WHERE {visible}), 0)::bigint", col(f)?)),
         (Some(op @ ("min" | "max")), Some(f)) => Ok(format!("{op}({alias}.{}) FILTER (WHERE {visible})", col(f)?)),
         (r, f) => Err(internal(format!("집계 release {r:?}({f:?}) 미지원"))),
     }
+}
+
+/// 집계 하나를 값으로 계산하는 부질의 `(SELECT … FROM table alias WHERE …)`.
+/// Decimal sum은 합이 선언한 `Decimal(p', s)`의 정수부에 들어가는지 먼저 본다. 안 들어가면 `1/(v-v)`로 SQLSTATE 22012를 내고
+/// `rows_of`가 `WIRE.OUTPUT_INVALID`로 바꾼다. 22003 캐스트 오류는 Int sum의 bigint 초과와 구분이 안 되고 메시지는 번역될 수 있어서,
+/// 이 읽기 계획의 어디에서도 나오지 않는 나눗셈 오류를 표지로 쓴다. 소수 자릿수는 원본과 같아 반올림은 없다.
+fn measured_subquery(facts: &Value, cx: &mut Ctx<'_>, aggregate: &Value, alias: &str, table: &str, filter: &str) -> Result<String, Reject> {
+    let measured = measure(facts, cx, aggregate, alias)?;
+    let Some((p, s)) = decimal_sum_type(facts, aggregate) else {
+        return Ok(format!("(SELECT {measured} FROM {table} {alias} WHERE {filter})"));
+    };
+    let v = cx.alias("v");
+    let inner = cx.alias("m");
+    let int_digits = p - s;
+    Ok(format!(
+        "(SELECT CASE WHEN abs({inner}.{v}) >= 10::numeric ^ {int_digits} THEN ({inner}.{v} / ({inner}.{v} - {inner}.{v}))::numeric({p},{s}) ELSE {inner}.{v}::numeric({p},{s}) END \
+         FROM (SELECT {measured} AS {v} FROM {table} {alias} WHERE {filter}) {inner})"
+    ))
+}
+
+/// 합이 Decimal인 집계의 선언 타입 `(p', s)`.
+fn decimal_sum_type(facts: &Value, aggregate: &Value) -> Option<(u8, u8)> {
+    if aggregate["release"] != "sum" {
+        return None;
+    }
+    let source = aggregate["source"].as_str()?;
+    let field_ty = facts["resources"][source]["fields"][aggregate["releaseField"].as_str()?]["ty"].as_str()?;
+    if !field_ty.trim_end_matches('?').starts_with("Decimal<") {
+        return None;
+    }
+    let inner = aggregate["ty"].as_str()?.strip_prefix("Decimal<")?.strip_suffix('>')?;
+    let (p, s) = inner.split_once(',')?;
+    Some((p.parse().ok()?, s.parse().ok()?))
 }
 
 fn aggregate_select_expr(
@@ -165,7 +204,8 @@ fn aggregate_select_expr(
         where_sql = format!("{where_sql} AND {}", cx.cond(&aggregate["where"], &source_env).map_err(internal)?);
     }
     // 집계 원본은 원본 행 정책을 자동 상속하지 않고 sourceAccess로만 읽는다.
-    let count = format!("(SELECT {} FROM {} {source_alias} WHERE {where_sql})", measure(facts, cx, aggregate, &source_alias)?, cx.table(source));
+    let table = cx.table(source);
+    let count = measured_subquery(facts, cx, aggregate, &source_alias, &table, &where_sql)?;
     let access_ref = aggregate["sourceAccess"]["ref"].as_str().unwrap_or("");
     let access = &facts["accesses"][access_ref];
     let (expression, guarded) = match access["kind"].as_str() {
@@ -181,8 +221,10 @@ fn aggregate_select_expr(
         }
         kind => return Err(internal(format!("집계 sourceAccess 종류 {kind:?} 미지원"))),
     };
-    let output_type = out_ty(aggregate["ty"].as_str().unwrap(), guarded);
-    Ok((expression, output_type))
+    let ty = aggregate["ty"].as_str().unwrap();
+    let output_type = out_ty(ty, guarded);
+    // Decimal 합계는 JSON 숫자가 아니라 문자열이다(필드 투영과 같은 규칙).
+    Ok((cx.json_scalar(ty, &expression), output_type))
 }
 
 fn check_value(facts: &Value, ty: &str, v: &Value, wire: crate::id_wire::IdWire) -> Result<(String, &'static str), Reject> {
@@ -1037,9 +1079,13 @@ fn plan_aggregate(dialect: Dialect, facts: &Value, o: &Map<String, Value>, calle
     }
     let w = if wh_parts.is_empty() { "TRUE".to_string() } else { wh_parts.join(" AND ") };
     // guard가 거짓이면 NULL을 돌려 ACCESS_DENIED로 바꾼다. 없는 동아리와 남의 동아리를 같은 결과로 만든다.
-    let measured = measure(facts, &mut cx, a, &al)?;
-    let value = format!("(CASE WHEN {guard} THEN (SELECT {measured} FROM {} {al} WHERE {w}) END)", cx.table(src));
+    let table = cx.table(src);
+    let measured = measured_subquery(facts, &mut cx, a, &al, &table, &w)?;
+    let value = format!("(CASE WHEN {guard} THEN {measured} END)");
+    // 단독 값은 JSON 문서 한 개로 읽는다. Decimal 합계가 `50.70` 그대로 나가면 숫자 50.7로 파싱되어 자릿수와 정밀도를 잃으므로 문자열로 만든다.
+    let decimal = decimal_sum_type(facts, a).is_some();
     let sql = match dialect {
+        Dialect::Postgres if decimal => format!("SELECT to_json({value}::text)::text"),
         Dialect::Postgres => format!("SELECT {value}::text"),
         Dialect::MySql => format!("SELECT CAST({value} AS CHAR CHARACTER SET utf8mb4)"),
     };

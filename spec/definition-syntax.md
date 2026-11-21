@@ -93,7 +93,7 @@
 | `where` | `where condition` | 집계에 넣을 원본 행 조건. where 없는 count는 공개 count이며 정의 검사가 `DEF.ADVISORY_PUBLIC_COUNT` 경고를 낸다 |
 | `callerFilter` | `callerFilter none \| read` | 호출자의 aggregate filter 허용 여부. 반드시 쓴다(생략하면 `DEF.MISSING_ITEM` 오류). none은 거부하고 read는 요청 필터를 허용한다. count는 source의 rows read 정책을 물려받지 않으므로, rows read 정책이 있는 source에서 callerFilter read를 쓰면 aggregate where가 그 정책을 함의해야 한다(정책 전체 또는 정책의 OR 가지 하나를 where의 AND 항으로 쓴다). 아니면 `DEF.CALLER_FILTER_POLICY_REQUIRED` 오류다(호출자가 읽을 수 없는 행의 필드 값을 필터로 확인할 수 있기 때문) |
 | `rowOutput` | `rowOutput none` | 집계가 행을 내보내는지 |
-| `release` | `release count  \|  sum(f)  \|  min(f)  \|  max(f)` | 내보내는 값 |
+| `release` | `release count  \|  sum(f)  \|  min(f)  \|  max(f)` | 내보내는 값. sum은 Int 필드(결과 Int)나 Decimal(p,s) 필드(결과 `Decimal(p',s)`, p' >= p, 합이 p'를 넘으면 `WIRE.OUTPUT_INVALID`, 반올림 없음), min·max는 Int 필드만 |
 
 ### extension
 
