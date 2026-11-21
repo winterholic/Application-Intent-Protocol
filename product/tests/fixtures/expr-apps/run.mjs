@@ -42,6 +42,8 @@ const units = [
   { app: "community", lang: "ts", definition: "community.aip", scenario: "scenario.ts" },
   { app: "community", lang: "py", definition: "community.aip", scenario: "scenario.py" },
   { app: "orders", lang: "ts", definition: "orders.current.aip", scenario: "scenario.current.ts", workers: true },
+  // P0-A·B·C 병합 전이라 실행하지 못하는 목표 정의. 현재 바이너리가 어디서 멈추는지만 기록한다.
+  { app: "orders", lang: "target", definition: "orders.target.aip", targetOnly: true },
 ];
 
 function run(program, args, { cwd = root, env = {}, timeout = 180_000, allowFail = false } = {}) {
@@ -150,6 +152,8 @@ function parseResults(unit, output) {
   for (const line of output.split(/\r?\n/u)) {
     const m = line.match(/^RESULT (PASS|FAIL|SKIP) (\S+)(?: :: (.*))?$/u);
     if (m) rows.push({ unit, status: m[1], name: m[2], detail: m[3] ?? "" });
+    const info = line.match(/^INFO (\S+): (.*)$/u);
+    if (info) rows.push({ unit, status: "INFO", name: info[1], detail: info[2] });
   }
   return rows;
 }
@@ -157,6 +161,14 @@ function parseResults(unit, output) {
 async function runUnit(unit, ctx) {
   const label = `${unit.app}/${unit.lang}`;
   const appDir = join(here, unit.app);
+  if (unit.targetOnly) {
+    const checked = run(ctx.binary, ["service", "check", join(appDir, unit.definition)], { allowFail: true });
+    if (checked.status === 0) {
+      return [{ unit: label, status: "INFO", name: "target-definition", detail: "현재 바이너리가 목표 정의를 받아들인다. P0가 들어온 것이니 scenario.target.ts를 실행 대상으로 올린다" }];
+    }
+    const code = JSON.parse(checked.stdout || checked.stderr || "{}").diagnostics?.[0] ?? {};
+    return [{ unit: label, status: "SKIP", name: "target-scenarios(P0-A/B/C)", detail: `미실행: P0 미병합. 현재 check 결과 ${code.code ?? "?"} ${code.message ?? ""}`.trim() }];
+  }
   const work = join(ctx.temp, `${unit.app}-${unit.lang}-${randomUUID().slice(0, 8)}`);
   mkdirSync(work);
   const schema = `aip_expr_${unit.app}_${unit.lang}_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
