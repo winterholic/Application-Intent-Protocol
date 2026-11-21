@@ -1689,6 +1689,8 @@ impl<'a> Ctx<'a> {
                         }
                         let v = self.ex(e, &sc);
                         if let Some((v, _)) = self.run(v) {
+                            // 출처 값은 서버가 읽어 호출자가 읽는 새 행에 복사한다. 가려진 필드면 그 값이 드러난다.
+                            self.reject_hidden_reads(&v, &r.name, &format!("compose create `{res}`의 출처"), *sp);
                             sv.push(v);
                         }
                     }

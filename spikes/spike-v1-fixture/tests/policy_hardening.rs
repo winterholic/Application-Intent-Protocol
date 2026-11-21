@@ -102,3 +102,28 @@ fn effects_cannot_copy_or_match_a_hidden_field() {
     accepted(&with_effect("create Log { owner = this.owner; val = this.cap }"));
     accepted(&with_effect("update Log when big(this) where owner = this.owner { val = 1 }"));
 }
+
+/// PG17 serve 재현: compose `create OrderItem from this.sku`가 가려진 `Cart.sku`('SECRET-SKU-9')를 호출자가 읽는
+/// `OrderItem.sku`에 복사했다. 출처 경로가 전이 `to` 값과 같은 복사 통로인데 검사가 없었다.
+#[test]
+fn compose_create_sources_cannot_copy_a_hidden_field() {
+    const CART: &str = "
+actor Member
+resource Member { fields { id: Id; org: Int } rows read when true }
+resource Cart {
+  fields { id: Id; owner: Member; sku: Text(1..40); qty: Int(1..100); ordered: Bool }
+  rows read when owner = actor
+  HIDDEN
+  transition checkout { allow owner = actor; from ordered = false; to ordered = true }
+  expose apply checkout { target id; bulk maxRows 20 }
+  expose compose { bulk maxRows 20; sameScope owner; transitions checkout; create OrderItem from this.owner, this.sku, this.qty }
+}
+resource OrderItem {
+  fields { id: Id; owner: Member; sku: Text(1..40); qty: Int(1..100) }
+  rows read when owner = actor
+  expose create { allow owner = actor; fields owner, sku, qty }
+}
+";
+    accepted(&CART.replace("HIDDEN", ""));
+    rejected(&CART.replace("HIDDEN", "field sku read when ordered = true"));
+}
