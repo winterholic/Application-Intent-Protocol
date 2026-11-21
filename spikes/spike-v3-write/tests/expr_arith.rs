@@ -110,6 +110,27 @@ resource Product {
   expose apply tip { target id; bulk maxRows 5 }
   expose apply tip2 { target id; bulk maxRows 5 }
 }
+resource Vault {
+  fields { id: Id; owner: Member; cash: Decimal(12,2) }
+  rows read when true
+}
+resource Drift {
+  fields { id: Id; owner: Member; score: Int(0..1000); bonus: Int; marked: Bool }
+  rows read when true
+  transition bump { from true; allow actor != null; to score = score + 1 }
+  transition addScore { input { n: Int(1..100) }; from true; allow actor != null; to score = score + input.n }
+  transition addBonus { from true; allow actor != null; to score = score + this.bonus }
+  transition credit {
+    from true
+    allow actor != null
+    to marked = true
+    update Vault where owner = this.owner { cash = cash + this.bonus }
+  }
+  expose apply bump { target id; bulk maxRows 5 }
+  expose apply addScore { target id; bulk maxRows 5 }
+  expose apply addBonus { target id; bulk maxRows 5 }
+  expose apply credit { target id; bulk maxRows 5 }
+}
 resource Purchase {
   fields { id: Id; owner: Member; cost: Int(0..100); total: Decimal(12,2); paid: Bool }
   rows read when true
@@ -563,4 +584,43 @@ async fn k5_bulk_transition_with_two_rows_for_one_effect_target_is_refused_not_l
     let wallet = db.query_one(&format!("SELECT credits::text, balance::text FROM {s}.wallet WHERE id = 901"), &[]).await.unwrap();
     assert_eq!((wallet.get::<_, String>(0), wallet.get::<_, String>(1)), ("90".into(), "100.00".into()));
     assert_eq!(text(&db, format!("SELECT count(*)::text FROM {s}.purchase WHERE owner_id = 9 AND paid")).await, "0");
+}
+
+/// 정의는 대상·항을 non-null로 고정하지만 물리 컬럼이 사후에 nullable이 되면(외부 DB 채택, 스키마 드리프트) `NULL + n`이 NULL로 남는다.
+/// `NOT BETWEEN`도 NULL이라 범위 검사를 조용히 통과했다. 이제 계산 결과가 NULL이면 `WIRE.BAD_VALUE`로 전체를 롤백한다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_null_target_or_term_at_run_time_is_bad_value_and_rolls_back() {
+    let (db, s) = (db().await, sqlgen::schema());
+    db.batch_execute(&format!(
+        "INSERT INTO {s}.member (id) VALUES (11) ON CONFLICT DO NOTHING; \
+         ALTER TABLE {s}.drift ALTER COLUMN score DROP NOT NULL, ALTER COLUMN bonus DROP NOT NULL; \
+         ALTER TABLE {s}.vault ALTER COLUMN cash DROP NOT NULL; \
+         INSERT INTO {s}.drift (id, owner_id, score, bonus, marked) VALUES (9101, 11, NULL, 3, false), (9102, 11, 5, NULL, false), (9103, 11, 5, 3, false); \
+         INSERT INTO {s}.vault (id, owner_id, cash) VALUES (9101, 11, NULL)"
+    ))
+    .await
+    .unwrap();
+    let go = |req: Value| async move { code(run(&req).await) };
+    let row = |id: i64| json!({"ids": [id.to_string()]});
+    let score = |id: i64| text(&db, format!("SELECT coalesce(score::text, 'NULL') FROM {s}.drift WHERE id = {id}"));
+    // 대상이 NULL: 고정 증감과 input 항 둘 다.
+    assert_eq!(go(json!({"apply": "Drift.bump", "target": row(9101)})).await, "WIRE.BAD_VALUE");
+    assert_eq!(go(json!({"apply": "Drift.addScore", "target": row(9101), "input": {"n": 4}})).await, "WIRE.BAD_VALUE");
+    assert_eq!(score(9101).await, "NULL");
+    // 항이 NULL: 대상은 5이고 `this.bonus`가 NULL이다. 결과 NULL을 남기지 않는다.
+    assert_eq!(go(json!({"apply": "Drift.addBonus", "target": row(9102)})).await, "WIRE.BAD_VALUE");
+    assert_eq!(score(9102).await, "5");
+    // 효과 대상(Vault.cash)이 NULL이면 전이(`marked`)도 함께 롤백된다.
+    assert_eq!(go(json!({"apply": "Drift.credit", "target": row(9101)})).await, "WIRE.BAD_VALUE");
+    assert_eq!(text(&db, format!("SELECT marked::text FROM {s}.drift WHERE id = 9101")).await, "false");
+    assert_eq!(text(&db, format!("SELECT coalesce(cash::text, 'NULL') FROM {s}.vault WHERE id = 9101")).await, "NULL");
+    // 효과의 항이 NULL이어도 같다.
+    db.batch_execute(&format!("UPDATE {s}.vault SET cash = 1.00 WHERE id = 9101")).await.unwrap();
+    assert_eq!(go(json!({"apply": "Drift.credit", "target": row(9102)})).await, "WIRE.BAD_VALUE");
+    assert_eq!(text(&db, format!("SELECT cash::text FROM {s}.vault WHERE id = 9101")).await, "1.00");
+    // 대조: 값이 모두 있으면 같은 전이가 그대로 통한다.
+    assert_eq!(go(json!({"apply": "Drift.addBonus", "target": row(9103)})).await, "OK");
+    assert_eq!(score(9103).await, "8");
+    assert_eq!(go(json!({"apply": "Drift.credit", "target": row(9103)})).await, "OK");
+    assert_eq!(text(&db, format!("SELECT cash::text FROM {s}.vault WHERE id = 9101")).await, "4.00");
 }

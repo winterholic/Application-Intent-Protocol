@@ -583,6 +583,11 @@ async fn update(
     // 증감한 Int 필드의 선언 범위. DDL CHECK가 없으므로 같은 트랜잭션에서 UPDATE 결과로 확인한다.
     let mut ranged = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
+        // 정의는 대상·항을 non-null로 고정하지만 물리 컬럼이 사후에 nullable이 되면(외부 DB 채택, 스키마 드리프트) `NULL ± n`이 NULL로
+        // 남고 `NOT BETWEEN`도 NULL이라 조용히 통과한다. 계산 결과가 NULL이면 BAD_VALUE로 전체를 롤백한다.
+        if v.get("increment").is_some() || v.get("arith").is_some() {
+            ranged.push(format!("t.{} IS NULL", column(facts, res, f).unwrap()));
+        }
         let range = &facts["resources"][res]["fields"][f]["range"];
         if let (true, Some(lo), Some(hi)) = (v.get("increment").is_some() || v.get("arith").is_some(), range[0].as_i64(), range[1].as_i64()) {
             ranged.push(format!("t.{} NOT BETWEEN {lo} AND {hi}", column(facts, res, f).unwrap()));
@@ -649,7 +654,7 @@ async fn update(
     let rows = typed_query(tx, up.as_str(), &params).await.map_err(|e| write_err("변경", e))?;
     // RETURNING은 갱신 뒤 값을 본다. 하나라도 범위를 벗어나면 전체 트랜잭션이 롤백된다.
     if rows.iter().any(|r| r.get::<_, bool>(1)) {
-        return rej("WIRE.BAD_VALUE", "증감 결과가 필드 범위를 벗어남");
+        return rej("WIRE.BAD_VALUE", "증감 결과가 필드 범위를 벗어나거나 NULL임");
     }
     let n = rows.len();
     if n != change.len() {
@@ -849,6 +854,8 @@ async fn effects(
                 let col = column(facts, target, f).unwrap();
                 if let Some(arith) = v.get("arith") {
                     // 앞의 열은 효과 대상 행(`u`)의 현재 값이고 항의 `this`는 전이 대상 행이다.
+                    // 대상이나 항이 실행 시 NULL이면(사후 nullable 컬럼) 결과가 NULL이라 전이와 같이 BAD_VALUE로 거절한다.
+                    ranged.push(format!("u.{col} IS NULL"));
                     let term = arith_term(&mut cx, arith, &value_env)?;
                     sets.push(format!("{col} = u.{col} {} {term}", arith_op(arith)?));
                     // `this.g` 항은 양수여야 한다. FROM의 전이 행(`t` 또는 `pre_t`)은 이 문장이 바꾸지 않으므로 RETURNING에서 같은 식으로 본다.
@@ -906,7 +913,7 @@ async fn effects(
             let updated = typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?;
             // 하나라도 범위를 벗어나면 전체 트랜잭션이 롤백된다.
             if updated.iter().any(|r| r.get::<_, bool>(1)) {
-                return rej("WIRE.BAD_VALUE", "증감 효과 결과가 필드 범위를 벗어남");
+                return rej("WIRE.BAD_VALUE", "증감 효과 결과가 필드 범위를 벗어나거나 NULL임");
             }
             let mut got: Vec<EntityId> = updated.iter().map(|r| r.get(0)).collect();
             got.sort();
