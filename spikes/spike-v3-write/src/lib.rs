@@ -1561,6 +1561,7 @@ async fn apply_op(
     caller: &Caller,
     knobs: &Knobs,
     wire: IdWire,
+    created_target: Option<EntityId>,
 ) -> Result<Applied, Reject> {
     keys(o, &["apply", "target", "values", "expect", "input"], "apply 요청")?;
     let (res, tr, ex) = exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
@@ -1572,7 +1573,11 @@ async fn apply_op(
         // evaluating that literal first would turn the intended refusal into WIRE.INTERNAL.
         sealed::reject_sealed_assignments(facts, res, tr, Some(&input))?;
     }
-    let target = parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
+    // `target.created`(P0-A)는 묶음이 트랜잭션 전에 풀어 둔 앞 연산의 id다. 그 id를 `id` 대상 하나로 쓴다.
+    let target = match created_target {
+        Some(id) => TargetSpec::Ids(vec![id]),
+        None => parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?,
+    };
     let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs, Some(&input)).await?;
     let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
     ensure_refs_readable(tx, facts, res, &input.values, &decided, knobs).await?;
@@ -1598,7 +1603,7 @@ async fn apply_inner(
 ) -> Result<Applied, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
     let tx = begin(db, serializable).await?;
-    let a = apply_op(&tx, facts, o, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
+    let a = apply_op(&tx, facts, o, caller, knobs, IdWire::Legacy, None).await.map_err(|e| before_commit_rejection(&tx, e))?;
     run_checks(&tx, facts, caller, knobs).await.map_err(|e| before_commit_rejection(&tx, e))?;
     commit(tx, &ctl, knobs).await?;
     Ok(a)
@@ -1676,8 +1681,9 @@ async fn bundle_once(
     serializable: bool,
 ) -> Result<BundleResult, Reject> {
     let ops = bundle_ops(req)?;
+    let plan = bundle_plan(facts, ops, knobs)?;
     let tx = begin(db, serializable).await?;
-    let out = bundle_run(&tx, facts, ops, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
+    let out = bundle_run(&tx, facts, ops, &plan, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
     run_checks(&tx, facts, caller, knobs).await.map_err(|e| before_commit_rejection(&tx, e))?;
     commit(tx, &ctl, knobs).await?;
     Ok(out)
@@ -1706,13 +1712,110 @@ pub async fn bundle_in(
     knobs: &Knobs,
     wire: IdWire,
 ) -> Result<BundleResult, Reject> {
-    bundle_run(tx, facts, bundle_ops(req)?, caller, knobs, wire).await
+    let ops = bundle_ops(req)?;
+    let plan = bundle_plan(facts, ops, knobs)?;
+    bundle_run(tx, facts, ops, &plan, caller, knobs, wire).await
+}
+
+/// 묶음 연산 하나가 앞 연산의 결과를 어떻게 가리키는지(P0-A). 트랜잭션 전에 `bundle_plan`이 판정해 둔다.
+#[derive(Default)]
+pub struct OpPlan {
+    /// create 연산: (필드, 그 값을 만든 앞 연산 번호). `refs`가 없으면 비어 있다.
+    refs: Vec<(String, usize)>,
+    /// apply 연산: `target.created`가 가리키는 앞 연산 번호.
+    target_created: Option<usize>,
+}
+
+/// `{"created": i}` 하나를 풀어 (연산 번호, 만든 resource)를 돌려준다. 앞 연산의 create여야 하고 `id` 열이 있어야 한다.
+fn resolve_created<'a>(facts: &Value, ops: &'a [Value], at: usize, v: &Value, what: &str) -> Result<(usize, &'a str), Reject> {
+    let obj = v.as_object().ok_or_else(|| bad("created 참조는 {\"created\": 연산번호} 객체"))?;
+    keys(obj, &["created"], what)?;
+    let i = obj
+        .get("created")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: format!("{what}의 created는 0 이상의 정수 연산 번호") })?;
+    // 자기 자신과 뒤 연산은 아직 실행되지 않았다. 앞 연산만 가리킬 수 있다.
+    if i >= at as u64 {
+        return rej("WIRE.BAD_VALUE", format!("{what}의 created {i}는 현재 연산 {at}보다 앞 연산이어야 함"));
+    }
+    let i = i as usize;
+    let source = ops[i].as_object();
+    let Some(res) = source.filter(|m| !m.contains_key("apply")).and_then(|m| m.get("create")).and_then(Value::as_str) else {
+        return rej("WIRE.VALUE_SOURCE_NOT_ALLOWED", format!("{what}의 created {i}는 create 연산이어야 함(만든 행의 id만 가리킬 수 있음)"));
+    };
+    if facts["resources"][res]["exposeCreate"].is_null() {
+        return rej("WIRE.NOT_EXPOSED", format!("`{res}` 생성은 공개되지 않음"));
+    }
+    if facts["resources"][res]["fields"].get("id").is_none() {
+        return rej("WIRE.VALUE_SOURCE_NOT_ALLOWED", format!("`{res}`는 id 열이 없어 created로 가리킬 수 없음"));
+    }
+    Ok((i, res))
+}
+
+/// 묶음의 `refs`와 `target.created`를 DB에 닿기 전에 모두 판정한다(P0-A 규칙 ①~⑥, 검토 A-1).
+/// 결과는 연산마다 하나이고 실행(`bundle_run`)은 이것을 그대로 따른다.
+pub fn bundle_plan(facts: &Value, ops: &[Value], knobs: &Knobs) -> Result<Vec<OpPlan>, Reject> {
+    let mut plan: Vec<OpPlan> = Vec::with_capacity(ops.len());
+    for (at, op) in ops.iter().enumerate() {
+        let m = op.as_object().ok_or(bad("연산은 객체"))?;
+        let mut this = OpPlan::default();
+        if m.contains_key("apply") {
+            let created = m.get("target").and_then(|t| t.as_object()).filter(|t| t.contains_key("created"));
+            if let Some(tg) = created {
+                // 대상 형식은 하나만 쓴다. `created`는 `ids`·`where`와 섞지 않는다.
+                if tg.len() != 1 {
+                    return rej("WIRE.BAD_VALUE", "target.created는 ids·where와 함께 쓸 수 없음");
+                }
+                let name = m.get("apply").and_then(Value::as_str).unwrap_or("");
+                let (res, _tr, ex) = exposed(facts, name)?;
+                refuse_internal(ex, knobs, m)?;
+                // 서버가 열지 않은 `id` 대상 형식이 created 참조로 열리면 안 된다.
+                if !ex["target"].as_array().is_some_and(|forms| forms.iter().any(|f| f == "id")) {
+                    return rej("WIRE.TARGET_NOT_ALLOWED", format!("`{name}`는 id 대상을 열지 않았으므로 target.created를 쓸 수 없음"));
+                }
+                let (i, made) = resolve_created(facts, ops, at, &m["target"], "target.created")?;
+                if made != res {
+                    return rej("WIRE.TYPE_MISMATCH", format!("target.created는 `{made}` 행인데 `{name}`의 대상은 `{res}`"));
+                }
+                this.target_created = Some(i);
+            }
+        } else {
+            if let Some(refs) = m.get("refs") {
+                let res = m.get("create").and_then(Value::as_str).unwrap_or("");
+                let ec = &facts["resources"][res]["exposeCreate"];
+                if ec.is_null() {
+                    return rej("WIRE.NOT_EXPOSED", format!("`{res}` 생성은 공개되지 않음"));
+                }
+                let refs = refs.as_object().ok_or(bad("refs 객체 필요"))?;
+                let allowed: Vec<&str> = ec["fields"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+                let values = m.get("values").and_then(Value::as_object);
+                for (field, v) in refs {
+                    if !allowed.contains(&field.as_str()) {
+                        return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{field}`는 생성 계약에 없음"));
+                    }
+                    if values.is_some_and(|vals| vals.contains_key(field)) {
+                        return rej("WIRE.BAD_VALUE", format!("`{res}.{field}`가 values와 refs에 모두 있음"));
+                    }
+                    let (i, made) = resolve_created(facts, ops, at, v, &format!("refs.{field}"))?;
+                    let ty = facts["resources"][res]["fields"][field.as_str()]["ty"].as_str().unwrap_or("");
+                    let wants = ty.trim_end_matches('?').strip_prefix("Ref<").and_then(|t| t.strip_suffix('>'));
+                    if wants != Some(made) {
+                        return rej("WIRE.TYPE_MISMATCH", format!("`{res}.{field}`({ty})에 `{made}`를 만든 연산의 id를 넣을 수 없음"));
+                    }
+                    this.refs.push((field.clone(), i));
+                }
+            }
+        }
+        plan.push(this);
+    }
+    Ok(plan)
 }
 
 async fn bundle_run(
     tx: &Transaction<'_>,
     facts: &Value,
     ops: &[Value],
+    plan: &[OpPlan],
     caller: &Caller,
     knobs: &Knobs,
     wire: IdWire,
@@ -1727,6 +1830,8 @@ async fn bundle_run(
             let ex = &facts["resources"][res]["exposeApply"][tr];
             match m.get("target").and_then(|t| t.get("ids")).and_then(Value::as_array) {
                 Some(ids) => ids.len(),
+                // `target.created`는 행 하나다. 선언한 bulk 상한으로 세면 상한 계산이 과대해진다.
+                None if m.get("target").is_some_and(|t| t.get("created").is_some()) => 1,
                 None => ex["bulkMaxRows"].as_u64().unwrap_or(1) as usize,
             }
         } else {
@@ -1737,12 +1842,19 @@ async fn bundle_run(
         return rej("WIRE.BULK_LIMIT", format!("묶음의 대상 행 {rows}개 > 상한 {BUNDLE_MAX_ROWS}"));
     }
     let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![] };
-    for op in ops {
+    // 연산 번호 → 그 연산이 만든 행의 id. create가 아니거나 id를 못 돌려준 연산은 None이다(계획 단계가 가리키지 못하게 막았다).
+    let mut made: Vec<Option<EntityId>> = Vec::with_capacity(ops.len());
+    for (at, op) in ops.iter().enumerate() {
         let m = op.as_object().ok_or(bad("연산은 객체"))?;
         if m.contains_key("apply") {
-            out.applied.push(apply_op(tx, facts, m, caller, knobs, wire).await?);
+            let created_target = match plan[at].target_created {
+                Some(i) => Some(made[i].ok_or_else(|| internal("created 참조가 가리키는 연산에 id가 없음"))?),
+                None => None,
+            };
+            out.applied.push(apply_op(tx, facts, m, caller, knobs, wire, created_target).await?);
+            made.push(None);
         } else {
-            keys(m, &["create", "values"], "create 연산")?;
+            keys(m, &["create", "values", "refs"], "create 연산")?;
             let res = m.get("create").and_then(Value::as_str).unwrap_or("");
             let ec = &facts["resources"][res]["exposeCreate"];
             if ec.is_null() {
@@ -1768,10 +1880,18 @@ async fn bundle_run(
                 }
                 row.push((f.clone(), literal(facts, res, f, v, wire)?));
             }
+            // `refs`(P0-A): 앞 연산이 만든 행의 id를 호출자 리터럴과 같은 `Src::Lit`로 바꿔 아래의 같은 경로에 넣는다.
+            // 그래서 만든 행이 호출자에게 안 보이면 `ensure_refs_readable`이 `MISSING_TARGET`으로 막고 create allow도 그대로 평가된다.
+            for (field, i) in &plan[at].refs {
+                let id = made[*i].ok_or_else(|| internal("created 참조가 가리키는 연산에 id가 없음"))?;
+                let referenced = ops[*i]["create"].as_str().unwrap_or("");
+                row.push((field.clone(), Src::Lit(id.to_string(), id_kind(facts, referenced))));
+            }
             ensure_refs_readable(tx, facts, res, &row, caller, knobs).await?;
             let id = create_row(tx, facts, res, &row, caller, knobs).await?;
             out.created += 1;
             out.created_rows.push((res.to_string(), id));
+            made.push(id);
         }
     }
     Ok(out)
@@ -2032,7 +2152,7 @@ async fn compose_exec(
 /// 쓰기 확장(V4)용: 호출자가 가진 트랜잭션 안에서 공개 전이 하나를 실행한다. 커밋은 호출자가 한다.
 pub async fn apply_in(tx: &Transaction<'_>, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs) -> Result<Applied, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
-    apply_op(tx, facts, o, caller, knobs, IdWire::Legacy).await
+    apply_op(tx, facts, o, caller, knobs, IdWire::Legacy, None).await
 }
 
 pub async fn apply_in_with_wire(
@@ -2044,7 +2164,7 @@ pub async fn apply_in_with_wire(
     wire: IdWire,
 ) -> Result<Applied, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
-    apply_op(tx, facts, o, caller, knobs, wire).await
+    apply_op(tx, facts, o, caller, knobs, wire, None).await
 }
 
 /// 쓰기 확장(V4)용: 이 트랜잭션이 쓴 행의 사후조건 검사.
