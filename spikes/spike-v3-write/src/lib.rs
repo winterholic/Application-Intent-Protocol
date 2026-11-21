@@ -112,6 +112,33 @@ pub async fn retry_backoff(attempt: usize) {
     tokio::time::sleep(Duration::from_millis(10 * (1u64 << attempt.min(6)) + jitter)).await;
 }
 
+/// 전이가 대상 행에 거는 행 잠금. 키 열(`id`, `unique`, 부분 유일 인덱스 열)을 바꾸지 않는 전이는 `FOR NO KEY UPDATE`로 충분하다.
+/// `FOR UPDATE`는 같은 묶음 앞 연산이 FK로 그 행을 가리키며 잡은 `FOR KEY SHARE`와 충돌해서, `[줄 create(FK) → 같은 행 전이]` 순서의
+/// 요청 N개가 서로 공유 잠금을 쥔 채 갱신 잠금을 기다리는 교착을 만든다. PostgreSQL은 이 교착의 희생자 한 명마다 `deadlock_timeout`(1초)을
+/// 쓰고 N-1명이 필요해 쓰기 기한(2초) 안에 수렴하지 못했다. `FOR NO KEY UPDATE`는 `KEY SHARE`와 충돌하지 않으므로 FK 삽입이 전이를 막지 않고,
+/// 전이끼리는 여전히 직렬화된다. 삭제나 키 열 변경은 PostgreSQL이 어차피 `FOR UPDATE`급 잠금을 요구하므로 그대로 `FOR UPDATE`다.
+fn row_lock(facts: &Value, res: &str, transitions: &[&str]) -> &'static str {
+    let rf = &facts["resources"][res];
+    let mut key: std::collections::BTreeSet<&str> = std::collections::BTreeSet::from(["id"]);
+    for unique in rf["unique"].as_array().into_iter().flatten() {
+        key.extend(unique.as_array().into_iter().flatten().filter_map(Value::as_str));
+    }
+    for invariant in rf["invariants"].as_object().into_iter().flat_map(|o| o.values()) {
+        key.extend(invariant["enforcement"]["columns"].as_array().into_iter().flatten().filter_map(Value::as_str));
+    }
+    let touches_key = transitions.iter().any(|tr| {
+        let t = &rf["transitions"][*tr];
+        t["delete"] == true
+            || t["to"].as_object().into_iter().flat_map(|to| to.keys()).any(|f| key.contains(f.as_str()))
+            || t["patch"].as_array().into_iter().flatten().filter_map(Value::as_str).any(|f| key.contains(f))
+    });
+    if touches_key {
+        " FOR UPDATE OF t"
+    } else {
+        " FOR NO KEY UPDATE OF t"
+    }
+}
+
 fn db_err(stage: &str, e: tokio_postgres::Error) -> Reject {
     match e.code().map(|c| c.code()) {
         Some("57014") => Reject { code: "WIRE.DEADLINE_EXCEEDED", msg: format!("{stage}: {WRITE_DEADLINE_MS}ms 안에 끝나지 않음") },
@@ -132,6 +159,37 @@ pub fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), 
     match o.keys().find(|k| !allowed.contains(&k.as_str())) {
         Some(k) => rej("WIRE.UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`")),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod row_lock_tests {
+    use super::row_lock;
+    use serde_json::json;
+
+    /// A transition that leaves key columns alone takes FOR NO KEY UPDATE (an FK insert's KEY SHARE does not block it);
+    /// deleting, or assigning `id`, a `unique` column or a partial-unique-index column, keeps FOR UPDATE.
+    #[test]
+    fn only_key_changing_or_deleting_transitions_keep_for_update() {
+        let facts = json!({"resources": {"Item": {
+            "unique": [["sku"]],
+            "invariants": {"one": {"enforcement": {"kind": "partialUniqueIndex", "columns": ["slot"]}}},
+            "transitions": {
+                "take": {"to": {"stock": {"arith": {}}}},
+                "rename": {"to": {"sku": {}}},
+                "park": {"to": {"slot": {}}},
+                "patchSku": {"to": {}, "patch": ["sku"]},
+                "patchNote": {"to": {}, "patch": ["note"]},
+                "drop": {"delete": true, "to": {}}
+            }}}});
+        let lock = |names: &[&str]| row_lock(&facts, "Item", names);
+        assert_eq!(lock(&["take"]), " FOR NO KEY UPDATE OF t");
+        assert_eq!(lock(&["patchNote"]), " FOR NO KEY UPDATE OF t");
+        for keyed in ["rename", "park", "patchSku", "drop"] {
+            assert_eq!(lock(&[keyed]), " FOR UPDATE OF t", "{keyed}");
+        }
+        // 조합은 단계 중 하나라도 키를 바꾸면 전체가 FOR UPDATE다.
+        assert_eq!(lock(&["take", "rename"]), " FOR UPDATE OF t");
     }
 }
 
@@ -416,7 +474,7 @@ fn judge_query(
     // 호출자 patch는 매번 실제 쓰기다. 멱등 재시도는 같은 key의 저장 결과를 재생한다.
     let done = if t.get("patch").is_some() || t["delete"] == true || done.is_empty() { "FALSE".into() } else { format!("({})", done.join(" AND ")) };
     let scope_sql = if scope.is_null() { "NULL::text".to_string() } else { format!("({})::text", cx.value(scope, &env).map_err(internal)?) };
-    let lock = if !locked || knobs.skip_row_lock { "" } else { " FOR UPDATE OF t" };
+    let lock = if !locked || knobs.skip_row_lock { "" } else { row_lock(facts, res, &[tr]) };
     let sel = match target {
         TargetSpec::Ids(ids) => {
             let p = cx.params.bind(Some(id_array(ids)), id_array_cast(facts, res));
@@ -1058,7 +1116,7 @@ async fn effects(
 }
 
 /// Resolve optional effect guards against each transition row while it still has its pre-transition state.
-/// The judge already holds these rows FOR UPDATE; this query also makes the guard read part of the same transaction.
+/// The judge already holds these rows (`row_lock`); this query also makes the guard read part of the same transaction.
 async fn effect_targets_at_transition_start(
     tx: &Transaction<'_>,
     facts: &Value,
@@ -1094,8 +1152,9 @@ async fn effect_targets_at_transition_start(
         let condition = cx.cond(condition, &env).map_err(internal)?;
         let ids = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
         let sql = format!(
-            "SELECT t.id, ({condition}) IS TRUE AS enabled, to_jsonb(t)::text FROM {} t WHERE t.id = ANY({ids}) ORDER BY t.id FOR UPDATE OF t",
-            table(res)
+            "SELECT t.id, ({condition}) IS TRUE AS enabled, to_jsonb(t)::text FROM {} t WHERE t.id = ANY({ids}) ORDER BY t.id{}",
+            table(res),
+            row_lock(facts, res, &[tr])
         );
         let rows = typed_query(tx, &sql, &cx.params.values).await.map_err(|error| write_err("전이 효과 조건", error))?;
         if rows.len() != change.len() {
@@ -2128,7 +2187,8 @@ async fn compose_exec(
         let scope =
             if cp["sameScope"].is_null() { "NULL::text".into() } else { format!("({})::text", cx.value(&cp["sameScope"], &env).map_err(internal)?) };
         let p = cx.params.bind(Some(id_array(ids)), id_array_cast(facts, res));
-        let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id FOR UPDATE OF t", table(res));
+        let step_transitions: Vec<&str> = plan.steps.iter().filter_map(|step| if let Step::Tr(t, _) = step { Some(*t) } else { None }).collect();
+        let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id{}", table(res), row_lock(facts, res, &step_transitions));
         let params = cx.params.values.clone();
         let rows = typed_query(tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
         if rows.len() != ids.len() {
