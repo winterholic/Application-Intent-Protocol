@@ -169,6 +169,33 @@ fn err(e: Reject) -> Value {
     json!({ "ok": false, "code": e.code, "msg": e.msg })
 }
 
+async fn check_deployment_fence(
+    db: &tokio_postgres::Client,
+    facts: &Value,
+    fence: &server::DeploymentFence,
+    deadline: tokio::time::Instant,
+) -> Result<(), Value> {
+    let checked = tokio::time::timeout_at(deadline, async {
+        db.batch_execute("SET lock_timeout='2s'; SET statement_timeout='5s'").await?;
+        db.query_one("SELECT pg_advisory_lock_shared(1095323725,hashtext($1))", &[&fence.schema]).await?;
+        let marker = db.query_opt(&format!("SELECT facts_digest FROM {}.aip_migrate_meta WHERE singleton=true", fence.schema), &[]).await?;
+        db.batch_execute("RESET lock_timeout; RESET statement_timeout").await?;
+        Ok::<_, tokio_postgres::Error>(marker.map(|row| row.get::<_, String>(0)))
+    })
+    .await;
+    match checked {
+        Ok(Ok(Some(actual))) if actual == fence.expected_digest => {
+            match tokio::time::timeout_at(deadline, spike_v2_read::external::matches(db, facts)).await {
+                Ok(Ok(true)) => Ok(()),
+                _ => Err(json!({"ok":false,"code":"WIRE.DEPLOYMENT_CHANGED","msg":"외부 업무 schema drift 또는 catalog 검사 실패"})),
+            }
+        }
+        Ok(Ok(Some(_))) => Err(json!({"ok":false,"code":"WIRE.DEPLOYMENT_CHANGED","msg":"실행 정의와 배포 정의가 다름"})),
+        Ok(Ok(None)) => Err(json!({"ok":false,"code":"WIRE.SCHEMA_MISMATCH","msg":"배포 marker 누락"})),
+        Ok(Err(_)) | Err(_) => Err(json!({"ok":false,"code":"WIRE.DB_UNAVAILABLE","msg":"배포 잠금 또는 marker 조회 실패"})),
+    }
+}
+
 fn principal_key(actor: Option<i64>, wire: IdWire) -> String {
     let principal = actor.map_or_else(|| "anonymous".to_string(), |id| format!("actor:{id}"));
     if wire == IdWire::Legacy {
@@ -1709,26 +1736,30 @@ async fn serve_request(
         return reply(&mut w, &result.to_string()).await;
     }
     let mut early_write_db = None;
+    let mut early_write_result = None;
+    let mut early_write_fence_checked = false;
     if write_extension && runtime.infrastructure.relational.is_none() {
         if let Some(pool) = runtime.db_pool.as_ref() {
             let mut db = match pool.acquire_until(deadline).await {
                 Ok(db) => db,
                 Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB 연결 또는 pool checkout 기한 초과")).await,
             };
+            if let Some(fence) = &runtime.deployment {
+                if let Err(result) = check_deployment_fence(&db, &facts, fence, deadline).await {
+                    std::mem::drop(db);
+                    return reply(&mut w, &result.to_string()).await;
+                }
+                early_write_fence_checked = true;
+            }
             let replay = tokio::time::timeout_at(
                 deadline,
                 write_extension::replay_completed(&mut db, &facts, &body, session.as_ref().map(|session| session.actor_id), wire),
             )
             .await;
             match replay {
-                Ok(Ok(Some(mut result))) => {
-                    if result["ok"] == true {
-                        if let Some(fingerprint) = contract_fingerprint.as_deref() {
-                            result["contractFingerprint"] = json!(fingerprint);
-                        }
-                    }
-                    let _ = db.release().await;
-                    return reply(&mut w, &result.to_string()).await;
+                Ok(Ok(Some(result))) => {
+                    early_write_result = Some(result);
+                    early_write_db = Some(db);
                 }
                 Ok(Ok(None)) => early_write_db = Some(db),
                 Ok(Err(result)) => {
@@ -1737,12 +1768,12 @@ async fn serve_request(
                 }
                 Err(_) => {
                     let _ = db.release().await;
-                    return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "완료 멱등 결과 조회 기한 초과")).await;
+                    return reply(&mut w, &json!({"ok":false,"code":"WIRE.DB_UNAVAILABLE","msg":"완료 멱등 결과 조회 기한 초과"}).to_string()).await;
                 }
             }
         }
     }
-    let _extension_slot = if path == "/extension" || path == "/operation" || write_extension {
+    let _extension_slot = if (path == "/extension" || path == "/operation" || write_extension) && early_write_result.is_none() {
         match runtime.extension_slots.try_acquire() {
             Ok(slot) => Some(slot),
             Err(_) => return reply(&mut w, &err("WIRE.WORKER_BUSY", "로컬 확장 동시 호출 상한")).await,
@@ -1894,36 +1925,11 @@ async fn serve_request(
             Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB 연결 또는 pool checkout 기한 초과")).await,
         },
     };
-    if let Some(fence) = &runtime.deployment {
-        let checked = tokio::time::timeout_at(deadline, async {
-            db.batch_execute("SET lock_timeout='2s'; SET statement_timeout='5s'").await?;
-            db.query_one("SELECT pg_advisory_lock_shared(1095323725,hashtext($1))", &[&fence.schema]).await?;
-            let marker = db.query_opt(&format!("SELECT facts_digest FROM {}.aip_migrate_meta WHERE singleton=true", fence.schema), &[]).await?;
-            db.batch_execute("RESET lock_timeout; RESET statement_timeout").await?;
-            Ok::<_, tokio_postgres::Error>(marker.map(|row| row.get::<_, String>(0)))
-        })
-        .await;
-        match checked {
-            Ok(Ok(Some(actual))) if actual == fence.expected_digest => {
-                match tokio::time::timeout_at(deadline, spike_v2_read::external::matches(&*db, &facts)).await {
-                    Ok(Ok(true)) => {}
-                    _ => {
-                        std::mem::drop(db);
-                        return reply(&mut w, &err("WIRE.DEPLOYMENT_CHANGED", "외부 업무 schema drift 또는 catalog 검사 실패")).await;
-                    }
-                }
-            }
-            Ok(Ok(Some(_))) => {
+    if !early_write_fence_checked {
+        if let Some(fence) = &runtime.deployment {
+            if let Err(result) = check_deployment_fence(&db, &facts, fence, deadline).await {
                 std::mem::drop(db);
-                return reply(&mut w, &err("WIRE.DEPLOYMENT_CHANGED", "실행 정의와 배포 정의가 다름")).await;
-            }
-            Ok(Ok(None)) => {
-                std::mem::drop(db);
-                return reply(&mut w, &err("WIRE.SCHEMA_MISMATCH", "배포 marker 누락")).await;
-            }
-            Ok(Err(_)) | Err(_) => {
-                std::mem::drop(db);
-                return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "배포 잠금 또는 marker 조회 실패")).await;
+                return reply(&mut w, &result.to_string()).await;
             }
         }
     }
@@ -1975,7 +1981,9 @@ async fn serve_request(
                 .await;
         return;
     }
-    let mut result = if managed {
+    let mut result = if let Some(result) = early_write_result {
+        result
+    } else if managed {
         durable::handle(&mut db, &runtime, &facts, wire, &path, &body, session.as_ref().unwrap().durable.as_ref().unwrap()).await
     } else if path == "/capabilities" {
         let mut operations = spike_v5_sdk::operation_descriptors(&facts);
