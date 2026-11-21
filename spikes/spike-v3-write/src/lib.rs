@@ -1396,6 +1396,9 @@ pub fn bundle_needs_serializable(facts: &Value, req: &Value) -> bool {
     req["atomic"].as_array().into_iter().flatten().any(|op| {
         if op.get("apply").is_some() {
             apply_needs_serializable(facts, op)
+        } else if op.get("compose").is_some() {
+            // compose 연산은 그 조합 계약의 격리 표지를 따른다(검토 D-2). 이 분기가 없으면 `create` 키가 없어 false로 떨어졌다.
+            compose_needs_serializable(facts, op)
         } else {
             op["create"].as_str().is_some_and(|res| is_serializable(&facts["resources"][res]["exposeCreate"]["isolation"]))
         }
@@ -1656,6 +1659,18 @@ pub struct BundleResult {
     pub created: usize,
     /// 만든 행의 (resource, id). 호출자가 만든 행을 곧바로 가리킬 수 있게 한다. `id` 열이 없는 resource는 None이다.
     pub created_rows: Vec<(String, Option<EntityId>)>,
+    /// 연산마다 `applied`·`created_rows`의 어느 구간이 그 연산의 것인지. compose 연산은 단계 수만큼 `applied`를,
+    /// create 단계마다 대상 수만큼 `created_rows`를 만들어 연산 번호와 항목 번호가 어긋나므로 경계를 따로 남긴다(검토 D-4).
+    pub ops: Vec<OpSpan>,
+}
+
+/// 묶음 연산 하나가 `BundleResult.applied`·`created_rows`에서 차지하는 구간.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpSpan {
+    /// `apply`, `create`, `compose`.
+    pub kind: &'static str,
+    pub applied: std::ops::Range<usize>,
+    pub created: std::ops::Range<usize>,
 }
 
 pub use spike_v2_read::write_limits::{BUNDLE_MAX_OPS, BUNDLE_MAX_ROWS, COMPOSE_MAX_STEPS};
@@ -1689,7 +1704,7 @@ async fn bundle_once(
     serializable: bool,
 ) -> Result<BundleResult, Reject> {
     let ops = bundle_ops(req)?;
-    let plan = bundle_plan(facts, ops, knobs)?;
+    let plan = bundle_plan(facts, ops, knobs, IdWire::Legacy)?;
     let tx = begin(db, serializable).await?;
     let out = bundle_run(&tx, facts, ops, &plan, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
     run_checks(&tx, facts, caller, knobs).await.map_err(|e| before_commit_rejection(&tx, e))?;
@@ -1721,17 +1736,18 @@ pub async fn bundle_in(
     wire: IdWire,
 ) -> Result<BundleResult, Reject> {
     let ops = bundle_ops(req)?;
-    let plan = bundle_plan(facts, ops, knobs)?;
+    let plan = bundle_plan(facts, ops, knobs, wire)?;
     bundle_run(tx, facts, ops, &plan, caller, knobs, wire).await
 }
 
 /// 묶음 연산 하나가 앞 연산의 결과를 어떻게 가리키는지(P0-A). 트랜잭션 전에 `bundle_plan`이 판정해 둔다.
-#[derive(Default)]
-pub struct OpPlan {
+pub struct OpPlan<'a> {
     /// create 연산: (필드, 그 값을 만든 앞 연산 번호). `refs`가 없으면 비어 있다.
     refs: Vec<(String, usize)>,
     /// apply 연산: `target.created`가 가리키는 앞 연산 번호.
     target_created: Option<usize>,
+    /// compose 연산: 트랜잭션 전에 해석한 조합 계획(`compose_plan`). 실행은 `compose_exec`가 그대로 쓴다.
+    compose: Option<ComposePlan<'a>>,
 }
 
 /// `{"created": i}` 하나를 풀어 (연산 번호, 만든 resource)를 돌려준다. 앞 연산의 create여야 하고 `id` 열이 있어야 한다.
@@ -1762,11 +1778,42 @@ fn resolve_created<'a>(facts: &Value, ops: &'a [Value], at: usize, v: &Value, wh
 
 /// 묶음의 `refs`와 `target.created`를 DB에 닿기 전에 모두 판정한다(P0-A 규칙 ①~⑥, 검토 A-1).
 /// 결과는 연산마다 하나이고 실행(`bundle_run`)은 이것을 그대로 따른다.
-pub fn bundle_plan(facts: &Value, ops: &[Value], knobs: &Knobs) -> Result<Vec<OpPlan>, Reject> {
-    let mut plan: Vec<OpPlan> = Vec::with_capacity(ops.len());
+pub fn bundle_plan<'a>(facts: &'a Value, ops: &'a [Value], knobs: &Knobs, wire: IdWire) -> Result<Vec<OpPlan<'a>>, Reject> {
+    let mut plan: Vec<OpPlan<'a>> = Vec::with_capacity(ops.len());
+    // 대상 행 수 상한과 compose 계획은 DB에 닿기 전에 모두 본다(검토 D-3). where 대상은 실제 수를 모르므로 선언한 상한으로 센다.
+    let mut rows = 0usize;
+    let mut composes: Vec<Option<ComposePlan<'a>>> = Vec::with_capacity(ops.len());
+    for op in ops {
+        let m = op.as_object().ok_or(bad("연산은 객체"))?;
+        let mut compose = None;
+        rows += if m.contains_key("apply") {
+            let name = m.get("apply").and_then(Value::as_str).unwrap_or("");
+            let (res, tr) = name.split_once('.').unwrap_or(("", ""));
+            let ex = &facts["resources"][res]["exposeApply"][tr];
+            match m.get("target").and_then(|t| t.get("ids")).and_then(Value::as_array) {
+                Some(ids) => ids.len(),
+                // `target.created`는 행 하나다. 선언한 bulk 상한으로 세면 상한 계산이 과대해진다.
+                None if m.get("target").is_some_and(|t| t.get("created").is_some()) => 1,
+                None => ex["bulkMaxRows"].as_u64().unwrap_or(1) as usize,
+            }
+        } else if m.contains_key("compose") {
+            // compose 연산은 `{compose, targets, steps}` 하나다. 안에 다시 compose를 둘 수 없다(단계는 transition·create뿐이라 모르는 키로 거절).
+            let planned = compose_plan(facts, op, wire)?;
+            let n = planned.ids.len() * planned.steps.len();
+            compose = Some(planned);
+            n
+        } else {
+            1
+        };
+        composes.push(compose);
+    }
+    if rows > BUNDLE_MAX_ROWS {
+        return rej("WIRE.BULK_LIMIT", format!("묶음의 대상 행 {rows}개 > 상한 {BUNDLE_MAX_ROWS}"));
+    }
+    let mut composes = composes.into_iter();
     for (at, op) in ops.iter().enumerate() {
         let m = op.as_object().ok_or(bad("연산은 객체"))?;
-        let mut this = OpPlan::default();
+        let mut this = OpPlan { refs: vec![], target_created: None, compose: composes.next().flatten() };
         if m.contains_key("apply") {
             let created = m.get("target").and_then(|t| t.as_object()).filter(|t| t.contains_key("created"));
             if let Some(tg) = created {
@@ -1787,7 +1834,7 @@ pub fn bundle_plan(facts: &Value, ops: &[Value], knobs: &Knobs) -> Result<Vec<Op
                 }
                 this.target_created = Some(i);
             }
-        } else {
+        } else if this.compose.is_none() {
             if let Some(refs) = m.get("refs") {
                 let res = m.get("create").and_then(Value::as_str).unwrap_or("");
                 let ec = &facts["resources"][res]["exposeCreate"];
@@ -1823,43 +1870,38 @@ async fn bundle_run(
     tx: &Transaction<'_>,
     facts: &Value,
     ops: &[Value],
-    plan: &[OpPlan],
+    plan: &[OpPlan<'_>],
     caller: &Caller,
     knobs: &Knobs,
     wire: IdWire,
 ) -> Result<BundleResult, Reject> {
-    // 대상 행 수 상한은 DB에 닿기 전에 본다. where 대상은 실제 수를 모르므로 선언한 상한으로 센다.
-    let mut rows = 0usize;
-    for op in ops {
-        let m = op.as_object().ok_or(bad("연산은 객체"))?;
-        rows += if m.contains_key("apply") {
-            let name = m.get("apply").and_then(Value::as_str).unwrap_or("");
-            let (res, tr) = name.split_once('.').unwrap_or(("", ""));
-            let ex = &facts["resources"][res]["exposeApply"][tr];
-            match m.get("target").and_then(|t| t.get("ids")).and_then(Value::as_array) {
-                Some(ids) => ids.len(),
-                // `target.created`는 행 하나다. 선언한 bulk 상한으로 세면 상한 계산이 과대해진다.
-                None if m.get("target").is_some_and(|t| t.get("created").is_some()) => 1,
-                None => ex["bulkMaxRows"].as_u64().unwrap_or(1) as usize,
-            }
-        } else {
-            1
-        };
-    }
-    if rows > BUNDLE_MAX_ROWS {
-        return rej("WIRE.BULK_LIMIT", format!("묶음의 대상 행 {rows}개 > 상한 {BUNDLE_MAX_ROWS}"));
-    }
-    let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![] };
+    let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![], ops: vec![] };
     // 연산 번호 → 그 연산이 만든 행의 id. create가 아니거나 id를 못 돌려준 연산은 None이다(계획 단계가 가리키지 못하게 막았다).
     let mut made: Vec<Option<EntityId>> = Vec::with_capacity(ops.len());
     for (at, op) in ops.iter().enumerate() {
         let m = op.as_object().ok_or(bad("연산은 객체"))?;
+        let (applied_at, created_at) = (out.applied.len(), out.created_rows.len());
+        let kind = if m.contains_key("apply") {
+            "apply"
+        } else if plan[at].compose.is_some() {
+            "compose"
+        } else {
+            "create"
+        };
         if m.contains_key("apply") {
             let created_target = match plan[at].target_created {
                 Some(i) => Some(made[i].ok_or_else(|| internal("created 참조가 가리키는 연산에 id가 없음"))?),
                 None => None,
             };
             out.applied.push(apply_op(tx, facts, m, caller, knobs, wire, created_target).await?);
+            made.push(None);
+        } else if let Some(composed) = &plan[at].compose {
+            // 같은 `compose_exec`를 그대로 쓴다. 대상은 그 안에서 `ORDER BY id FOR UPDATE`로 잠그고 결과는 연산 순서대로 이어 붙인다.
+            // 만든 행이 여럿이라 뒤 연산이 번호로 가리킬 수 없다(`refs`·`target.created`는 계획 단계에서 VALUE_SOURCE_NOT_ALLOWED).
+            let result = compose_exec(tx, facts, composed, caller, knobs, wire).await?;
+            out.applied.extend(result.applied);
+            out.created += result.created;
+            out.created_rows.extend(result.created_rows);
             made.push(None);
         } else {
             keys(m, &["create", "values", "refs"], "create 연산")?;
@@ -1901,6 +1943,7 @@ async fn bundle_run(
             out.created_rows.push((res.to_string(), id));
             made.push(id);
         }
+        out.ops.push(OpSpan { kind, applied: applied_at..out.applied.len(), created: created_at..out.created_rows.len() });
     }
     Ok(out)
 }
@@ -2093,7 +2136,7 @@ async fn compose_exec(
         }
         scopes = rows.iter().map(|r| r.get(1)).collect();
     }
-    let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![] };
+    let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![], ops: vec![] };
     for st in &plan.steps {
         match st {
             Step::Tr(t, on_self) => {

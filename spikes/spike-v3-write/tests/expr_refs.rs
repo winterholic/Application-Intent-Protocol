@@ -2,7 +2,7 @@
 //! 같은 묶음 앞 create가 만든 행의 id를 서버가 풀어 넣는다(test-plan A-S1~S4, A-F1~F8, R-1, K-3, 종단 시나리오).
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
-use spike_v2_read::{connect, connect_with_url, plan::Caller, sqlgen};
+use spike_v2_read::{connect, connect_with_url, id_wire::IdWire, plan::Caller, sqlgen};
 use spike_v3_write::{bundle, bundle_plan, Knobs};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::sync::OnceCell;
@@ -281,9 +281,7 @@ async fn a_f3_only_the_id_of_an_earlier_create_can_be_referenced() {
             json!({"apply": "Order.confirm", "target": {"created": 0}}),
         ]);
         assert_eq!(code(run(&target_apply).await), "WIRE.VALUE_SOURCE_NOT_ALLOWED");
-        // compose 연산은 묶음에 아직 없다. 알 수 없는 연산은 create로 취급되어 모르는 키로 거절된다.
-        let compose = bundle_of(vec![json!({"compose": "Order", "targets": ["1"], "steps": []}), line(json!({"order": {"created": 0}}), 1)]);
-        assert!(matches!(code(run(&compose).await).as_str(), "WIRE.VALUE_SOURCE_NOT_ALLOWED" | "WIRE.UNKNOWN_KEY"));
+        // compose 연산을 가리키는 참조는 `tests/expr_compose_bundle.rs`가 본다(P0-D). 이 정의에는 `expose compose`가 없어 compose 연산은 `NOT_EXPOSED`다.
         assert_eq!(counts(&db).await, before);
     }).await
 }
@@ -370,14 +368,14 @@ async fn refs_are_decided_before_the_transaction_so_no_earlier_operation_runs() 
         let db = db().await;
         let facts = facts().await;
         let ops = vec![order(), line(json!({"order": {"created": 0}}), 1), line(json!({"order": {"created": 9}}), 1)];
-        let rejected = bundle_plan(&facts, &ops, &Knobs::default()).err().expect("a missing step is refused by the plan alone");
+        let rejected = bundle_plan(&facts, &ops, &Knobs::default(), IdWire::Legacy).err().expect("a missing step is refused by the plan alone");
         assert_eq!(rejected.code, "WIRE.BAD_VALUE");
         let before = counts(&db).await;
         assert_eq!(code(run(&bundle_of(ops)).await), "WIRE.BAD_VALUE");
         assert_eq!(counts(&db).await, before, "앞의 두 create는 실행되지 않았다");
         // 올바른 계획은 연산마다 하나씩 나온다.
         let ok = vec![order(), line(json!({"order": {"created": 0}}), 1)];
-        assert_eq!(bundle_plan(&facts, &ok, &Knobs::default()).ok().map(|plan| plan.len()), Some(2));
+        assert_eq!(bundle_plan(&facts, &ok, &Knobs::default(), IdWire::Legacy).ok().map(|plan| plan.len()), Some(2));
     }).await
 }
 

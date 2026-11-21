@@ -242,7 +242,17 @@ async fn run_write(
             created.push(json!({ "resource": resource, "id": match id { Some(id) => emit_entity_id(id, wire)?, None => Value::Null } }));
         }
         // wire에 표현할 수 없는 id가 있으면 멱등 결과 기록·commit 전 전체 transaction이 rollback된다.
-        return Ok(json!({ "ok": true, "applied": applied, "created": created, "tags": bundle_tags(facts, req) }));
+        let mut body = json!({ "ok": true, "applied": applied, "created": created, "tags": bundle_tags(facts, req) });
+        // compose 연산이 들어 있으면 연산별 경계를 더한다(검토 D-4). compose는 단계 수만큼 applied를 만들어 연산 번호와 항목 번호가 어긋난다.
+        // compose가 없는 묶음의 응답은 이전과 글자까지 같다. 기존 `applied[]`·`created[]`는 그대로이고 `ops`는 추가형이다.
+        if req["atomic"].as_array().is_some_and(|ops| ops.iter().any(|op| op.get("compose").is_some())) {
+            body["ops"] = json!(out
+                .ops
+                .iter()
+                .map(|span| json!({ "kind": span.kind, "applied": [span.applied.start, span.applied.end], "created": [span.created.start, span.created.end] }))
+                .collect::<Vec<_>>());
+        }
+        return Ok(body);
     }
     let applied = apply_in_with_wire(tx, facts, req, caller, knobs, wire).await?;
     Ok(json!({
@@ -251,8 +261,8 @@ async fn run_write(
     }))
 }
 
-/// 묶음·조합이 바꿀 수 있는 resource(캐시 무효화 태그). 연산마다 `write_tags`와 같은 규칙이다.
-fn bundle_tags(facts: &Value, req: &Value) -> Vec<String> {
+/// compose 요청(top-level이거나 묶음의 연산) 하나가 바꿀 수 있는 resource. compose가 아니면 비어 있다.
+fn compose_tags(facts: &Value, req: &Value) -> Vec<String> {
     let mut out = vec![];
     if let Some(res) = req["compose"].as_str() {
         out.push(res.to_string());
@@ -264,9 +274,19 @@ fn bundle_tags(facts: &Value, req: &Value) -> Vec<String> {
             }
         }
     }
+    out
+}
+
+/// 묶음·조합이 바꿀 수 있는 resource(캐시 무효화 태그). 연산마다 `write_tags`와 같은 규칙이다.
+fn bundle_tags(facts: &Value, req: &Value) -> Vec<String> {
+    let mut out = vec![];
+    out.extend(compose_tags(facts, req));
     for op in req["atomic"].as_array().into_iter().flatten() {
         if let Some(name) = op["apply"].as_str() {
             out.extend(write_tags(facts, name));
+        } else if op.get("compose").is_some() {
+            // 묶음 안의 compose 연산도 top-level compose와 같은 규칙으로 센다. 빠지면 캐시 무효화 태그가 누락된다(검토 D-1).
+            out.extend(compose_tags(facts, op));
         } else if let Some(target) = op["create"].as_str() {
             out.push(target.to_string());
         }

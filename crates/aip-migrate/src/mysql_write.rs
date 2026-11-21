@@ -1221,7 +1221,7 @@ impl Session<'_> {
         if rows > spike_v3_write::BUNDLE_MAX_ROWS {
             return rej("WIRE.BULK_LIMIT", format!("묶음의 대상 행 {rows}개 > 상한 {}", spike_v3_write::BUNDLE_MAX_ROWS));
         }
-        let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![] };
+        let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![], ops: vec![] };
         for op in ops {
             let m = op.as_object().ok_or_else(|| bad("연산은 객체"))?;
             if m.contains_key("apply") {
