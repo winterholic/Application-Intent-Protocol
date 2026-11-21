@@ -14,4 +14,4 @@
 | `docblocks.py` | 문서의 ```aip 블록을 `check`에 넣어 본다(영구 시험은 `product/tests/doc-aip-examples.test.mjs`) |
 | `http/app*/` | 서버를 띄워 wire를 확인하는 정의(`app.aip`)와 호출 스크립트 |
 
-`http/` 스크립트는 한 번 쓰고 버리는 환경(전용 PostgreSQL 17, 포트 `18471`~`18475`, 스키마 `aip_hc*`, 개발 JWT)을 전제로 하며 지문·포트·경로가 코드에 박혀 있다. 다시 돌리려면 `aip service init/principal bind/gen/serve`를 한 뒤 `FP`와 포트를 바꿔 쓴다(절차는 [시작 가이드](../../product/GETTING-STARTED.md)와 같다).
+`http/` 스크립트는 한 번 쓰고 버리는 환경(전용 PostgreSQL 17, 포트 `18471`~`18475`, 스키마 `aip_hc*`, 개발 JWT)을 전제로 하며 지문·포트·경로가 코드에 박혀 있다. 다시 돌리려면 `aip service init/principal bind/gen/serve`를 한 뒤 `FP`와 포트를 바꿔 쓴다(절차는 [시작 가이드](../../../product/GETTING-STARTED.md)와 같다).
