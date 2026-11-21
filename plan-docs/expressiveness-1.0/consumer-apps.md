@@ -157,8 +157,8 @@ AIP가 줄여 주지 않는 것: 인증 서버(JWT 발급·JWKS), principal과 a
 | F13 | 사용자 초대(`expose create User`)는 행만 만든다. JWT subject와 actor를 잇는 `aip service principal bind`는 운영자 CLI라 앱 API로 로그인 연결까지 끝낼 수 없다. 시나리오는 시드 시점에 바인딩했고 초대 직후 로그인은 실행하지 않았다 | 한계(범위)·문서 |
 | F14 | 확장 입력 타입에 배열이 없다(`List<Int>`와 `Int[]`는 파싱 오류, `Json`만 통과하며 모양 검증은 확장이 한다). 다건 주문 줄은 줄 행을 먼저 만들어야 하고(E1과 결합), P0-C 변형 B도 `Json` 입력이 된다 | 한계(audit에 없던 새 항목) |
 | F15 | 동시 주문 우회: 재고 4개, 2개짜리 주문 6건을 동시에 보냈더니 반복 실행마다 성공은 1건이었고 나머지는 `WORKER_BUSY` 2건과 `EXTENSION_ERROR` 3건이었다(가능했던 성공은 2건). 재고가 음수가 되거나 이중 차감되지는 않았다(안전성 유지, 활성은 나쁨). `WORKER_BUSY`는 한 사용자의 동기 worker 동시 호출 한도(기본 2) 때문이고, 낙관적 충돌은 호출자에게 `CONFLICT`가 아닌 `EXTENSION_ERROR`로 보여 재시도할지 구분할 수 없다 | 한계(E2, P0-B가 해소할 항목)·문서 |
-| F16 | `build-sdk.mjs`가 컴파일에 실패하면 `BUILD_FAILED "SDK 컴파일 실패"`만 알려 준다. 원인(원래 checkout의 TypeScript가 linux 바이너리뿐)은 `tsc`를 직접 실행해서야 보였다 | 문서(진단) |
-| F17 | JWT의 `exp - iat`를 3600초로 만들었을 때 모든 호출이 이유 없이 `WIRE.UNAUTHENTICATED`였고, 300초로 바꾸자 해결됐다. 수명 한도 때문이라고 추정하며 코드로는 확인하지 않았다(다른 조건은 동일). 거부 사유가 응답에 없다 | 문서(진단, 추정) |
+| F16 | `build-sdk.mjs`가 컴파일에 실패하면 `BUILD_FAILED`만 알려 줘 원인을 알 수 없었다. 실패 메시지에 컴파일러 출력(stderr/stdout) 요약을 붙이도록 수정했고, 일부러 문법 오류를 넣어 `TS1110`·`TS1109`가 출력되는 것을 확인했다 | 문서·SDK(진단, 수정) |
+| F17 | JWT의 `exp - iat` 3600초는 `crates/aip-auth/src/lib.rs:648-659`의 `1..=900` 검사로 거부되고, 300초는 허용된다. 하드코딩 제한이며 설정 변경 지점은 없다. `Invalid`는 `spikes/spike-v6-transport/src/lib.rs:1416-1422`에서 `WIRE.UNAUTHENTICATED` / "토큰 검증 실패"로 뭉뚱그려지고 거부 이유 로그도 남기지 않는다. 900초 상한은 `product/IDP-RUNBOOK.md:23,29`, `product/GETTING-STARTED.md:49`, `product/OPERATIONS.md:22`에 이미 적혀 있다 | 문서(진단, 원인 확정) |
 
 ## 7. audit.md 판정과의 대조
 
@@ -194,13 +194,13 @@ audit의 "범위 밖 발견"인 LIMITS E2 본문과 `ctx.reject`의 불일치는
 
 병합 뒤 후속 작업 순서: (1) 새 바이너리로 `orders.target.aip` check, (2) 문법 차이(`refs`, `input`, `ctx.data.apply`의 input 인자 이름. 확인 필요)를 맞춤, (3) `run.mjs`의 `targetOnly` 단위를 일반 단위로 바꾸고 `scenario.target.ts`를 연결, (4) 위 기대값(특히 B1의 정확히 3건)을 실행으로 확인, (5) `shop.mjs`와 현재 우회 시나리오를 목표와 대조해 줄일 수 있는 코드 양을 이번 절의 줄 수와 비교.
 
-## 9. 범위 밖 발견(제품 코드는 수정하지 않았다)
+## 9. 범위 밖 발견과 후속 조치 (`build-sdk.mjs`만 수정)
 
 | # | 재현 | 비고 |
 | --- | --- | --- |
-| P-1 | `node product/tools/build-sdk.mjs --out /tmp/x`를 linux 전용 `node_modules`에서 실행 → `BUILD_FAILED "SDK 컴파일 실패. 소유한 출력 디렉터리를 정리함"` | 원인 출력 없음(F16) |
-| P-2 | 시험 JWT를 `exp = iat + 3600`으로 만들어 `/session` 호출 → `WIRE.UNAUTHENTICATED`(로그에 `status 200`). `+300`은 통과 | 수명 상한이 원인이라는 추정(F17) |
-| P-3 | `access x = totalOfVisible(Comment)`를 `Task`의 `commentCount`에 사용 → `DEF.ACCESS_MISMATCH` | 진단 문구가 반대로 읽힘(F4) |
+| P-1 | 별도 임시 worktree에서 `product/sdk/index.ts`에 `const deliberatelyBroken: = ;`를 덧붙이고 `node product/tools/build-sdk.mjs --out /tmp/aip-sdk-build-fail-out-4` 실행 → `BUILD_FAILED`와 `TS1110: Type expected`, `TS1109: Expression expected`를 출력. `build-sdk.mjs:83-94`가 컴파일 예외의 stderr/stdout에서 최대 8줄·1200자를 요약한다. 성공 출력 형식은 변경하지 않았다 | 수정·컴파일러 출력 확인 |
+| P-2 | JWT TTL을 주입한 임시 `run.mjs` 사본으로 `CARGO_TARGET_DIR=/tmp/aip-target-apps AIP_BIN=/tmp/aip-target-apps/debug/aip AIP_TEST_TOKEN_TTL=3600 node product/tests/fixtures/expr-apps/.tmp-run-jwt.mjs --app saas --lang ts` 실행 → `FAIL 16`, 모두 `WIRE.UNAUTHENTICATED`; `AIP_TEST_TOKEN_TTL=300` → `PASS 17 / FAIL 0`. 원인은 `crates/aip-auth/src/lib.rs:657`의 900초 상한으로 확정했다. 제한은 설정 불가이며, 응답은 `WIRE.UNAUTHENTICATED` / "토큰 검증 실패"로 일반화되고 로그에 원인은 없다. 제품 문서에는 최대 900초가 이미 명시돼 있다 | 원인 확정(F17) |
+| P-3 | `access x = totalOfVisible(Comment)`를 `Task`의 `commentCount`에 사용하면 `spikes/spike-v1-fixture/src/sema.rs:1721`이 `DEF.ACCESS_MISMATCH`와 실제 문구 `` `visibleTotal`은 `Comment` 기준 groupKey 집계에만 사용 ``을 만든다. 판정은 `p != r.name || a.group_key.is_none()`이며 여기서 `r.name`은 집계 선언 resource(`Task`), `p`는 접근 원본(`Comment`)이다. 즉 Comment 행이 Task를 가리키는 groupKey 집계라는 뜻이 반대로 읽힌다 | `sema.rs`·`codes.rs`는 다른 작업자 소유라 수정하지 않음. 제안: `` `{n}`은 `{r.name}`을 참조하는 `{p}`의 groupKey 집계에서만 사용 ``(예: “`visibleTotal`은 `Task`를 참조하는 `Comment`의 groupKey 집계에서만 사용”) |
 | P-4 | LIMITS.md E2 본문 대 `ctx.reject` 동작 | audit.md가 이미 기록한 항목, 이번에도 재현 |
 | P-5 | 확장의 낙관적 충돌이 호출자에게 `WIRE.EXTENSION_ERROR`로 보임(동시 주문 시험, F15) | `feat/expr-p0c-ext-create-20261121`의 "CONFLICT·ALREADY_EXISTS를 코드 그대로 전달" 커밋이 다루는 것으로 보이나 이 worktree에서 확인하지 못함 |
 

@@ -78,13 +78,21 @@ async function build(args) {
   }
 
   let staging;
+  let compilerStderr;
   try {
     staging = await mkdtemp(join(tmpdir(), "aip-sdk-tsc-"));
-    await execute(compiler, [
-      "--strict", "--declaration", "--rootDir", root, "--outDir", staging,
-      "--module", "esnext", "--moduleResolution", "bundler", "--rewriteRelativeImportExtensions",
-      "--target", "es2022", "--noEmitOnError", resolve(root, "product/sdk/index.ts"),
-    ], { cwd: root, timeout: 30_000, maxBuffer: 1024 * 1024 });
+    try {
+      await execute(compiler, [
+        "--strict", "--declaration", "--rootDir", root, "--outDir", staging,
+        "--module", "esnext", "--moduleResolution", "bundler", "--rewriteRelativeImportExtensions",
+        "--target", "es2022", "--noEmitOnError", resolve(root, "product/sdk/index.ts"),
+      ], { cwd: root, timeout: 30_000, maxBuffer: 1024 * 1024 });
+    } catch (error) {
+      const output = [error.stderr, error.stdout].filter(Boolean).join("\n");
+      const lines = output.trim().split(/\r?\n/u).filter(Boolean).slice(0, 8);
+      compilerStderr = lines.join(" | ").slice(0, 1200);
+      throw error;
+    }
     await relocate(staging, out);
 
     await writeFile(resolve(out, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
@@ -92,7 +100,8 @@ async function build(args) {
     await copyFile(resolve(root, "product/sdk/README.md"), resolve(out, "README.md"));
   } catch {
     await rm(out, { recursive: true, force: true });
-    throw { code: "BUILD_FAILED", msg: "SDK 컴파일 실패. 소유한 출력 디렉터리를 정리함" };
+    const detail = compilerStderr ? `: ${compilerStderr}` : "";
+    throw { code: "BUILD_FAILED", msg: `SDK 컴파일 실패. 소유한 출력 디렉터리를 정리함${detail}` };
   } finally {
     if (staging) await rm(staging, { recursive: true, force: true });
   }
