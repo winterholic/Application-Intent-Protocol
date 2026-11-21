@@ -127,3 +127,28 @@ resource OrderItem {
     accepted(&CART.replace("HIDDEN", ""));
     rejected(&CART.replace("HIDDEN", "field sku read when ordered = true"));
 }
+
+/// PG17 serve 재현: `sameScope risk`에서 호출자가 `[내 행(7), 남의 행]`을 보내 NOT_SAME_SCOPE 여부로 남의 가려진 risk가 7인지
+/// 알아냈다(같으면 성공, 다르면 거절). 행 가시성이 아니라 가려진 필드 값의 일치 여부가 응답으로 나간다.
+#[test]
+fn same_scope_cannot_be_a_hidden_field() {
+    let apply_scope = |field: &str| {
+        doc(
+            "transition t { from true; allow actor != null; to flag = true }",
+            &format!("expose apply t {{ target id; bulk maxRows 5; sameScope {field} }}"),
+        )
+    };
+    rejected(&apply_scope("risk"));
+    // 참조 이동 뒤의 가려진 필드도 같다.
+    rejected(&apply_scope("owner.score"));
+    accepted(&apply_scope("org"));
+    accepted(&apply_scope("owner"));
+    let compose_scope = |field: &str| {
+        doc(
+            "transition t { from true; allow actor != null; to flag = true }",
+            &format!("expose compose {{ bulk maxRows 5; sameScope {field}; transitions t }}"),
+        )
+    };
+    rejected(&compose_scope("risk"));
+    accepted(&compose_scope("org"));
+}

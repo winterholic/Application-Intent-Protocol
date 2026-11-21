@@ -1611,7 +1611,10 @@ impl<'a> Ctx<'a> {
                 None => Value::Null,
                 Some(e) => {
                     let v = self.ex(e, &sc);
-                    self.run(v).map(|x| x.0).unwrap_or(Value::Null)
+                    let v = self.run(v).map(|x| x.0).unwrap_or(Value::Null);
+                    // 대상들이 같은 범위인지는 응답(NOT_SAME_SCOPE 여부)으로 나간다. 가려진 값이면 일치 여부로 값을 찾을 수 있다.
+                    self.reject_hidden_reads(&v, &r.name, &format!("apply `{}`의 sameScope", ea.transition), ea.span);
+                    v
                 }
             };
             ap.insert(ea.transition.clone(), json!({ "target": targets, "bulkMaxRows": ea.bulk, "sameScope": scope, "internal": ea.internal }));
@@ -1656,6 +1659,9 @@ impl<'a> Ctx<'a> {
                     let v = self.ex(e, &sc);
                     self.run(v).map(|x| x.0)
                 });
+                if let Some(scope) = &scope {
+                    self.reject_hidden_reads(scope, &r.name, "compose의 sameScope", c.span);
+                }
                 let mut trs = BTreeSet::new();
                 for (t, sp) in &c.transitions {
                     if !r.transitions.iter().any(|x| &x.name == t) {
