@@ -42,8 +42,9 @@ const units = [
   { app: "community", lang: "ts", definition: "community.aip", scenario: "scenario.ts" },
   { app: "community", lang: "py", definition: "community.aip", scenario: "scenario.py" },
   { app: "orders", lang: "ts", definition: "orders.current.aip", scenario: "scenario.current.ts", workers: true },
-  // P0-A·B·C 병합 전이라 실행하지 못하는 목표 정의. 현재 바이너리가 어디서 멈추는지만 기록한다.
-  { app: "orders", lang: "target", definition: "orders.target.aip", targetOnly: true },
+  // P0-A·B·C 병합(2e94daa0) 뒤 목표 정의. 변형 A는 선언만(bundle refs + input 산술), 변형 B는 확장(ctx.data.create).
+  { app: "orders", lang: "ts", label: "orders/target-a", definition: "orders.target.aip", scenario: "scenario.target-a.ts" },
+  { app: "orders", lang: "ts", label: "orders/target-b", definition: "orders.target-b.aip", scenario: "scenario.target-b.ts", workers: true },
 ];
 
 function run(program, args, { cwd = root, env = {}, timeout = 180_000, allowFail = false } = {}) {
@@ -159,7 +160,7 @@ function parseResults(unit, output) {
 }
 
 async function runUnit(unit, ctx) {
-  const label = `${unit.app}/${unit.lang}`;
+  const label = unit.label ?? `${unit.app}/${unit.lang}`;
   const appDir = join(here, unit.app);
   if (unit.targetOnly) {
     const checked = run(ctx.binary, ["service", "check", join(appDir, unit.definition)], { allowFail: true });

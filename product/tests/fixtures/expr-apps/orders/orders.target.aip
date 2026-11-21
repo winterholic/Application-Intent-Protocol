@@ -1,14 +1,12 @@
-// 주문·재고 앱, P0 병합 뒤 목표 정의. **아직 실행하지 못했다(미실행).**
-// 근거: plan-docs/expressiveness-1.0/decisions.md의 P0-A(refs), P0-B(input·산술), P0-C(ctx.data.create)와
-// feat/expr-p0b-arith-20261121의 spikes/spike-v3-write/tests/expr_arith.rs에 있는 transition 문법.
-// 현재 바이너리의 `aip service check`는 `input` 키에서 DEF.PARSE_UNKNOWN_KEY로 멈춘다(run.mjs가 기록한다).
+// 주문·재고 앱, P0 병합 뒤 변형 A: 선언만으로 쓴다. 확장 없음.
+// P0-A(bundle refs)로 주문과 줄을 한 요청에 만들고, P0-B(input 산술)로 같은 요청에서 재고를 줄인다.
+// 단가는 create allow의 `unitPrice = product.price`로 서버가 강제한다. 주문 합계 `total`은 곱셈이 없어(E3) 클라이언트가 보낸 값이다.
 actor Member
 resource Member { fields { id: Id; name: Text(1..50) } rows read when id = actor }
 
 resource Product {
   fields { id: Id; sku: Text(1..40); stock: Int(0..1000000); price: Int(0..1000000) }
   rows read when actor != null
-  // P0-B: 입력 수량 차감. from은 행을 잠근 뒤 판정하므로 동시 주문에서도 음수가 되지 않는다.
   transition take {
     input { qty: Int(1..1000) }
     allow actor != null
@@ -16,7 +14,6 @@ resource Product {
     to stock = stock - input.qty
   }
   expose read { select id, sku, stock, price; filter id.eq, sku.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
-  // 변형 A(선언만, bundle)에서는 호출자가 직접 부르고, 변형 B(확장)에서는 internal로 바꿔 호출자 경로를 닫는다.
   expose apply take { target id; bulk maxRows 1 }
 }
 
@@ -25,20 +22,11 @@ resource Order {
   rows read when owner = actor
   expose read { select id, total, placed; filter id.eq, placed.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
   expose create { allow owner = actor and placed = true; fields owner, total, placed }
-  // 변형 B: 서버가 단가를 읽어 합계를 계산하고 주문·줄 생성과 재고 차감을 한 트랜잭션에서 한다. P0-C(create grant)와 P0-B(take)가 필요하다.
-  extension write placeAtomic {
-    input { product: Product.Id; qty: Int(1..1000) }
-    output { id: Order.Id; total: Int }
-    access read.Product, create.Order, create.OrderLine, Product.take
-    effect db
-    deadline 3s
-    implementation "shop.placeAtomic"
-  }
 }
 
 resource OrderLine {
   fields { id: Id; order: Order; product: Product; qty: Int(1..1000); unitPrice: Int(0..1000000) }
   rows read when order.owner = actor
   expose read { select id, qty, unitPrice, product; filter order.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
-  expose create { allow order.owner = actor; fields order, product, qty, unitPrice }
+  expose create { allow order.owner = actor and unitPrice = product.price; fields order, product, qty, unitPrice }
 }
