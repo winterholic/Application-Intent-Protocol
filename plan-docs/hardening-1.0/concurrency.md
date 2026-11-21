@@ -139,4 +139,4 @@ PROBE_ROUNDS=<반복 횟수> $P <시험 이름>
 - 탐색(커밋됨, `#[ignore]`): `spikes/spike-v6-transport/tests/concurrency_probe_http.rs`.
 - `spike-v3-write` 전체(수정 2건 반영, 4.3절 이전): 통과 107, 실패 0.
 - `spike-v6-transport` 전체(4.3절 수정 전): 통과 290, 실패 8, ignored 24. 실패 8건 중 5건은 이 환경에 `tsc`가 없어서(`v12`~`v16` SDK 시험, `No such file or directory`), 3건은 4.3절의 결함(macOS 전용 `db_connect_lifetime` 1건과 `db_query_lifetime` 2건)이었다.
-- 4.3절 수정 뒤에는 이 수정이 닿는 확장·slot·수명·fence·commit 계열 35개 시험 바이너리를 다시 돌렸다(아래 작업 보고 참조). 전체를 다시 돌리지 않은 이유는 이 Mac의 부하로 durable job 시험이 매우 느려서다. 4.3절 수정은 `serve_request`의 확장 경로 앞부분만 건드린다.
+- 4.3절 수정 뒤에는 이 수정이 닿는 확장·slot·수명·fence·commit 계열 `spike-v6-transport` 시험 35개 바이너리를 다시 돌렸다: 통과 76, 실패 2(`v14_apply`, `v16_bundle`, 둘 다 `tsc` 부재). `db_connect_lifetime`과 `db_query_lifetime` 2건, `write_extension_replay_backpressure`, `write_extension_serializable_conflict`, `deployment_fence`가 통과했다. 전체 85개 바이너리를 다시 돌리지 않은 이유는 이 Mac의 부하로 durable job 시험이 매우 느려서다. 4.3절 수정은 `serve_request`의 확장 경로 앞부분만 건드린다.
