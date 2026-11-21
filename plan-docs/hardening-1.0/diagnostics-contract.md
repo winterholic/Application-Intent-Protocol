@@ -128,7 +128,7 @@
 | --- | --- | --- | --- |
 | flaskbb CI 단계 | 종료 코드 1, `ok is False`, `diagnostics[].code == "DEF.UNKNOWN_SYMBOL"`, 같은 항목의 `message`에 `"expose apply"` 부분 문자열(`2>&1`로 합쳐 읽음) | `.github/workflows/flaskbb-post-order.yml:208-213` | 코드와 종료 코드뿐 아니라 메시지 문구를 이미 매칭한다. 한 코드가 여러 상황을 덮어 문구로 구분하고 있다 |
 | infisical 계약 시험 | 성공 시 stdout JSON의 `ok`와 `advisories[].code`, 실패 시 종료 코드 비영과 stderr 텍스트 안의 코드 문자열 | `porting/infisical/tests/test_encryption_contract.py:32-81` | `code`와 경고 코드 집합에 의존한다. `--dev-checks`의 경고 코드도 읽는다 |
-| 앱 패키저 | 성공 stdout JSON의 `workers.required`, `workers.extensions[].name`, `.implementation` | `product/tools/app-package.mjs:33-47,156` | `workers`는 진단이 아니지만 같은 JSON의 소비자다. JSON 파싱 실패 시 조용히 검증을 건너뛴다(fail-open) |
+| 앱 패키저 | 성공 stdout JSON의 `workers.required`, `workers.extensions[].name`, `.implementation` | `product/tools/app-package.mjs:32-47,156` | `workers`는 진단이 아니지만 같은 JSON의 소비자다. JSON 파싱 실패 시 조용히 검증을 건너뛴다(fail-open) |
 | 아카이브·패키지 스크립트 | 종료 코드만 | `scripts/package-cli-archive.sh:40`, `product/tests/app-package-e2e.test.mjs:55` | 종료 코드 의미가 가장 값싸고 가장 널리 쓰인다 |
 | CLI 시험 | 키 집합, 타입, `line` 56, `column` 5, 코드, severity, 종료 코드 | `crates/aip-cli/tests/service.rs:21-63` | 현재 고정의 범위 |
 
@@ -276,7 +276,7 @@
 
 범위 밖에서 발견해 고치지 않은 것(한 줄씩):
 
-- 앱 패키저는 `workers`를 읽을 때 JSON 파싱에 실패하면 조용히 `return`한다(`product/tools/app-package.mjs:35`). 5.4절의 소비자 규칙과 반대다.
+- 앱 패키저는 `workers`를 읽을 때 JSON 파싱에 실패하면 조용히 `return`한다(`product/tools/app-package.mjs:34`). 5.4절의 소비자 규칙과 반대다.
 - 파일 앞에 BOM이 있으면 `DEF.LEX_UNEXPECTED_CHAR`가 1열에서 난다(2.4절). 위치 계약과 무관하지만 Windows 편집기 사용자에게 혼란을 줄 수 있다.
 - `help`는 영어이고 `message`는 한국어로 섞여 있다. 언어 정책은 이 계약이 정하지 않는다.
 - `aip-cli`의 시험 바이너리는 `AIP_TEST_DATABASE_URL`이 없으면 빌드 단계(`crates/aip-test-support/build.rs:13`)에서 중단된다. 진단 계약 시험은 DB를 쓰지 않는데도 PG 설정 없이는 실행할 수 없다(8.1절).
