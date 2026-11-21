@@ -2329,6 +2329,8 @@ impl<'a> Ctx<'a> {
                 self.run(w)?
             }
         };
+        // 호출자가 정하는 `input`을 where에서 가려진 필드와 견주면 count·sum의 값 변화로 가려진 값을 이분 탐색한다.
+        self.reject_hidden_input_compare(&where_, &source, &format!("aggregate `{}`의 where", a.name), a.span, false);
         // 호출자 filter는 원본 행 정책을 거치지 않고 WHERE에 붙는다. 정책 없이 값별 count를 받으면 숨은 행의 값을 한 값씩 확인할 수 있다.
         if a.caller_filter.as_deref() == Some("read") {
             if let Some(policy) = self.res.get(source.as_str()).and_then(|s| s.row_read.as_ref()) {

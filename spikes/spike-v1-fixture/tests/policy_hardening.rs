@@ -189,3 +189,31 @@ fn a_check_cannot_compare_a_hidden_field_with_a_caller_written_field() {
     accepted(&with("risk >= 0", &patch("risk")));
     accepted(&with("risk <= 100", &patch("cap")));
 }
+
+/// PG17 serve 재현: 단독 집계 `where secret >= input.n`(count)에 호출자가 n을 바꿔 가며 보내 남의 가려진 secret(37)을 복원했다.
+/// 같은 입력과 가려진 필드의 비교는 `allow`·효과 `when`에서는 이미 막았는데 집계 where에는 검사가 없었다.
+#[test]
+fn aggregate_where_cannot_compare_input_with_a_hidden_field() {
+    const AGG: &str = "
+actor Member
+resource Member { fields { id: Id; org: Int } rows read when true }
+access all(a: Member) = true
+resource Vote {
+  fields { id: Id; owner: Member; amount: Int; secret: Int }
+  rows read when owner = actor
+  field secret read when owner = actor
+  AGGREGATE
+  expose aggregate cnt
+}
+";
+    let agg = |release: &str, filter: &str| {
+        AGG.replace("AGGREGATE", &format!("aggregate cnt: Int {{ input {{ n: Int }}; source Vote; sourceAccess all(actor); {filter} callerFilter none; rowOutput none; release {release} }}"))
+    };
+    // 가려진 필드와 입력의 비교는 release와 상관없이 막는다. 술어 호출 안도 같다.
+    rejected(&agg("count", "where owner = actor and secret >= input.n;"));
+    rejected(&agg("sum(amount)", "where owner = actor and secret >= input.n;"));
+    rejected(&format!("predicate atLeast(v: Vote, n: Int) = v.secret >= n\n{}", agg("count", "where owner = actor and atLeast(this, input.n);")));
+    // 가려지지 않은 필드와 입력의 비교, 가려진 필드와 서버 상수의 비교는 기존대로 된다.
+    accepted(&agg("count", "where owner = actor and amount >= input.n;"));
+    accepted(&agg("count", "where secret >= 3;"));
+}
