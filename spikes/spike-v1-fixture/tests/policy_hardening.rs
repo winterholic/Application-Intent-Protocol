@@ -69,3 +69,16 @@ fn from_and_to_values_cannot_read_a_hidden_field_through_a_predicate() {
     );
     accepted(&plain);
 }
+/// PG17 serve 재현: 호출자 자신의 행에서 가려진 `Member.score`(5)를 `allow actor.score >= input.n`의 FORBIDDEN 경계로 복원했다.
+/// `hidden_reads`가 `this` 뿌리만 따라가 `actor` 뿌리 경로는 B-2 검사를 지나갔다.
+#[test]
+fn the_actor_root_is_checked_like_this_for_hidden_fields() {
+    let with_input =
+        |allow: &str, from: &str| apply_t(&format!("transition t {{ input {{ n: Int(1..100) }} from {from}; allow {allow}; to flag = true }}"));
+    rejected(&with_input("actor.score >= input.n", "true"));
+    rejected(&format!("predicate atLeast(m: Member, n: Int) = m.score >= n\n{}", with_input("atLeast(actor, input.n)", "true")));
+    rejected(&apply_t("transition t { from actor.score >= 3; allow actor != null; to flag = true }"));
+    // 호출자가 고르지 않은 한 비트(`allow actor.score >= 3`)와 가려지지 않은 actor 필드는 기존대로 된다.
+    accepted(&apply_t("transition t { from true; allow actor.score >= 3; to flag = true }"));
+    accepted(&with_input("actor.org >= input.n", "actor.org = 1"));
+}

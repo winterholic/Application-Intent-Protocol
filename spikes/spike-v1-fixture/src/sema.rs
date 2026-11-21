@@ -1016,6 +1016,7 @@ impl<'a> Ctx<'a> {
                             _ => None,
                         }),
                         None if root == "this" => cur.map(str::to_string),
+                        None if root == "actor" => self.actor.clone(),
                         None => None,
                     };
                     let mut at = start;
@@ -1100,8 +1101,14 @@ impl<'a> Ctx<'a> {
         match v {
             Value::Object(o) => {
                 if let Some(p) = o.get("path") {
-                    if p["root"] == "this" {
-                        let mut at = cur.to_string();
+                    // `actor`도 호출자가 못 읽는 필드를 가진 행이다(예: 자기 행의 `score`). 이분 탐색은 `this`와 같다.
+                    let start = match p["root"].as_str() {
+                        Some("this") => Some(cur.to_string()),
+                        Some("actor") => self.actor.clone(),
+                        _ => None,
+                    };
+                    if let Some(start) = start {
+                        let mut at = start;
                         for seg in p["segs"].as_array().into_iter().flatten().filter_map(Value::as_str) {
                             let Some(rs) = self.res.get(at.as_str()) else { break };
                             if rs.field_read.iter().any(|x| x.0 == seg) {
