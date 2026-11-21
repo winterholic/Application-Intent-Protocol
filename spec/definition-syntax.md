@@ -58,7 +58,7 @@
 |---|---|---|
 | `select` | `select a, b` | 읽을 수 있는 필드·집계 이름 |
 | `refIds` | `refIds a, b` | select한 참조 필드 가운데 원시 외래 키 id를 대상 행의 가시성과 무관하게 공개할 것. 쓰지 않은 참조 select는 대상 resource의 `rows read`를 적용해 호출자가 대상 행을 볼 수 없으면 null이 된다(출력 타입도 nullable) |
-| `filter` | `filter f.op, g.op` | 필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 DB locale에 따른 ILIKE(대소문자 무시, 악센트·문자 폭은 구분)로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것 |
+| `filter` | `filter f.op, g.op` | 필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 DB locale에 따른 ILIKE(대소문자 무시, 악센트·문자 폭은 구분)로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것. 타입별로 쓸 수 있는 연산은 Int·Decimal·Time·Date가 eq gte lte gt lt, Text가 eq in prefix contains like, Email이 eq in, Url·Bool·Json이 eq, enum이 eq in, 참조가 eq in, Id·Uuid가 eq in gte lte gt lt이다. isNull은 위에 더해 nullable 필드에만 쓸 수 있다(Id·Uuid 제외). 지원하지 않는 조합은 `DEF.OP_TYPE_MISMATCH`다 |
 | `sort` | `sort a, b` | 정렬 허용 목록. Bool도 false < true로 정렬한다. ASC는 NULL 마지막, DESC는 NULL 처음이며 id로 동률을 정한다. nullable sort는 cursor와 함께 쓸 수 없다 |
 | `traverse` | `traverse rel { select a }  \|  traverse name via Child.field { select a; limit N }` | 참조를 따라 포함한다. 대상 resource의 expose select 안에서만. 1:N은 `via Child.field`로 자식 resource와 그 안의 참조 필드를 함께 쓴다(`via field`만 쓰면 `DEF.TRAVERSE_VIA_FORM`) |
 | `budget` | `budget { rows N; depth N; deadline 2s; cost N }` | 이 읽기를 루트로 부를 수 있게 하는 한도. 네 값이 모두 필요하다 |
@@ -93,7 +93,7 @@
 | `where` | `where condition` | 집계에 넣을 원본 행 조건. where 없는 count는 공개 count이며 정의 검사가 `DEF.ADVISORY_PUBLIC_COUNT` 경고를 낸다 |
 | `callerFilter` | `callerFilter none \| read` | 호출자의 aggregate filter 허용 여부. 반드시 쓴다(생략하면 `DEF.MISSING_ITEM` 오류). none은 거부하고 read는 요청 필터를 허용한다. count는 source의 rows read 정책을 물려받지 않으므로, rows read 정책이 있는 source에서 callerFilter read를 쓰면 aggregate where가 그 정책을 함의해야 한다(정책 전체 또는 정책의 OR 가지 하나를 where의 AND 항으로 쓴다). 아니면 `DEF.CALLER_FILTER_POLICY_REQUIRED` 오류다(호출자가 읽을 수 없는 행의 필드 값을 필터로 확인할 수 있기 때문) |
 | `rowOutput` | `rowOutput none` | 집계가 행을 내보내는지 |
-| `release` | `release count  \|  sum(f)  \|  min(f)  \|  max(f)` | 내보내는 값. sum은 Int 필드(결과 Int)나 Decimal(p,s) 필드(결과 `Decimal(p',s)`, p' >= p, 합이 p'를 넘으면 `WIRE.OUTPUT_INVALID`, 반올림 없음), min·max는 Int 필드만 |
+| `release` | `release count  \|  sum(f)  \|  min(f)  \|  max(f)` | 내보내는 값. sum은 Int 필드(결과 Int)나 Decimal(p,s) 필드(결과 `Decimal(p',s)`, p' >= p, 합이 p'를 넘으면 `WIRE.OUTPUT_INVALID`, 반올림 없음), min·max는 Int 필드만이며 groupKey가 있는 집계에서만 쓰고 결과 타입은 `Int?`다(빈 집합은 null, 아니면 `DEF.UNSUPPORTED`) |
 
 ### extension
 

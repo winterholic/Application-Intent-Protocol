@@ -92,7 +92,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "expose read",
         "filter",
         "filter f.op, g.op",
-        "필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 DB locale에 따른 ILIKE(대소문자 무시, 악센트·문자 폭은 구분)로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것",
+        "필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 DB locale에 따른 ILIKE(대소문자 무시, 악센트·문자 폭은 구분)로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것. 타입별로 쓸 수 있는 연산은 Int·Decimal·Time·Date가 eq gte lte gt lt, Text가 eq in prefix contains like, Email이 eq in, Url·Bool·Json이 eq, enum이 eq in, 참조가 eq in, Id·Uuid가 eq in gte lte gt lt이다. isNull은 위에 더해 nullable 필드에만 쓸 수 있다(Id·Uuid 제외). 지원하지 않는 조합은 `DEF.OP_TYPE_MISMATCH`다",
     ),
     (
         "expose read",
@@ -133,7 +133,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "호출자의 aggregate filter 허용 여부. 반드시 쓴다(생략하면 `DEF.MISSING_ITEM` 오류). none은 거부하고 read는 요청 필터를 허용한다. count는 source의 rows read 정책을 물려받지 않으므로, rows read 정책이 있는 source에서 callerFilter read를 쓰면 aggregate where가 그 정책을 함의해야 한다(정책 전체 또는 정책의 OR 가지 하나를 where의 AND 항으로 쓴다). 아니면 `DEF.CALLER_FILTER_POLICY_REQUIRED` 오류다(호출자가 읽을 수 없는 행의 필드 값을 필터로 확인할 수 있기 때문)",
     ),
     ("aggregate", "rowOutput", "rowOutput none", "집계가 행을 내보내는지"),
-    ("aggregate", "release", "release count  |  sum(f)  |  min(f)  |  max(f)", "내보내는 값. sum은 Int 필드(결과 Int)나 Decimal(p,s) 필드(결과 `Decimal(p',s)`, p' >= p, 합이 p'를 넘으면 `WIRE.OUTPUT_INVALID`, 반올림 없음), min·max는 Int 필드만"),
+    ("aggregate", "release", "release count  |  sum(f)  |  min(f)  |  max(f)", "내보내는 값. sum은 Int 필드(결과 Int)나 Decimal(p,s) 필드(결과 `Decimal(p',s)`, p' >= p, 합이 p'를 넘으면 `WIRE.OUTPUT_INVALID`, 반올림 없음), min·max는 Int 필드만이며 groupKey가 있는 집계에서만 쓰고 결과 타입은 `Int?`다(빈 집합은 null, 아니면 `DEF.UNSUPPORTED`)"),
     ("extension", "input", "input { x: Type }", "확장이 받는 값"),
     ("extension", "output", "output { y: Type }", "확장이 돌려주는 값"),
     ("extension", "access", "access R.transition  |  R.aggregate  |  mongo.collection  |  redis \"key:prefix:*\"", "확장이 쓸 수 있는 전이·집계·Mongo 컬렉션·Redis 키"),

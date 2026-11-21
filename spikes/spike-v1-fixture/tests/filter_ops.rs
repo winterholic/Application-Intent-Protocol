@@ -115,3 +115,62 @@ fn offset_is_opt_in_budget_item() {
         assert!(got.iter().any(|g| g.contains(want)), "`{b}`: 기대 {want}, 실제 {got:?}");
     }
 }
+
+/// `spec/definition-syntax.md`(`filter` 행)가 말하는 타입별 연산 표. 문서와 파서가 어긋나면 여기서 깨진다.
+#[test]
+fn the_documented_operator_matrix_is_what_the_parser_accepts() {
+    const OPS: [&str; 10] = ["eq", "in", "isNull", "gte", "lte", "gt", "lt", "prefix", "contains", "like"];
+    // (필드 타입, 항상 되는 연산). isNull은 nullable(`?`)일 때만 더해진다.
+    let table: &[(&str, &[&str])] = &[
+        ("Int(0..9)", &["eq", "gte", "lte", "gt", "lt"]),
+        ("Decimal(5,2)", &["eq", "gte", "lte", "gt", "lt"]),
+        ("Time", &["eq", "gte", "lte", "gt", "lt"]),
+        ("Date", &["eq", "gte", "lte", "gt", "lt"]),
+        ("Text", &["eq", "in", "prefix", "contains", "like"]),
+        ("Email", &["eq", "in"]),
+        ("Url", &["eq"]),
+        ("Bool", &["eq"]),
+        ("Json", &["eq"]),
+        ("St", &["eq", "in"]),
+        ("Member", &["eq", "in"]),
+    ];
+    let accepted = |ty: &str, op: &str| -> bool {
+        let src = format!(
+            "enum St {{ A, B }}\nresource Member {{ fields {{ id: Id }} rows read when id = actor }}\nactor Member\nresource P {{ fields {{ id: Id; v: {ty}; owner: Member }} rows read when owner = actor\n  expose read {{ select id, v; filter v.{op}; budget {{ rows 10; depth 1; deadline 1s; cost 100 }} }} }}\n"
+        );
+        load_str(&src, Form::A).is_ok()
+    };
+    for (ty, ops) in table {
+        for nullable in [false, true] {
+            let decl = if nullable { format!("{ty}?") } else { (*ty).to_string() };
+            for op in OPS {
+                let want = ops.contains(&op) || (nullable && op == "isNull");
+                assert_eq!(accepted(&decl, op), want, "{decl}.{op}: 문서 표와 파서가 다름");
+            }
+        }
+    }
+    // Id·Uuid 기본키는 eq in gte lte gt lt이고 isNull·문자열 연산은 거부한다.
+    for id_ty in ["Id", "Uuid"] {
+        for op in OPS {
+            let src = format!("actor Member\nresource Member {{ fields {{ id: {id_ty} }} rows read when id = actor\n  expose read {{ select id; filter id.{op}; budget {{ rows 10; depth 1; deadline 1s; cost 100 }} }} }}\n");
+            let want = ["eq", "in", "gte", "lte", "gt", "lt"].contains(&op);
+            assert_eq!(load_str(&src, Form::A).is_ok(), want, "{id_ty} id.{op}");
+        }
+    }
+}
+
+/// `release min|max`는 groupKey가 있고 결과 타입이 `Int?`일 때만 된다(문서의 aggregate `release` 행).
+#[test]
+fn min_and_max_need_a_group_key_and_a_nullable_int_result() {
+    let def = |ty: &str, rel: &str| {
+        format!(
+            "actor Member\naccess ofMember = totalOfVisible(Member)\nresource Member {{ fields {{ id: Id }} rows read when actor != null\n  aggregate a: {ty} {{ source Item; sourceAccess ofMember; groupKey owner; callerFilter none; rowOutput none; release {rel} }} }}\nresource Item {{ fields {{ id: Id; owner: Member; qty: Int(0..100) }} rows read when owner = actor }}\n"
+        )
+    };
+    for rel in ["min(qty)", "max(qty)"] {
+        assert!(load_str(&def("Int?", rel), Form::A).is_ok(), "{rel} as Int?");
+        let got = load_str(&def("Int", rel), Form::A).map(|_| ()).unwrap_err();
+        assert!(got.iter().any(|d| format!("{d}").contains("DEF.UNSUPPORTED")), "{rel} as Int: {got:?}");
+    }
+    assert!(load_str(&def("Int", "sum(qty)"), Form::A).is_ok(), "sum stays a plain Int");
+}
