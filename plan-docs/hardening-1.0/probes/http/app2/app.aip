@@ -1,0 +1,36 @@
+actor Member
+limit atMostTwoDone on Item = atMost 2 where done = true
+access ofMember = totalOfVisible(Member)
+resource Member {
+  fields { id: Id; name: Text(1..50) }
+  rows read when actor != null
+  aggregate priceSum: Decimal(6,2) { source Item; sourceAccess ofMember; where owner = actor; groupKey owner; callerFilter none; rowOutput none; release sum(price) }
+  aggregate priceSumBig: Decimal(9,2) { source Item; sourceAccess ofMember; where owner = actor; groupKey owner; callerFilter none; rowOutput none; release sum(price) }
+  expose read { select id, name, priceSum; filter id.eq; sort id; budget { rows 10; depth 1; deadline 1s; cost 200 } }
+}
+resource Item {
+  fields { id: Id; owner: Member; name: Text(1..30); note: Text?; qty: Int(0..100)?; price: Decimal(5,2); done: Bool; secret: Text? }
+  rows read when owner = actor
+  field secret read when owner = actor
+  unique owner, name
+  invariant atMostTwoDone per owner
+  transition finish { from done = false; to done = true; allow owner = actor; repeat reject }
+  transition finish2 { from done = false; to done = true; allow owner = actor; repeat unchanged }
+  transition drop { from true; delete; allow owner = actor }
+  expose read {
+    select id, name, note, qty, price, done, owner, secret
+    refIds owner
+    filter name.eq, name.prefix, name.contains, name.like, qty.isNull, qty.gte, qty.lte, done.eq, id.in
+    sort name, qty, id, done
+    budget { rows 20; depth 1; deadline 1s; cost 100; offset 100 }
+  }
+  expose create { allow owner = actor; fields owner, name, note, qty, price, done, secret }
+  expose apply finish { target id, where; bulk maxRows 5 }
+  expose apply finish2 { target id; bulk maxRows 5 }
+  expose apply drop { target id; bulk maxRows 5 }
+}
+resource Hidden {
+  fields { id: Id; owner: Member; label: Text(1..10) }
+  rows read when owner = actor
+  expose read { select id, label }
+}

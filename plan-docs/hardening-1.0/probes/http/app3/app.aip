@@ -1,0 +1,12 @@
+actor Member
+access ofMember = totalOfVisible(Member)
+resource Member {
+  fields { id: Id; name: Text(1..50) }
+  rows read when actor != null
+  aggregate cnt: Int { source Item; sourceAccess ofMember; groupKey owner; callerFilter none; rowOutput none; release count }
+  aggregate sm: Int { source Item; sourceAccess ofMember; groupKey owner; callerFilter none; rowOutput none; release sum(qty) }
+  aggregate mx: Int? { source Item; sourceAccess ofMember; groupKey owner; callerFilter none; rowOutput none; release max(qty) }
+  aggregate mn: Int? { source Item; sourceAccess ofMember; groupKey owner; callerFilter none; rowOutput none; release min(qty) }
+  expose read { select id, cnt, sm, mx, mn; filter id.eq; sort id; budget { rows 10; depth 1; deadline 1s; cost 1000 } }
+}
+resource Item { fields { id: Id; owner: Member; qty: Int(0..100) } rows read when owner = actor }
