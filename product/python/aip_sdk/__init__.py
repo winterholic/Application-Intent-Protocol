@@ -46,10 +46,13 @@ _FINGERPRINT = re.compile(r"^[a-f0-9]{64}$")
 _ACTOR_ID = re.compile(r"^(0|[1-9][0-9]*|-[1-9][0-9]*|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 # A write whose commit could not be confirmed is resent with the same key and body.
 _UNSETTLED = {"WIRE.COMMIT_UNKNOWN", "WIRE.INTERNAL"}
-# Rejections before execution say nothing about whether an earlier attempt with the key committed.
+# Rejections before execution say nothing about whether an earlier attempt with the key committed. That includes the codes the
+# server gives before it reads the idempotency record (rate limit, deployment fence, concurrency caps): a retry that gets one of
+# them must stay unsettled, or a write that did commit is reported as failed and the caller resends it under a new key.
 _NOT_EXECUTED = {
     "WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH", "WIRE.CONTRACT_REQUIRED",
     "WIRE.ORIGIN_NOT_ALLOWED", "WIRE.REQUEST_TIMEOUT", "WIRE.DB_UNAVAILABLE", "WIRE.WORKER_BUSY", "WIRE.DEADLINE_EXCEEDED", "WIRE.CONFLICT",
+    "WIRE.RATE_LIMITED", "WIRE.SERVER_BUSY", "WIRE.CIRCUIT_OPEN", "WIRE.DEPLOYMENT_CHANGED", "WIRE.SCHEMA_MISMATCH",
 }
 _CONTRACT_PATHS = {"/read", "/apply", "/status", "/extension", "/operation"}
 _MANAGED_PREFIXES = ("/jobs/", "/files/", "/events/read", "/messages/", "/rag/", "/objects/")
@@ -413,8 +416,12 @@ class Client:
     def apply(self, request: dict, key: Optional[str] = None, retries: int = 2) -> dict:
         """Runs an exposed transition or write extension. A lost or unconfirmed response is resent with
         the same key; if it still cannot be confirmed, `WriteUnsettled` keeps the key for later retry."""
-        key = key or str(uuid.uuid4())
         snapshot = json.loads(json.dumps(request))
+        if not key:
+            # After a WriteUnsettled, calling again without a key must resend the pending write under its own key (as the TypeScript
+            # transport does). A fresh key would run a write that may already have committed a second time. Sending the same body
+            # twice on purpose takes two explicit, different keys.
+            key = next((pending_key for pending_key, pending in self._pending.items() if pending == snapshot), None) or str(uuid.uuid4())
         self._ensure_principal()
         self._ensure_contract()
         previous = self._pending.get(key)
