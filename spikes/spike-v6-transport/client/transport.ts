@@ -42,8 +42,9 @@ function validWriteResponse(res: any, wire?: IdWireKind, extensionWrite = false,
 }
 
 const UNSETTLED = new Set(["WIRE.COMMIT_UNKNOWN", "WIRE.INTERNAL"]);
-// 실행 전 거부나 이번 시도의 rollback은 같은 키의 이전 커밋 여부를 알려 주지 않는다.
-const NOT_EXECUTED = new Set(["WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH", "WIRE.CONTRACT_REQUIRED", "WIRE.ORIGIN_NOT_ALLOWED", "WIRE.REQUEST_TIMEOUT", "WIRE.DB_UNAVAILABLE", "WIRE.WORKER_BUSY", "WIRE.DEADLINE_EXCEEDED", "WIRE.CONFLICT"]);
+// 실행 전 거부나 이번 시도의 rollback은 같은 키의 이전 커밋 여부를 알려 주지 않는다. 서버가 멱등 기록을 보기 전에 돌려주는 코드(요청 한도,
+// 배포 fence, 동시 실행 상한)도 여기 든다. 빠지면 응답 유실 뒤 재시도가 이 코드를 받을 때 이미 커밋된 쓰기를 실패로 보고한다.
+const NOT_EXECUTED = new Set(["WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH", "WIRE.CONTRACT_REQUIRED", "WIRE.ORIGIN_NOT_ALLOWED", "WIRE.REQUEST_TIMEOUT", "WIRE.DB_UNAVAILABLE", "WIRE.WORKER_BUSY", "WIRE.DEADLINE_EXCEEDED", "WIRE.CONFLICT", "WIRE.RATE_LIMITED", "WIRE.SERVER_BUSY", "WIRE.CIRCUIT_OPEN", "WIRE.DEPLOYMENT_CHANGED", "WIRE.SCHEMA_MISMATCH"]);
 
 export class WriteUnsettled extends Error {
   /** spec/client-errors.md의 레지스트리 코드. Python SDK의 같은 이름 예외와 같은 값이다. */
