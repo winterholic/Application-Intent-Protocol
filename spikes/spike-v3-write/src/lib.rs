@@ -1290,9 +1290,14 @@ async fn create_row(
     let external = !facts["externalStorage"].is_null();
     // 외부 저장소는 DB 기본값이 INSERT 뒤에 채워져서, allow가 생략한 기본값 필드를 읽으면 INSERT 뒤에야 판정할 수 있다. 그 필드를
     // 읽지 않는 allow는 후보 행으로 INSERT 전에 판정한다. 아니면 권한이 없는 호출자가 유일 제약 충돌(ALREADY_EXISTS)과 거절(FORBIDDEN)의
-    // 차이로 호출자가 읽을 수 없는 행의 값을 확인할 수 있다.
-    let allow =
-        if external && allow_reads_omitted(&ec["allow"], &omitted) { "TRUE".into() } else { cx.cond(&ec["allow"], &venv).map_err(internal)? };
+    // 차이로 호출자가 읽을 수 없는 행의 값을 확인할 수 있다. 읽는 경우에도 그 필드를 읽지 않는 최상위 AND 항은 INSERT 전에 판정하고
+    // (그 항을 못 채우면 allow 전체가 거짓이다), 전체 allow는 INSERT 뒤에 다시 판정한다.
+    let allow = if external && allow_reads_omitted(&ec["allow"], &omitted) {
+        let pre = allow_terms_not_reading_omitted(&ec["allow"], &omitted);
+        cx.cond(&pre, &venv).map_err(internal)?
+    } else {
+        cx.cond(&ec["allow"], &venv).map_err(internal)?
+    };
     let insert_cols = if cols.is_empty() { String::new() } else { format!(" ({})", cols.join(", ")) };
     // 비공개 관계 테이블은 `id` 열이 없을 수 있다. 그런 행은 id를 돌려줄 수 없다.
     let has_id = facts["resources"][target]["fields"].get("id").is_some();
@@ -1323,6 +1328,25 @@ async fn create_row(
         }
     }
     Ok(id)
+}
+
+/// allow의 최상위 AND 항 가운데 `omitted` 필드를 읽지 않는 것만 모은 조건. 그런 항이 없으면 항상 참이다.
+/// OR·NOT 안의 항은 쪼개지 않는다(한 항이 거짓이어도 전체가 거짓이라고 말할 수 있는 것은 AND 항뿐이다).
+fn allow_terms_not_reading_omitted(allow: &Value, omitted: &[&str]) -> Value {
+    fn collect<'a>(v: &'a Value, out: &mut Vec<&'a Value>) {
+        match v.get("and").and_then(Value::as_array) {
+            Some(items) => items.iter().for_each(|x| collect(x, out)),
+            None => out.push(v),
+        }
+    }
+    let mut terms = vec![];
+    collect(allow, &mut terms);
+    let mut kept: Vec<Value> = terms.into_iter().filter(|t| !allow_reads_omitted(t, omitted)).cloned().collect();
+    match kept.len() {
+        0 => json!({ "lit": true }),
+        1 => kept.remove(0),
+        _ => json!({ "and": kept }),
+    }
 }
 
 /// allow(facts)가 `omitted` 필드(생략한 필드)를 읽는지. `this` 전체를 술어에 넘기면 본문을 보지 않고 읽는 것으로 본다.

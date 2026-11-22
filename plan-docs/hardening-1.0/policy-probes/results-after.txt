@@ -23,5 +23,5 @@ C9-create-forbidden-vs-unique      public forbidden+existing=WIRE.FORBIDDEN forb
 K1-unique-hidden-field             code=1:ok code=4242:WIRE.ALREADY_EXISTS
 K2-literal-increment-hidden-range  successes before BAD_VALUE=37 => hidden risk was 63
 K3-fk-delete-hidden-child          parent-with-hidden-child=WIRE.REFERENCE_CONFLICT plain-parent=ok
-K4-external-create-allow-reads-default-field forbidden+existing=WIRE.ALREADY_EXISTS forbidden+fresh=WIRE.FORBIDDEN allowed+existing=WIRE.ALREADY_EXISTS allowed+fresh=ok
+K4-external-create-allow-reads-default-field forbidden+existing=WIRE.FORBIDDEN forbidden+fresh=WIRE.FORBIDDEN allowed+existing=WIRE.ALREADY_EXISTS allowed+fresh=ok
 26 scenarios
