@@ -1265,7 +1265,7 @@ impl OutcomeExpectation {
     fn matches(&self, row: &tokio_postgres::Row, lease: &Lease) -> bool {
         let stored_state: String = row.get(0);
         let state_matches = match self.state {
-            "RETRY" => matches!(stored_state.as_str(), "QUEUED" | "FAILED"),
+            "RETRY" => stored_state == aip_execution::JOB_STATE_QUEUED || stored_state == "FAILED",
             expected => stored_state == expected,
         };
         let epoch: i64 = row.get(1);

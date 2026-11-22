@@ -713,7 +713,11 @@ fn table_defs(ddl: &[String], schema: &str) -> BTreeMap<String, BTreeMap<String,
         let mut fields = BTreeMap::new();
         for entry in split_top(body) {
             if let Some((name, _)) = entry.split_once(' ') {
-                fields.insert(name.to_string(), entry);
+                let key = name
+                    .strip_prefix('"')
+                    .and_then(|quoted| quoted.strip_suffix('"'))
+                    .map_or_else(|| name.to_string(), |quoted| quoted.replace("\"\"", "\""));
+                fields.insert(key, entry);
             }
         }
         out.insert(name.to_string(), fields);
@@ -1535,6 +1539,31 @@ async fn apply_inner(db_url: &str, schema: &str, new_facts: &Value, migration: &
     Ok(
         json!({"ok":true,"schema":schema,"digest":acknowledgement,"factsDigest":new_digest,"structureDigest":structure_digest,"steps":report["steps"]}),
     )
+}
+
+#[cfg(test)]
+mod generated_column_lookup_tests {
+    use super::*;
+
+    #[test]
+    fn generated_quoted_nullable_column_matches_migration_lookup() {
+        let facts = json!({
+            "resources": {
+                "Member": {
+                    "fields": {
+                        "id": {"ty": "Id<Member>"},
+                        "nickname": {"ty": "Text?"}
+                    },
+                    "invariants": {}
+                }
+            }
+        });
+        let ddl = sqlgen::create_ddl_in("aip_test", &facts).unwrap();
+        let tables = table_defs(&ddl, "aip_test");
+        let col = sqlgen::column(&facts, "Member", "nickname").unwrap();
+
+        assert!(tables["member"].contains_key(&col), "migration lookup for {col:?} must find its generated CREATE TABLE column");
+    }
 }
 
 #[cfg(test)]

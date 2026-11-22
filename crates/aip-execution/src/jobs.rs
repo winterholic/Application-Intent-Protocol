@@ -418,7 +418,9 @@ impl Store {
     }
 }
 
-const STATES: [&str; 6] = ["QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"];
+/// Stored state for a newly queued durable job.
+pub const JOB_STATE_QUEUED: &str = "QUEUED";
+const STATES: [&str; 6] = [JOB_STATE_QUEUED, "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"];
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct RunSummary {
