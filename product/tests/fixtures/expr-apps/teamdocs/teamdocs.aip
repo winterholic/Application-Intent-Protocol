@@ -1,0 +1,84 @@
+// 참고: 필드 이름 `grant`는 SQL 예약어라 `service check`는 통과하지만 `service init`이 DB_INIT으로 실패한다(track-c.md 결함 C-D1). 그래서 `level`을 쓴다.
+// 공유 행은 조직 소속과 함께 봐야 한다. 처음에는 공유 grantee만 보도록 썼더니 조직을 떠난 사용자가 공유 문서를 계속 읽었다(시나리오 D8의 실행 기록).
+// 여러 조직에 속한 사용자, 조직 역할(OWNER·ADMIN·MEMBER), 문서 공유(VIEW·EDIT), 필드 접근 제한, 관계 조회, 집계.
+// 한 사용자가 조직마다 다른 역할을 가진다. 그래서 `actor.org` 같은 단일 테넌트 조건이 아니라 Membership의 exists로 조직 소속을 판정한다.
+enum OrgRole { OWNER, ADMIN, MEMBER }
+enum Grant { VIEW, EDIT }
+enum DocState { DRAFT, PUBLISHED }
+
+resource User {
+  fields { id: Id; name: Text(1..50); email: Email }
+  rows read when actor != null
+  field email read when id = actor.id
+  expose read { select id, name, email; filter id.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
+}
+actor User
+
+resource Org {
+  fields { id: Id; name: Text(1..80) }
+  rows read when isMember(this, actor)
+  expose read { select id, name; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } }
+}
+
+predicate isMember(o: Org, u: User) = exists Membership where org = o and user = u
+predicate isAdminOf(o: Org, u: User) = exists Membership where org = o and user = u and role in (OWNER, ADMIN)
+predicate isOwnerOf(o: Org, u: User) = exists Membership where org = o and user = u and role = OWNER
+
+resource Membership {
+  fields { id: Id; org: Org; user: User; role: OrgRole }
+  rows read when user = actor or isAdminOf(org, actor)
+  unique org, user
+  expose read { select id, org, user, role; filter org.eq, user.eq; sort id; traverse user { select id, name }; budget { rows 50; depth 2; deadline 1s; cost 300 } }
+  expose create { allow isAdminOf(org, actor) and role = MEMBER; fields org, user, role }
+  transition promote { allow isOwnerOf(org, actor); from role = MEMBER; to role = ADMIN }
+  transition leave { allow user = actor; from role in (MEMBER, ADMIN); delete }
+  transition remove { allow isAdminOf(org, actor); from role = MEMBER; delete }
+  expose apply promote { target id; bulk maxRows 1 }
+  expose apply leave { target id; bulk maxRows 1 }
+  expose apply remove { target id; bulk maxRows 1 }
+}
+
+predicate canRead(d: Doc, u: User) =
+  d.owner = u or isAdminOf(d.org, u) or (isMember(d.org, u) and (d.state = PUBLISHED or exists DocShare where doc = d and grantee = u))
+predicate canEdit(d: Doc, u: User) =
+  d.owner = u or isAdminOf(d.org, u) or exists DocShare where doc = d and grantee = u and level = EDIT
+access visibleShares = totalOfVisible(Doc)
+
+resource Doc {
+  fields {
+    id: Id; org: Org; owner: User; title: Text(1..120); body: Text(0..4000); internalNote: Text(1..500)?
+    state: DocState; version: Int(0..1000000)
+  }
+  rows read when canRead(this, actor)
+  field internalNote read when owner = actor or isAdminOf(org, actor)
+  expose read {
+    select id, org, owner, title, body, internalNote, state, version, editorCount
+    filter id.eq, org.eq, state.eq, owner.eq
+    sort id
+    traverse owner { select id, name }
+    traverse shares via DocShare.doc { select id, grantee, level; limit 20 }
+    budget { rows 50; depth 2; deadline 1s; cost 1500 }
+  }
+  aggregate editorCount: Int { source DocShare; sourceAccess visibleShares; groupKey doc; where level = EDIT; callerFilter none; rowOutput none; release count }
+  expose create { allow owner = actor and isMember(org, actor) and state = DRAFT and version = 0; fields org, owner, title, body, internalNote, state, version }
+  transition edit { allow canEdit(this, actor); from true; patch title, body; expect version; to version = version + 1 }
+  transition annotate { allow owner = actor or isAdminOf(org, actor); from true; patch internalNote; expect version; to version = version + 1 }
+  transition publish { allow owner = actor or isAdminOf(org, actor); from state = DRAFT; to state = PUBLISHED, version = version + 1 }
+  transition unpublish { allow isAdminOf(org, actor); from state = PUBLISHED; to state = DRAFT, version = version + 1 }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose apply annotate { target id; bulk maxRows 1 }
+  expose apply publish { target id; bulk maxRows 1 }
+  expose apply unpublish { target id; bulk maxRows 1 }
+}
+
+resource DocShare {
+  fields { id: Id; doc: Doc; grantee: User; level: Grant }
+  rows read when grantee = actor or doc.owner = actor or isAdminOf(doc.org, actor)
+  unique doc, grantee
+  expose read { select id, doc, grantee, level; filter doc.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 200 } }
+  expose create { allow (doc.owner = actor or isAdminOf(doc.org, actor)) and isMember(doc.org, grantee) and grantee != actor; fields doc, grantee, level }
+  transition regrant { allow doc.owner = actor or isAdminOf(doc.org, actor); from true; patch level }
+  transition revoke { allow doc.owner = actor or isAdminOf(doc.org, actor); from true; delete }
+  expose apply regrant { target id; bulk maxRows 1 }
+  expose apply revoke { target id; bulk maxRows 10 }
+}

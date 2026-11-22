@@ -33,6 +33,7 @@ const subjects = {
   saas: [["alice", 1], ["bob", 2], ["vera", 3], ["carol", 4], ["dave", 5]],
   community: [["mia", 1], ["noah", 2], ["mod", 3]],
   orders: [["olga", 1], ["pavel", 2]],
+  teamdocs: [["ann", 1], ["ben", 2], ["cat", 3], ["dan", 4], ["eve", 5], ["fay", 6]],
 };
 
 // 한 단위 = (앱, 언어). 단위마다 새 schema·새 serve 프로세스를 쓴다.
@@ -44,6 +45,8 @@ const units = [
   { app: "orders", lang: "ts", definition: "orders.current.aip", scenario: "scenario.current.ts", workers: true },
   // P0-A·B·C 병합(2e94daa0) 뒤 목표 정의. 변형 A는 선언만(bundle refs + input 산술), 변형 B는 확장(ctx.data.create).
   { app: "orders", lang: "ts", label: "orders/target-a", definition: "orders.target.aip", scenario: "scenario.target-a.ts" },
+  // 한 사용자가 여러 조직에 다른 역할로 속하고, 문서 공유·필드 제한·관계 조회·집계를 쓰는 다중 사용자 업무(C3).
+  { app: "teamdocs", lang: "ts", definition: "teamdocs.aip", scenario: "scenario.ts" },
   { app: "orders", lang: "ts", label: "orders/target-b", definition: "orders.target-b.aip", scenario: "scenario.target-b.ts", workers: true },
 ];
 
