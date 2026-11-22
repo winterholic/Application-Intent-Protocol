@@ -127,16 +127,108 @@ def fingerprint(incoming):
         return data["fingerprint"]
     return re.search(r'^export const contractFingerprint = "([^"]+)";', (incoming / "bindings.ts").read_text(), re.M)[1]
 
-def get_contract(url, token, fp, read_resource):
-    request = urllib.request.Request(url + "/read",
-        data=json.dumps({"query": {"read": read_resource, "select": ["id"]}}).encode(),
+def post_json(url, path, token, fp, body, timeout=10):
+    request = urllib.request.Request(url + path, data=json.dumps(body).encode(),
         headers={"authorization": f"Bearer {token}", "x-aip-contract": fp, "content-type": "application/json"})
     try:
-        response = urllib.request.urlopen(request, timeout=3)
+        response = urllib.request.urlopen(request, timeout=timeout)
     except urllib.error.HTTPError as error:
         response = error
+    except OSError as error:
+        return {"ok": False, "code": "TRANSPORT", "msg": str(error)}
     with response:
-        return json.load(response)
+        try:
+            return json.load(response)
+        except ValueError:
+            return {"ok": False, "code": f"HTTP.{response.status}", "msg": "non-JSON response"}
+
+def get_contract(url, token, fp, read_resource, select=("id",)):
+    return post_json(url, "/read", token, fp, {"query": {"read": read_resource, "select": list(select)}}, timeout=3)
+
+def client_runs(app, root, python):
+    typescript = ("typescript", ["node", "e2e.ts"], root / "client-ts")
+    py = ("python", [python, "e2e.py"], root / "client-py")
+    return [(*typescript, 22), (*py, 16)] if app == "taskshare" else [(*py, 23), (*typescript, 19)]
+
+def recover(app, root, base, env, fp, names, installed, cfg, container, server):
+    """장애 후 복구. 서버가 SIGKILL로 죽거나 DB 연결이 끊긴 뒤에도 같은 멱등 key 재전송이 쓰기를 정확히 한 번만 남기는지 본다."""
+    config = json.loads(cfg.read_text())
+    schema, token = config["schema"], env[f"TOKEN_{names[0].upper()}"]
+    summary = record["apps"][app].setdefault("recovery", {})
+
+    def create(tag):
+        if app == "taskshare":
+            return ({"create": "TodoList", "values": {"owner": "1", "title": tag, "archived": False}},
+                    f"SELECT count(*) FROM {schema}.todo_list WHERE title = '{tag}'")
+        return ({"create": "Order", "values": {"tenant": "1", "placedBy": "1", "number": tag, "status": "OPEN", "total": "0.00"}},
+                f"SELECT count(*) FROM {schema}.\"order\" WHERE number = '{tag}'")
+
+    def count(sql):
+        return int(call(["docker", "exec", container, "psql", "-U", "postgres", "-d", "aip_test_consumer_rc", "-At", "-c", sql]).stdout.strip())
+
+    def send(operations, key):
+        return post_json(base, "/apply", token, fp, {"request": {"atomic": operations}, "key": key})
+
+    def retry_until_ok(operations, key, attempts=12):
+        codes = []
+        for _ in range(attempts):
+            response = send(operations, key)
+            if response.get("ok"):
+                return response, codes
+            codes.append(response.get("code"))
+            time.sleep(.5)
+        raise AssertionError(f"같은 key 재전송이 성공하지 못함: {codes}")
+
+    # 1. 응답을 받은 직후 서버가 SIGKILL로 죽는다(응답 유실과 같다). 새 서버에 같은 key를 보내면 재생이고 행은 하나다.
+    tag = "r1" + uuid.uuid4().hex[:8]
+    operation, query = create(tag)
+    assert send([operation], "recover-" + tag)["ok"]
+    server.kill()
+    server.wait()
+    server = launch(installed, cfg, base, env)
+    again = send([operation], "recover-" + tag)
+    assert again.get("ok") and again.get("replayed") is True and count(query) == 1, again
+    summary["sigkill-after-commit"] = "replayed=true, rows=1"
+    note(app, f"{app}: SIGKILL after commit, restart, same key replayed and left exactly one row")
+
+    # 2. 요청이 처리되는 도중 서버가 죽는다. 두 행을 한 트랜잭션으로 만들었으니 어느 시점에 죽어도 둘 다 있거나 둘 다 없어야 하고,
+    #    재시작 뒤 같은 key 재전송이 성공해 각각 정확히 한 행이 된다.
+    import threading
+    runs = []
+    for delay in (0, .005, .02, .06):
+        tags = ["r2" + uuid.uuid4().hex[:8] + "a", "r2" + uuid.uuid4().hex[:8] + "b"]
+        (op_a, query_a), (op_b, query_b) = create(tags[0]), create(tags[1])
+        key = "recover-" + tags[0]
+        sender = threading.Thread(target=lambda: send([op_a, op_b], key))
+        sender.start()
+        time.sleep(delay)
+        server.kill()
+        server.wait()
+        sender.join()
+        server = launch(installed, cfg, base, env)
+        after_crash = (count(query_a), count(query_b))
+        assert after_crash[0] == after_crash[1] and after_crash[0] in (0, 1), f"부분 커밋: {after_crash}"
+        response, codes = retry_until_ok([op_a, op_b], key)
+        assert (count(query_a), count(query_b)) == (1, 1), (count(query_a), count(query_b))
+        runs.append({"delayS": delay, "rowsAfterCrash": after_crash[0], "retryCodesBeforeOk": codes, "replayed": response.get("replayed", False)})
+    summary["sigkill-during-request"] = runs
+    note(app, f"{app}: SIGKILL during an atomic 2-row write: no partial commit, same-key retry gave one row each ({runs})")
+
+    # 3. 서버는 살아 있고 DB 연결만 모두 끊긴다. 서버 재시작 없이 같은 key 재시도가 성공해야 한다.
+    tag = "r3" + uuid.uuid4().hex[:8]
+    operation, query = create(tag)
+    call(["docker", "exec", container, "psql", "-U", "postgres", "-d", "aip_test_consumer_rc", "-At", "-c",
+          "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE datname = 'aip_test_consumer_rc' AND pid <> pg_backend_pid()"])
+    first = send([operation], "recover-" + tag)
+    if first.get("ok"):
+        codes = []
+    else:
+        _, codes = retry_until_ok([operation], "recover-" + tag)
+        codes.insert(0, first.get("code"))
+    assert count(query) == 1
+    summary["db-connections-terminated"] = {"firstAttemptOk": bool(first.get("ok")), "codesBeforeOk": codes}
+    note(app, f"{app}: all DB connections terminated; same-key retry succeeded without restart (first attempt ok={bool(first.get('ok'))}, codes {codes}), one row")
+    return server
 
 def version_query(name):
     return call(["node", "product/tools/version.mjs", name]).stdout.strip()
@@ -203,9 +295,9 @@ def main():
         generic = work / "generic"
         call(["node", "product/tools/package.mjs", "--out", generic, "--profile", "release"])
         assert call([generic / "bin/aip", "--version"]).stdout.strip() == version
-        for app, names, resource, table, expected_checks in [
-            ("taskshare", ("alice", "bob", "carol"), "TodoList", "todo_item", 22),
-            ("stockdesk", ("mgr1", "clerk1", "mgr2"), "Product", "product", 23),
+        for app, names, resource, table in [
+            ("taskshare", ("alice", "bob", "carol"), "TodoList", "todo_item"),
+            ("stockdesk", ("mgr1", "clerk1", "mgr2"), "Product", "product"),
         ]:
             server = None
             root = work / app
@@ -251,29 +343,31 @@ def main():
                      input=seed_sql(app, schema), env=env)
                 for index, subject in enumerate(names, 1):
                     call([installed / "bin/aip", "service", "principal", "--config", cfg, "bind", "--subject", subject, "--actor", str(index)], cwd=root, env=env)
-                client = root / "client"
-                client.mkdir()
                 old_fp = fingerprint(incoming)
-                if app == "taskshare":
-                    shutil.copyfile(original / app / "client/e2e.ts", client / "e2e.ts")
-                    shutil.copyfile(installed / "bindings.ts", client / "binding.ts")
-                    (client / "package.json").write_text('{"name":"taskshare-consumer","private":true,"type":"module"}')
-                    call(["npm", "install", "--offline", "--ignore-scripts", npm], cwd=client, env=env)
-                    command = ["node", "e2e.ts"]
-                else:
-                    shutil.copyfile(original / app / "client/e2e.py", client / "e2e.py")
-                    call([installed / "bin/aip", "service", "gen", installed / "app/app.aip",
-                          "--lang", "python", "--wire", "decimal", "--out", client / "stock_binding.py"], cwd=root, env=env)
-                    call(["python3", "-m", "venv", client / ".venv"], cwd=client)
-                    python = client / ".venv/bin/python"
-                    call([python, "-m", "pip", "--disable-pip-version-check", "install", "--no-index", wheel], cwd=client, env=env)
-                    command = [python, "e2e.py"]
+                # 앱마다 TypeScript와 Python 클라이언트를 모두 설치해 같은 서버에 실행한다(정의에서 생성한 binding + 설치한 SDK 아티팩트).
+                python_module = "todo_binding" if app == "taskshare" else "stock_binding"
+                ts_dir, py_dir = root / "client-ts", root / "client-py"
+                ts_dir.mkdir(parents=True)
+                py_dir.mkdir(parents=True)
+                shutil.copyfile(original / app / "client/e2e.ts", ts_dir / "e2e.ts")
+                shutil.copyfile(installed / "bindings.ts", ts_dir / "binding.ts")
+                (ts_dir / "package.json").write_text(f'{{"name":"{app}-consumer-ts","private":true,"type":"module"}}')
+                call(["npm", "install", "--offline", "--ignore-scripts", npm], cwd=ts_dir, env=env)
+                shutil.copyfile(original / app / "client/e2e.py", py_dir / "e2e.py")
+                call([installed / "bin/aip", "service", "gen", installed / "app/app.aip",
+                      "--lang", "python", "--wire", "decimal", "--out", py_dir / f"{python_module}.py"], cwd=root, env=env)
+                call(["python3", "-m", "venv", py_dir / ".venv"], cwd=py_dir)
+                python = py_dir / ".venv/bin/python"
+                call([python, "-m", "pip", "--disable-pip-version-check", "install", "--no-index", wheel], cwd=py_dir, env=env)
                 server = launch(installed, cfg, base, env)
-                result = call(command, cwd=client, env=env, check=False)
-                (root / "e2e.log").write_text(result.stdout + result.stderr)
-                result.check_returncode()
-                assert "ALL PASS" in result.stdout and len(re.findall(r"(?m)^PASS ", result.stdout)) == expected_checks
-                note(app, f"{app}: {expected_checks} SDK assertions, installed package, ALL PASS")
+                for language, command, directory, expected_assertions in client_runs(app, root, python):
+                    result = call(command, cwd=directory, env=dict(env, RUN_ID="rc-" + language), check=False)
+                    (root / f"e2e-{language}.log").write_text(result.stdout + result.stderr)
+                    result.check_returncode()
+                    assert "ALL PASS" in result.stdout and len(re.findall(r"(?m)^PASS ", result.stdout)) == expected_assertions, language
+                    note(app, f"{app}: {language} SDK client, {expected_assertions} assertions, installed package, ALL PASS")
+                    record["apps"][app].setdefault("clients", {})[language] = expected_assertions
+                server = recover(app, root, base, env, old_fp, names, installed, cfg, container, server)
                 stop(server)
                 server = launch(installed, cfg, base, env)
                 token = env[f"TOKEN_{names[0].upper()}"]
@@ -316,6 +410,9 @@ def main():
                 assert new_fp != old_fp
                 assert get_contract(base, token, old_fp, resource)["code"] == "WIRE.CONTRACT_MISMATCH"
                 assert get_contract(base, token, new_fp, resource)["ok"]
+                new_field = "color" if app == "taskshare" else "barcode"
+                assert get_contract(base, token, new_fp, resource, ("id", new_field))["ok"], "migrated client cannot read the new field"
+                assert not get_contract(base, token, old_fp, resource, ("id", new_field))["ok"]
                 note(app, f"{app}: migrate preserved row/idempotency counts {before}; prior SDK contract rejected")
                 stop(server)
                 server = None
