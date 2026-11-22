@@ -1,6 +1,6 @@
 # 실무 시나리오 표현력 감사
 
-> **현재 기준(Track C, HEAD `1ce3c6ab`)은 [track-c.md 5절](../stabilization-20261122/track-c.md#5-c4-표현력-분류현재-head)의 분류표다.** 아래 본문은 `4e132564` 기준의 원 감사이며 기록으로 남긴다. 그 뒤 달라진 등급: #2 주문+줄 원자 생성 D→A(합계 제외), #3 입력 수량 재고 차감 C→A, #4 Decimal 증감 C→B, #6 다른 행 필드 값 차감 C→B(`bal = bal - this.total`이 `service check`를 통과한다. **check만 확인했고 PG 실행은 하지 않았다**), #10 계산한 값으로 다음 행 생성 E→C(P0-C 확장 `ctx.data.create`, 기존 시험 `expr_ext_create.rs` 미재실행), #15 Decimal 합계 E→B(`service check` ok, 실행 근거는 기존 시험 `7e367ead` 미재실행. `Σ 수량×단가` 곱 집계는 E 유지), #7 주문 확정 C 유지(합계 서버 계산은 확장, 실행 근거 있음: storefront S1). 변하지 않은 것: #12 nullable 정렬+cursor, #13 관계 필드 필터(`service check`로 재확인), #19·#20(이번 범위 밖). 신규로 확인한 제품 결함 4건은 track-c.md 7절.
+> **현재 기준(Track C, HEAD `659e5844`)은 [track-c.md 5절](../stabilization-20261122/track-c.md#5-c4-표현력-분류현재-head)의 분류표다.** 아래 본문은 `4e132564` 기준의 원 감사이며 기록으로 남긴다. 그 뒤 달라진 등급: #2 주문+줄 원자 생성 D→A(합계 제외), #3 입력 수량 재고 차감 C→A, #4 Decimal 증감 C→B, #6 다른 행 필드 값 차감 C→B(`bal = bal - this.total`이 `service check`를 통과한다. **check만 확인했고 PG 실행은 하지 않았다**), #10 계산한 값으로 다음 행 생성 E→C(P0-C 확장 `ctx.data.create`, 기존 시험 `expr_ext_create.rs` 미재실행), #15 Decimal 합계 E→B(`service check` ok, 실행 근거는 기존 시험 `7e367ead` 미재실행. `Σ 수량×단가` 곱 집계는 E 유지), #7 주문 확정 C 유지(합계 서버 계산은 확장, 실행 근거 있음: storefront S1). 변하지 않은 것: #12 nullable 정렬+cursor, #13 관계 필드 필터(`service check`로 재확인), #19·#20(이번 범위 밖). 신규로 확인한 제품 결함 4건은 track-c.md 7절.
 
 ## 원 감사 (기준 4e132564)
 

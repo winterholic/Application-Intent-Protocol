@@ -2,7 +2,7 @@
 
 범위: baseline.md 3절 C-01~C-04, F-01의 독립 소비자 연결 부분. 기준선은 `origin/main` `4f44ca87`이고, 이 문서의 실행은 모두 아래 SHA의 작업 트리에서 했다.
 
-- 최종 실행 SHA: `1ce3c6aba668b3050d8f55298acef2cfe1138d01` (Core 코드는 A의 `74ba5b6b`, E의 `3aa98afa`를 포함한 main 위에 C 커밋 5개를 얹은 상태. 이 문서를 커밋하기 전 SHA)
+- 최종 실행 SHA: `659e58440890b2357160dc0159c479c8b3b37f94` (main `cf429b31`까지의 A·B·E·F1 변경 위에 C 커밋 6개를 얹은 상태, 이 문서의 내용 커밋 포함. 이 줄의 SHA 갱신 커밋만 그 뒤에 온다)
 - 환경: macOS arm64, Node v26.9.0, Python 3.14.7, `aip 1.0.0`(release 빌드), PostgreSQL 17.11(`run.py`는 docker `postgres:17`, `run.mjs`는 Homebrew `postgresql@17` 포트 55423)
 - Core 코드는 고치지 않았다. 발견한 Core 결함은 7절에 재현 명령과 함께 적었다.
 
@@ -14,8 +14,8 @@
 | `verification/1.0-consumers/run.py` | `4e132564` 고정 단언 제거. 대상 SHA(`--core-sha` 또는 `AIP_CONSUMER_CORE_SHA`, 없으면 checkout HEAD)와 HEAD 불일치·더러운 트리는 실패. 엔진(`aip --version`, 바이너리 sha256, 패키지 `BUILD.json`의 `source_revision`·`binary_sha256`), SDK(tarball·wheel 이름·버전·내용) 대조. 결과 JSON(`--result`) 기록. SDK 파일명 하드코딩을 `version.mjs`로 대체 | `d627c4d7` |
 | `.github/workflows/independent-consumer-rc.yml` | `workflow_call`(+`workflow_dispatch`) 입력 `core_sha`, 기본 `github.sha`. 별도 `core/` checkout과 `ref: 4e132564` 제거, 단일 checkout, 40자 SHA 검증, provenance 단위 시험, 결과 JSON·로그 artifact(이름에 SHA) | `b818613d` |
 | `.github/workflows/release-candidate.yml` | `independent-consumers` job 추가와 `required.needs` 등록(F-01). 이 두 파일의 해당 부분만 수정 | `b818613d` |
-| `verification/1.0-consumers/run.py`, `apps/taskshare/client/e2e.py`(신규), `apps/stockdesk/client/e2e.ts`(신규) | 앱마다 TypeScript·Python 클라이언트를 둘 다 설치·실행, 장애 후 복구 3종, 마이그레이션 뒤 새 필드 읽기 | `0d6415b4`, `fe27b81b` |
-| `product/tests/fixtures/expr-apps/teamdocs/**`, `storefront/**`, `run.mjs` | C3 신규 시나리오 2개(PG17 실행) | `02cc92ca`, `33cab2de`, `1ce3c6ab` |
+| `verification/1.0-consumers/run.py`, `apps/taskshare/client/e2e.py`(신규), `apps/stockdesk/client/e2e.ts`(신규) | 앱마다 TypeScript·Python 클라이언트를 둘 다 설치·실행, 장애 후 복구 3종, 마이그레이션 뒤 새 필드 읽기 | `f1dc028e`, `9fe381fe` |
+| `product/tests/fixtures/expr-apps/teamdocs/**`, `storefront/**`, `run.mjs` | C3 신규 시나리오 2개(PG17 실행) | `fbac2039`, `e4cf0fbf`, `7fee6dc5` |
 | `plan-docs/stabilization-20261122/track-c.md`(이 문서), `baseline.md`, `plan-docs/expressiveness-1.0/audit.md`, `CHANGELOG.md` | 기록, 분류 갱신 | 이 문서의 커밋 |
 
 업그레이드 baseline(`aip-release-gate.yml`의 `--baseline 4c27040c…`)은 그대로 두었다. `run.py`는 이 SHA를 결과 JSON의 `upgradeBaseline`(`usedByThisRun: false`)에만 따로 적고 이 실행의 대상으로 쓰지 않는다.
@@ -39,13 +39,13 @@ exit=1
 ### 2.2 GREEN: 최신 HEAD 실행과 결과 JSON
 
 ```
-$ python3 verification/1.0-consumers/run.py --core-sha 1ce3c6aba668b3050d8f55298acef2cfe1138d01 --result /tmp/c-final-consumers.json
-실행 대상 Core 1ce3c6aba668b3050d8f55298acef2cfe1138d01 (--core-sha)
-Core 1ce3c6aba668… / aip 1.0.0 / aip sha256 3a554f67fde5e92d
-PASS two consumer paths on 1ce3c6aba668b3050d8f55298acef2cfe1138d01          exit=0
+$ python3 verification/1.0-consumers/run.py --core-sha 659e58440890b2357160dc0159c479c8b3b37f94 --result /tmp/c-final-consumers.json
+실행 대상 Core 659e58440890b2357160dc0159c479c8b3b37f94 (--core-sha)
+Core 659e58440890… / aip 1.0.0 / aip sha256 539644e29bff90f4
+PASS two consumer paths on 659e58440890b2357160dc0159c479c8b3b37f94          exit=0
 ```
 
-결과 JSON(`schema: aip-independent-consumers/1`)의 기록 값: `target.expectedSha == target.headSha`, `engine.version = aip 1.0.0`, `engine.sha256 = 3a554f67…`(패키지 `BUILD.json.binary_sha256`과 같음), `sdk.npm.*.file = aip-sdk-1.0.0.tgz` sha256 `66d02998227c…`(이번 실행에서 `build-sdk.mjs`로 새로 만든 내용과 25개 파일 전부 동일), `sdk.python.file = application_intent_protocol_sdk-1.0.0-py3-none-any.whl` sha256 `7de0bd3cd385…`(wheel의 `aip_sdk/` 내용이 checkout의 `product/python/aip_sdk`와 동일), `checks` 30개 전부 `ok`, `upgradeBaseline = {pinned: true, usedByThisRun: false, sha: 4c27040c…}`.
+결과 JSON(`schema: aip-independent-consumers/1`)의 기록 값: `target.expectedSha == target.headSha`, `engine.version = aip 1.0.0`, `engine.sha256 = 539644e2…`(패키지 `BUILD.json.binary_sha256`과 같음), `sdk.npm.*.file = aip-sdk-1.0.0.tgz` sha256 `66d02998227c…`(이번 실행에서 `build-sdk.mjs`로 새로 만든 내용과 25개 파일 전부 동일), `sdk.python.file = application_intent_protocol_sdk-1.0.0-py3-none-any.whl` sha256 `7f7e4c591e2b…`(wheel의 `aip_sdk/` 내용이 checkout의 `product/python/aip_sdk`와 동일), `checks` 30개 전부 `ok`, `upgradeBaseline = {pinned: true, usedByThisRun: false, sha: 4c27040c…}`.
 
 한계(정직하게): `aip --version`은 `aip 1.0.0`만 출력하고 커밋을 담지 않는다. 그래서 "빌드 엔진 SHA"는 (a) `cargo build --release --locked`를 run.py가 직접 실행(소스가 같으면 no-op, 다르면 재빌드), (b) 그 바이너리 sha256, (c) 패키저가 쓴 `BUILD.json`의 `source_revision`(= 패키징 시점 `git rev-parse HEAD`)과 `binary_sha256`이 대상 SHA·바이너리와 같을 것으로 확인한다. 바이너리 안에 커밋을 심는 것은 Core 코드(`crates/aip-cli`) 변경이라 하지 않았다. 후속 후보: `aip --version --verbose`에 빌드 커밋 노출(소유: E 또는 F1, 가산 변경).
 
@@ -120,10 +120,10 @@ RED(복구 시험이 실패할 수 있는가): 1번에서 재전송 key를 다�
 $ env -u PGHOST -u PGPORT AIP_BIN=/tmp/aip-stab-c-target/release/aip AIP_TEST_DATABASE_URL='host=127.0.0.1 port=55423 dbname=aip_test_ci user=runner' node product/tests/fixtures/expr-apps/run.mjs
 …
 PASS teamdocs/ts    D5-share-view-edit-revoke-and-no-cross-org-share
-INFO storefront/ts  S8a-concurrent-checkout  -- 재고 4, 2개짜리 4건 동시 -> 성공 2건 (WIRE.EXTENSION_ERROR|OK|OK|WIRE.EXTENSION_ERROR), 최종 재고 0, 390ms
-INFO storefront/ts  S8b-double-cancel  -- WIRE.EXTENSION_ERROR|OK, 재고 4 -> 6
+INFO storefront/ts  S8a-concurrent-checkout  -- 재고 4, 2개짜리 4건 동시 -> 성공 2건 (WIRE.EXTENSION_ERROR|WIRE.EXTENSION_ERROR|OK|OK), 최종 재고 0, 406ms
+INFO storefront/ts  S8b-double-cancel  -- OK|WIRE.EXTENSION_ERROR, 재고 4 -> 6
 실제 PostgreSQL: PostgreSQL 17.11 (Homebrew) on aarch64-apple-darwin27.0.0 …
-revision: 1ce3c6aba668, aip 1.0.0, HTTP=aip service serve, SDK=@aip/sdk(tarball 설치)+python aip_sdk
+revision: 659e58440890, aip 1.0.0, HTTP=aip service serve, SDK=@aip/sdk(tarball 설치)+python aip_sdk
 합계: PASS 87 / FAIL 0 / SKIP 0
 ```
 
@@ -254,7 +254,7 @@ aip service init kw.aip --config cfg.json    # exit 1, DB_INIT
 
 ### C-D4: 확장 안 중첩 전이 거절이 호출자에게 일반 `WIRE.EXTENSION_ERROR`(문서된 동작, 한계)
 
-- 재현: `run.mjs --app storefront`의 `INFO S7-cancel-shipped -- WIRE.EXTENSION_ERROR`, `INFO S8b-double-cancel -- WIRE.EXTENSION_ERROR|OK`. 서버 로그 `cause`는 `ctx.apply.invalid_state`.
+- 재현: `run.mjs --app storefront`의 `INFO S7-cancel-shipped -- WIRE.EXTENSION_ERROR`, `INFO S8b-double-cancel -- OK|WIRE.EXTENSION_ERROR`. 서버 로그 `cause`는 `ctx.apply.invalid_state`.
 - `spec/wire-errors.md:341`이 문서화했고 `consumer-apps.md` P-7이 이미 기록했다. 결함이라기보다 표현력 한계라 5절 22번에 올렸고 5.1절의 후속 후보로 남겼다. 소유 추정: B(`spike-v4-worker/src/write.rs`)와 소유자 결정(확장 ABI).
 
 ### 결함이 아닌 관찰

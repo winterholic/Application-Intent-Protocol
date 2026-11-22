@@ -216,7 +216,7 @@
 
 | ID | 항목 | 분류 | 추정 수정 위치 | 비고 |
 |---|---|---|---|---|
-| C-01 | 최신 HEAD로 두 소비자 앱을 돌린다(과거 SHA 고정 해제) | **해결됨**(`d627c4d7`, `b818613d`, 최종 실행 `1ce3c6ab`: `track-c.md` 2절) | `verification/1.0-consumers/run.py`(SHA 단언, SDK 파일명 하드코딩), `independent-consumer-rc.yml:20`(`ref`를 `github.sha`/입력으로) | F-01과 한 쌍. SDK 아티팩트 이름은 `node product/tools/version.mjs npm-tarball`로 파생. 업그레이드 baseline 고정은 그대로 둔다. `run.py` 단독 실행은 cwd가 Core 체크아웃이고 docker와 release 빌드가 필요하다(미실행) |
+| C-01 | 최신 HEAD로 두 소비자 앱을 돌린다(과거 SHA 고정 해제) | **해결됨**(`d627c4d7`, `b818613d`, 최종 실행 `659e5844`: `track-c.md` 2절) | `verification/1.0-consumers/run.py`(SHA 단언, SDK 파일명 하드코딩), `independent-consumer-rc.yml:20`(`ref`를 `github.sha`/입력으로) | F-01과 한 쌍. SDK 아티팩트 이름은 `node product/tools/version.mjs npm-tarball`로 파생. 업그레이드 baseline 고정은 그대로 둔다. `run.py` 단독 실행은 cwd가 Core 체크아웃이고 docker와 release 빌드가 필요하다(미실행) |
 | C-02 | 소스 SHA·빌드 엔진 SHA·SDK 아티팩트 버전·출처·결과의 일치를 결과에 기록 | **해결됨**(결과 JSON `aip-independent-consumers/1`. 엔진 SHA는 `aip --version`에 없어 `BUILD.json` `source_revision`·`binary_sha256`로 대조: `track-c.md` 2.2절) | `run.py`가 JSON 요약을 쓰고 workflow가 artifact로 올린다 | C1 요구 |
 | C-03 | 신규 시나리오(주문·결제 직전, 다중 사용자 업무)와 기존 `expr-apps`의 커버리지 대조 | **해결됨**(`expr-apps/{teamdocs,storefront}`, `PASS 87 / FAIL 0 / SKIP 0`: `track-c.md` 4절) | `product/tests/fixtures/expr-apps/{orders,saas,community}`, `verification/1.0-consumers/apps/{taskshare,stockdesk}` | 항목별 표(재고 동시 차감, 원자 생성, 가격·수량 검증, 상태 전이, 여러 조직, 공유 권한, 집계·필드 제한)를 만들고 빠진 것만 추가. 외부 결제는 대역 |
 | C-04 | 표현력 분류(선언만 / 복잡 / 확장 필요 / 원자성 깨짐 / 불가) | **해결됨**(`track-c.md` 5절, `audit.md` 머리 절). 신규 제품 결함 4건은 `track-c.md` 7절 | `plan-docs/expressiveness-1.0/audit.md`(21행, 기준 `4e132564`), `consumer-apps.md` | 감사는 `4e132564` 기준이라 P0-A~D 이후 등급을 갱신해야 한다 |
@@ -361,7 +361,7 @@ CI와 같은 컨테이너 방식은 `postgres:17`(`verify.yml` services: `POSTGR
 | worker(확장) | `cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked`, spike-v6 `write_extension_*` | node, python3. Linux는 bwrap과 `AIP_TEST_BWRAP=1` | macOS는 `Isolation::MacNetDeny`. `AIP_TEST_BWRAP=1` 없이 Linux에서 돌면 일부 시험이 **조용히 통과**한다(6.3절) |
 | SDK(TS, Python) | `node --test --test-concurrency=1 product/tests/sdk-semantic-e2e.test.mjs`, `python3 -W error::ResourceWarning -m unittest product.tests.python_sdk_test` | `npm ci --prefix spikes/spike-0-ts`, `cargo build --locked -p aip-cli`, PG17 | `sdk-semantic-e2e.yml:65-77`. 이번에 `미실행` |
 | 소비자 앱(최신) | `node product/tests/fixtures/expr-apps/run.mjs` | PG17(없으면 docker로 `postgres:17`을 띄움), `AIP_BIN` 또는 cargo 빌드, `tsc` | 실행(이번) PASS 64 |
-| 독립 소비자 | `python3 verification/1.0-consumers/run.py` | cwd가 Core 체크아웃, docker, `cargo build --release -p aip-cli`, `npm ci` | Track C 이후: 대상 SHA(`--core-sha`, 기본 checkout HEAD)와 HEAD 일치를 단언하고 결과 JSON(`--result`)에 출처를 남긴다. 최종 실행 `1ce3c6ab` exit 0 |
+| 독립 소비자 | `python3 verification/1.0-consumers/run.py` | cwd가 Core 체크아웃, docker, `cargo build --release -p aip-cli`, `npm ci` | Track C 이후: 대상 SHA(`--core-sha`, 기본 checkout HEAD)와 HEAD 일치를 단언하고 결과 JSON(`--result`)에 출처를 남긴다. 최종 실행 `659e5844` exit 0 |
 | 외부 create | `AIP_BIN=… node --test product/tests/external-create-order.test.mjs` | PG17, `psql`, cli 빌드 | 실행(이번) 통과 |
 | 릴리스 게이트 | `bash scripts/release-gate.sh --baseline 4c27040c6d4a2a2931321e1980842be79512bdb0 --ref <sha> --out <새 디렉터리>` | docker native fixtures, PG, node, python | 내부에서 `tools/verify.sh`를 다시 돈다. 실행하지 않음 |
 | Core 전체 | `bash tools/verify.sh` | `AIP_TEST_DATABASE_URL`, `AIP_TEST_ADMIN_URL`, `psql`, `mypy` 2.4.0 또는 `uv`, `tsc` | 무겁다. 이번에 `미실행` |
