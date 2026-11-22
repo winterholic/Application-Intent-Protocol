@@ -91,6 +91,20 @@ export type BundleOp<A extends ApplyContractShape<A>, Cr extends CreateContractS
   | BundleApplyRequest<A> | CreateOp<Cr> | CreateOpWithRefs<Cr>
   // P0-D: 서버가 공개한 조합(`expose compose`)도 묶음의 연산이 된다. 단계에는 입력 슬롯이 없다(patch·expect·input 전이는 apply 연산으로 쓴다).
   | ComposeRequest<Cp>;
+/** `T`의 키 가운데 `Allowed`에 없는 것은 값을 never로 만들어 추론된 객체의 초과 키를 거부한다. */
+export type NoExtraKeys<T, Allowed> = { readonly [K in Exclude<keyof T, keyof Allowed>]: never };
+/**
+ * 원시 묶음 요청의 create 연산 검사. `refs`가 있는 연산은 참조로 채우는 필드를 `values`에서 빼고(중복 금지) 나머지 필수 필드를 모두 요구한다.
+ * 변수에 담긴 `BundleRequest`처럼 `refs` 키가 선택인 형태는 검사하지 않는다(리터럴이 아니라 어떤 필드가 참조인지 알 수 없다).
+ */
+export type CheckedBundle<R, Cr extends CreateContractShape<Cr>> = R extends { readonly atomic: infer Ops extends readonly unknown[] }
+  ? { readonly atomic: { readonly [I in keyof Ops]: CheckedBundleOp<Ops[I], Cr> } }
+  : unknown;
+type CheckedBundleOp<Op, Cr extends CreateContractShape<Cr>> = Op extends { readonly create: infer N extends keyof Cr & string; readonly refs: infer Rf }
+  ? {} extends Rf
+    ? unknown
+    : { readonly values: Omit<CreateValues<Cr[N]>, keyof Rf> & { readonly [P in keyof Rf]?: never } }
+  : unknown;
 /**
  * 묶음 빌더(`client.bundle(b => { ... })`). 연산은 호출 순서대로 쌓이고 `create`가 돌려주는 핸들을 뒤 연산의 `refs`·`target`에 넣는다.
  * 핸들은 이 빌더가 만든 것만 받는다. 요청은 빌더가 끝난 뒤 한 번에 보내진다.
@@ -99,7 +113,8 @@ export interface BundleBuilder<A extends ApplyContractShape<A>, Cr extends Creat
   create<const N extends keyof Cr & string, const Rf extends CreateRefs<Cr[N]> = {}>(
     resource: N,
     values: Omit<CreateValues<Cr[N]>, keyof Rf>,
-    refs?: Rf,
+    // 추론된 Rf는 초과 속성 검사를 받지 않아 참조 필드가 아닌 키(`{ qty: handle }`)가 통과한다. 허용 키 밖은 never로 막는다.
+    refs?: Rf & NoExtraKeys<Rf, CreateRefs<Cr[N]>>,
   ): Created<N>;
   apply<const K extends keyof A & string>(request: BundleApplyRequest<A, K> & { readonly apply: K }): void;
   /** 서버가 공개한 조합을 묶음의 한 연산으로 더한다(P0-D). 만든 행이 여럿이라 핸들을 돌려주지 않고 뒤 연산이 가리킬 수 없다. */
@@ -227,7 +242,12 @@ export type Row<C extends ContractShape<C>, R extends keyof C, S extends readonl
 type IsUnion<T> = [T] extends [U2I<T>] ? false : true;
 /** select 형식 검사: 빈 select 금지, 관계 항목은 관계 키 정확히 하나(F02). */
 type CheckItem<I> = I extends string ? I : I extends object ? (IsUnion<keyof I> extends true ? never : I) : never;
-export type CheckSel<S extends readonly unknown[]> = S extends readonly [] ? never : { [K in keyof S]: CheckItem<S[K]> };
+/** 이미 나온 select 항목(필드 이름 또는 관계 이름)을 다시 쓰는지. 서버는 중복을 `WIRE.DUPLICATE`로 거절한다. 길이가 정해진 tuple만 본다. */
+type SelectKey<I> = I extends string ? I : I extends object ? (IsUnion<keyof I> extends true ? never : keyof I & string) : never;
+type HasDuplicate<S extends readonly unknown[]> = S extends readonly [infer H, ...infer T]
+  ? [SelectKey<H>] extends [never] ? HasDuplicate<T> : [SelectKey<H>] extends [SelectKey<T[number]>] ? true : HasDuplicate<T>
+  : false;
+export type CheckSel<S extends readonly unknown[]> = S extends readonly [] ? never : HasDuplicate<S> extends true ? never : { [K in keyof S]: CheckItem<S[K]> };
 
 export type ExtensionShape = { readonly input: Record<string, unknown>; readonly output: Record<string, unknown> };
 export type ExtensionContractShape<E> = { [K in keyof E]: ExtensionShape };

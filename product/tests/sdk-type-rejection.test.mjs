@@ -28,7 +28,8 @@ function sh(program, args, cwd) {
 
 const PRELUDE = `import { connect } from ${JSON.stringify(sdk)};
 import { contract } from "./binding.ts";
-import type { Id } from "./binding.ts";
+import type { Id, ApplyContract, CreateContract, ComposeContract } from "./binding.ts";
+import type { BundleRequest } from ${JSON.stringify(sdk)};
 const client = connect("http://aip.test", "token", contract);
 declare const accountId: Id<"Account">;
 declare const productId: Id<"Product">;
@@ -58,6 +59,11 @@ async function ok() {
     b.apply({ apply: "Product.take", target: { ids: [productId] }, input: { qty: 1 } });
   });
   await client.bundle({ atomic: [{ create: "Order", values: { owner: memberId, status: "open", total: "0.00" } }, { apply: "Order.confirm", target: { ids: [orderId] } }] });
+  await client.bundle({ atomic: [{ create: "Order", values: { owner: memberId, status: "open", total: "0.00" } }, { create: "OrderLine", values: { qty: 1, price: "1.00", product: productId }, refs: { order: { created: 0 } } }, { create: "OrderLine", values: { qty: 1, price: "1.00", note: null, product: productId, order: orderId } }] });
+  const typedRequest: BundleRequest<ApplyContract, CreateContract, ComposeContract> = { atomic: [{ create: "Order", values: { owner: memberId, status: "open", total: "0.00" } }] };
+  await client.bundle(typedRequest);
+  await client.read({ read: "Account", select: ["id", "label", "memo"] });
+  await client.read({ read: "Note", select: ["id", { account: { select: ["id"] } }, "body"] });
   await client.compose({ compose: "Order", targets: { ids: [orderId] }, steps: [{ transition: "confirm" }] });
   const unsettled = await client.apply({ apply: "Order.confirm", target: { ids: [orderId] } });
   if (unsettled.ok) { const changed: readonly Id<"Order">[] = unsettled.changed; void changed; } else { const code: string = unsettled.code; void code; }
@@ -103,8 +109,8 @@ const NEGATIVE = [
   ["create missing a required field", `client.bundle((b) => { b.create("Order", { owner: memberId, status: "open" }); });`],
   ["create with a number for Decimal", `client.bundle((b) => { b.create("Order", { owner: memberId, status: "open", total: 0 }); });`],
   ["create with an unexposed field", `client.bundle((b) => { b.create("Order", { owner: memberId, status: "open", total: "0.00", id: orderId }); });`],
-  ["ref handle of the wrong resource", `client.bundle((b) => { const p = b.create("Order", { owner: memberId, status: "open", total: "0.00" }); b.create("OrderLine", { product: productId, qty: 1, price: "1.00" }, { product: p }); });`],
-  ["ref for a field that is not a reference", `client.bundle((b) => { const o = b.create("Order", { owner: memberId, status: "open", total: "0.00" }); b.create("OrderLine", { product: productId, qty: 1, price: "1.00" }, { order: o, qty: o }); });`],
+  ["ref handle of the wrong resource", `client.bundle((b) => { const p = b.create("Order", { owner: memberId, status: "open", total: "0.00" }); b.create("OrderLine", { qty: 1, price: "1.00" }, { product: p }); });`],
+  ["ref for a field that is not a reference", `client.bundle((b) => { const o = b.create("Order", { owner: memberId, status: "open", total: "0.00" }); b.create("OrderLine", { product: productId, price: "1.00" }, { order: o, qty: o }); });`],
   ["handle of the wrong resource as apply target", `client.bundle((b) => { const o = b.create("Order", { owner: memberId, status: "open", total: "0.00" }); b.apply({ apply: "Product.take", target: o, input: { qty: 1 } }); });`],
   ["bundle with no operation", `client.bundle({ atomic: [] });`],
   ["compose step outside the transitions", `client.compose({ compose: "Order", targets: { ids: [orderId] }, steps: [{ transition: "cancel" }] });`],
@@ -119,6 +125,13 @@ const NEGATIVE = [
   ["read the output before narrowing the result", `async () => { const r = await client.writeExtension("Account.adjust", { a: accountId, amount: "1.00", fail: false }); return r.output; };`],
   ["read the changed ids before narrowing the result", `async () => { const r = await client.apply({ apply: "Order.confirm", target: { ids: [orderId] } }); return r.changed; };`],
   ["bundle op with an apply name that does not exist", `client.bundle({ atomic: [{ apply: "Order.nope", target: { ids: [orderId] } }] });`],
+  ["raw refs create repeating a ref field in values", `client.bundle({ atomic: [{ create: "OrderLine", values: { qty: 1, price: "1.00", product: productId, order: orderId }, refs: { order: { created: 0 } } }] });`],
+  ["raw refs create missing a required field", `client.bundle({ atomic: [{ create: "OrderLine", values: { price: "1.00", product: productId }, refs: { order: { created: 0 } } }] });`],
+  ["raw refs create with an empty values object", `client.bundle({ atomic: [{ create: "OrderLine", values: {}, refs: { order: { created: 0 } } }] });`],
+  ["raw refs create with a wrong value type", `client.bundle({ atomic: [{ create: "OrderLine", values: { qty: "1", price: "1.00", product: productId }, refs: { order: { created: 0 } } }] });`],
+  ["duplicate select field", `client.read({ read: "Account", select: ["id", "id"] });`],
+  ["duplicate select field apart", `client.read({ read: "Account", select: ["id", "label", "id"] });`],
+  ["duplicate relation select", `client.read({ read: "Note", select: [{ account: { select: ["id"] } }, { account: { select: ["label"] } }] });`],
 ];
 
 test("the generated binding types accept valid requests and reject each invalid one at compile time", () => {

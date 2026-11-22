@@ -47,3 +47,9 @@ resource OrderLine {
   expose read { select id, qty, price, note, order, product; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
   expose create { allow order.owner = actor; fields order, product, qty, price, note }
 }
+resource Note {
+  fields { id: Id; account: Account; body: Text(1..20); reviewer: Account? }
+  rows read when account.owner = actor
+  expose read { select id, account, body, reviewer; traverse account { select id, label }; sort id; budget { rows 20; depth 2; deadline 2s; cost 1000 } }
+  expose create { allow account.owner = actor; fields account, body, reviewer }
+}
