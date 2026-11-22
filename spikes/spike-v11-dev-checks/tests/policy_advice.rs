@@ -36,7 +36,12 @@ fn each_policy_advisory_is_reported_without_dev_checks() {
         "rows read when org = actor.org\n}",
         "rows read when org = actor.org\n  expose create { allow body != \"\"; fields org, body, published }\n}",
     );
+    let count = APP.replace(
+        "resource Member { fields { id: Id; org: Org; name: Text(1..40) } rows read when org = actor.org }",
+        "access anyone(a: Member) = true\nresource Member {\n  fields { id: Id; org: Org; name: Text(1..40) }\n  rows read when org = actor.org\n  aggregate openNotes: Int { source Note; sourceAccess anyone(actor); where published = true; callerFilter none; rowOutput none; release count }\n  expose aggregate openNotes\n}",
+    );
     for (src, code) in [
+        (&count, "DEF.ADVISORY_TENANT_UNSCOPED_COUNT"),
         (&unscoped, "DEF.ADVISORY_TENANT_UNSCOPED_READ"),
         (&public, "DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD"),
         (&wider, "DEF.ADVISORY_WRITE_WIDER_THAN_READ"),

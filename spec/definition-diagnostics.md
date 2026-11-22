@@ -866,6 +866,39 @@ resource Note {
 }
 ```
 
+### `DEF.ADVISORY_TENANT_UNSCOPED_COUNT`
+
+a count that can be called on its own counts the rows of every tenant (advisory)
+
+- 원인: Not an error: the definition is accepted and the response value is unchanged. `release count` does not apply the source's `rows read` policy (the public count contract). When the source resource has a tenant field (the same name and target as a reference field of the actor resource, tied to the actor by some policy of the definition, as described at DEF.ADVISORY_TENANT_UNSCOPED_READ), the source's own `rows read` keeps the tenant, and the aggregate is exposed with `expose aggregate`, a caller can read it as a standalone aggregate and the count includes the rows of other tenants whenever `where` does not tie the tenant field to the actor. A `where` that reads the caller's `input` is reported by DEF.ADVISORY_PUBLIC_COUNT_INPUT, a count without `where` by DEF.ADVISORY_PUBLIC_COUNT, and a source whose own policy forgets the tenant by DEF.ADVISORY_TENANT_UNSCOPED_READ. `sum`, `min` and `max` apply `rows read` and are not judged.
+- 수정: Add `org = actor.org` (with the field name of the source) to `where` as an AND term. If the figure is a platform-wide statistic on purpose, keep the definition and treat the number as public.
+
+```aip
+actor Member
+resource Org {
+  fields { id: Id; name: Text }
+  rows read when id = actor.org
+}
+resource Member {
+  fields { id: Id; org: Org; name: Text }
+  rows read when org = actor.org
+  aggregate openNotes: Int {
+    source Note
+    sourceAccess anyone(actor)
+    where open = true
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  expose aggregate openNotes
+}
+access anyone(a: Member) = true
+resource Note {
+  fields { id: Id; org: Org; body: Text; open: Bool }
+  rows read when org = actor.org
+}
+```
+
 ### `DEF.ADVISORY_WRITE_WIDER_THAN_READ`
 
 a write that can leave the caller's own view (advisory)

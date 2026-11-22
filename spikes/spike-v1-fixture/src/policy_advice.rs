@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 pub const TENANT_UNSCOPED_READ: &str = "DEF.ADVISORY_TENANT_UNSCOPED_READ";
 pub const WRITE_WIDER_THAN_READ: &str = "DEF.ADVISORY_WRITE_WIDER_THAN_READ";
 pub const PUBLIC_READ_TENANT_FIELD: &str = "DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD";
+pub const TENANT_UNSCOPED_COUNT: &str = "DEF.ADVISORY_TENANT_UNSCOPED_COUNT";
 
 pub type Advice = (&'static str, String, Span);
 
@@ -137,8 +138,53 @@ pub fn advise(spec: &Spec, facts: &Value) -> Vec<Advice> {
                 }
             }
         }
+
+        // 4. 단독 집계로 부를 수 있는 count가 다른 테넌트의 행까지 센다. count는 원본의 `rows read`를 적용하지 않는다(공개 count 계약).
+        // 원본 정책 자체가 테넌트를 안 묶으면 원인은 그쪽에서 이미 알린다. `input`을 쓰는 where는 DEF.ADVISORY_PUBLIC_COUNT_INPUT이 다룬다.
+        for a in &r.aggregates {
+            let Some(af) = rf["aggregates"].get(&a.name) else { continue };
+            let exposed = rf["exposeAggregates"].as_array().is_some_and(|v| v.iter().any(|x| *x == a.name.as_str()));
+            let Some(source) = af["source"].as_str().and_then(|n| resources.get(n).map(|sf| (n, sf))) else { continue };
+            let Some(where_) = policy(&af["where"], &preds) else { continue };
+            if !exposed || af["release"] != "count" || mentions_input(&where_) {
+                continue;
+            }
+            let Some(source_read) = policy(&source.1["rowRead"], &preds) else { continue };
+            if has_exists(&source_read) || source_read == json!({"lit": true}) {
+                continue;
+            }
+            let source_tenants: Vec<Tenant> = pairs(&source.1["fields"], &actor_refs, actor)
+                .into_iter()
+                .filter(|pair| conventions.contains(pair))
+                .map(|(field, target)| Tenant { actor_field: field.clone(), field, target })
+                .collect();
+            let Some(t) = source_tenants.first() else { continue };
+            if !source_tenants.iter().any(|t| ensures_tenant(&source_read, t, false))
+                || source_tenants.iter().any(|t| ensures_tenant(&where_, t, false))
+            {
+                continue;
+            }
+            out.push((
+                TENANT_UNSCOPED_COUNT,
+                format!(
+                    "aggregate `{}`의 count는 where가 `{}.{}`를 `actor.{}`와 묶지 않아 단독 집계로 호출하면 다른 `{}`의 `{}` 행도 센다: count는 `rows read`를 적용하지 않는 공개 count다. 자동 테넌트 격리는 없으므로 전역 통계가 의도가 아니면 where에 `{} = actor.{}`를 AND 항으로 쓴다",
+                    a.name, source.0, t.field, t.actor_field, t.target, source.0, t.field, t.actor_field
+                ),
+                a.span,
+            ));
+        }
     }
     out
+}
+
+fn mentions_input(v: &Value) -> bool {
+    match v {
+        Value::Object(m) => {
+            m.get("path").is_some_and(|p| p["root"].as_str().is_some_and(|r| r.starts_with("input."))) || m.values().any(mentions_input)
+        }
+        Value::Array(a) => a.iter().any(mentions_input),
+        _ => false,
+    }
 }
 
 /// (field, target) of the reference fields that the actor resource has by the same name and target.
@@ -198,6 +244,21 @@ fn inline(v: &Value, preds: &serde_json::Map<String, Value>, depth: usize) -> Op
             }
         }
         _ => {}
+    }
+    // `not (a != b)`는 `a = b`, `not not x`는 `x`: 같은 의미의 정책이 다른 모양으로 쓰였다고 테넌트 조건을 놓치지 않는다.
+    if let Some(inner) = out.get("not").cloned() {
+        match inner.get("cmp").and_then(Value::as_str) {
+            Some(op @ ("=" | "!=")) => {
+                let mut flipped = inner.clone();
+                flipped["cmp"] = json!(if op == "=" { "!=" } else { "=" });
+                out = flipped;
+            }
+            _ => {
+                if let Some(x) = inner.get("not") {
+                    out = x.clone();
+                }
+            }
+        }
     }
     if let Value::Object(m) = &mut out {
         order_cmp(m);
