@@ -225,12 +225,12 @@
 
 | ID | 항목 | 분류 | 추정 수정 위치 | 비고 |
 |---|---|---|---|---|
-| D-01 | 단독 집계 budget이 고정 2초 | 결정 | `spikes/spike-v2-read/src/plan.rs:316,1097` | 정의에서 선언 허용 또는 한도 문서화 |
-| D-02 | `service check` 통과인데 런타임 미지원 / 실행 가능한데 정적 거부 | 근거 부족 | `sema.rs`, `plan.rs`, `spike-v3-write` | `plan-docs/reviews/2026-11-17-core-service-semantic-matrix.md`가 출발점(일반 read first/latest projection은 Service 미지원). 이번에 현재 HEAD로 재검증 안 함 |
-| D-03 | 직접 apply, bundle 내부 apply, compose, 확장 apply의 의미 일치와 예외 목록 | 부분 해결 | `plan-docs/expressiveness-1.0/decisions.md` §0(C0-1~C0-9), 코드 `spikes/spike-v3-write/src/lib.rs`, `spikes/spike-v4-worker/src/write.rs` | 예외 계약(compose 단계는 patch/expect 불가, compose 안 compose 없음)을 한 표로 모은 문서가 없다 |
-| D-04 | SDK(TS, Python): nullable·Decimal·Id·input 산술·refs·확장 결과·오류 재시도 표지·지문 불일치 | 근거 부족 | `product/tests/sdk-semantic-e2e.test.mjs`, `product/sdk`, `spikes/spike-v5-sdk`, `product/python/aip_sdk` | 이 테스트는 `tools/verify.sh`에 없고 `sdk-semantic-e2e.yml`(PR 경로 필터 + RC)에서만 돈다(F-03). TS 컴파일 타임 거부 가능한 잘못된 요청 검토는 미착수 |
-| D-05 | 의미 기반 회귀(재고 정확히 한 번 감소, 숨은 필드가 다른 필드로 복사 안 됨 등) | 부분 해결 | 기존: `service_flow.rs`, `expr-apps`, `policy_hardening.rs` | 정의→실행 계획→DB 상태→SDK 응답을 한 시나리오로 잇는 시험은 `sdk-semantic-e2e`가 가장 가깝다 |
-| D-06 | 쓰기 확장 `/apply`에서 계약 헤더 없음의 코드 | 근거 부족 | `spikes/spike-v6-transport/src/lib.rs:1515-1518`(REQUIRED/MISMATCH 분기), object·RAG는 `:1365,1496,1505` | `product/SUPPORT.md`가 "코드 확인만"으로 남겨 둠 |
+| D-01 | 단독 집계 budget이 고정 2초 | 결정(실측 확정) | `spikes/spike-v2-read/src/plan.rs:316,1097` | 실측: 같은 조건에서 `deadline 1s` 읽기 1008 ms, 단독 집계 2007 ms(`semantic-wire-measure.test.mjs`). 선택지는 `decisions/d.md` D-DEC-3 |
+| D-02 | `service check` 통과인데 런타임 미지원 / 실행 가능한데 정적 거부 | 반례 확인(핵심 파일 대기) | `sema.rs`, `plan.rs`, `spike-v3-write` | 43개 조각 표는 `track-d.md` 2절. 반례 C1·C2(check 통과, 런타임 거부), C3(정적 거부, 실행 가능), C5·D-DEC-1(일부 경로 미지원). 재현은 `semantic-definition-matrix.test.mjs`의 todo |
+| D-03 | 직접 apply, bundle 내부 apply, compose, 확장 apply의 의미 일치와 예외 목록 | 해결됨(시험+예외 표) | `plan-docs/expressiveness-1.0/decisions.md` §0, `semantic-path-parity.test.mjs` | 예외 계약은 `track-d.md` 3절 한 표. 오류 코드와 DB 상태가 네 경로에서 같다(확장의 안쪽 거절은 `EXTENSION_ERROR`로 가려지는 것이 의도) |
+| D-04 | SDK(TS, Python): nullable·Decimal·Id·input 산술·refs·확장 결과·오류 재시도 표지·지문 불일치 | 결함 3건 수정, 시험 추가 | `product/tests/sdk-contract-semantics.test.mjs`, `product/sdk`, `spikes/spike-v5-sdk`, `product/python/aip_sdk` | 수정: 실행 전 거절 5코드, Python 키 재사용, Uuid compose 묶음 결과 오판(`track-d.md` 4절). TS 타입 거부 코퍼스 57개. F1 연결 요청은 `track-d.md` 10절 |
+| D-05 | 의미 기반 회귀(재고 정확히 한 번 감소, 숨은 필드가 다른 필드로 복사 안 됨 등) | 해결됨 | `product/tests/semantic-chain.test.mjs` | 정의 → 감사 행 → DB → SDK 응답. 동시 같은 key·다른 key, 숨은 필드, 원자 생성 취소 |
+| D-06 | 쓰기 확장 `/apply`에서 계약 헤더 없음의 코드 | 실측 확정, 코드 정합은 결정 | `spikes/spike-v6-transport/src/lib.rs:1515-1518`(REQUIRED/MISMATCH 분기) | 실측: `WIRE.CONTRACT_MISMATCH`(전이·묶음·조합은 `CONTRACT_REQUIRED`). `SUPPORT.md` 갱신. 코드 변경은 `decisions/d.md` D-DEC-2 |
 
 ### Track E: 진단·확장·구조
 
