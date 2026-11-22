@@ -691,4 +691,11 @@ pub static REGISTRY: &[Info] = &[
         "If the broad count is intended, keep it and treat the number as public. Otherwise add the intended population to `where` (for example the source's `rows read` condition). See \"공개 count 계약\" in spec/definition-syntax.md and product/SDK.md.",
         "",
     ),
+    i(
+        "DEF.ADVISORY_PUBLIC_COUNT_INPUT",
+        "a count whose `where` reads the caller's `input` is a public count (advisory)",
+        "Not an error: the definition is accepted and the response value is unchanged. `release count` does not apply the source's `rows read` policy, so a count whose `where` compares a field with the caller's `input` (`where amount >= input.n`) counts rows the caller cannot read. The caller chooses the input, so repeated calls with different values (a binary search) reveal the distribution of a field of rows it cannot read. `sum`, `min` and `max` apply `rows read` and are not affected. Not reported when `where` already implies the source's `rows read` policy, when the source's policy is `true`, or when the `sourceAccess` guard receives every `input` that `where` reads (the guard then decides which values the caller may use; its body is not judged here). A count whose `where` has no `input` is a fixed population and gets no advisory unless `where` is missing (DEF.ADVISORY_PUBLIC_COUNT). Reported by every `aip service check`, with or without `--dev-checks`.",
+        "If the count is meant to be public, keep it and treat the number as public. Otherwise add the source's `rows read` condition to `where` as an AND term, pass the same `input` to the `sourceAccess` guard so it restricts the values, or release a `sum` over a 0/1 field instead.",
+        "",
+    ),
 ];

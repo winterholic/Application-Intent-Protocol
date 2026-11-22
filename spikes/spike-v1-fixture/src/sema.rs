@@ -2391,6 +2391,33 @@ impl<'a> Ctx<'a> {
                 a.span,
             );
         }
+        // 공개 count의 `input` 탐침: where가 호출자의 input을 쓰면 값을 바꿔 가며 읽을 수 없는 행의 필드 값 분포를 센다. 값은 바뀌지 않는다.
+        if release == "count" && a.where_.is_some() && facts_mention_input(&where_) {
+            // rows read가 없는 원본은 모든 행이 호출자에게 안 보이는 기본 거부라 센 행은 모두 숨은 행이다. 정책이 있으면 where가 그것을 함의하거나 정책이 true일 때만 숨은 행이 없다.
+            let hides_rows = match self.res.get(source.as_str()).and_then(|s| s.row_read.as_ref()) {
+                None => true,
+                Some(policy) => {
+                    let mut sc = self.base_scope();
+                    sc.this = Some(source.clone());
+                    self.bool_of(policy, &sc).ok().is_some_and(|p| p != json!({"lit": true}) && !implies_policy(&where_, &p))
+                }
+            };
+            // guard가 where의 input을 모두 받으면 호출자가 고를 수 있는 값의 범위를 guard가 정한다. guard 본문이 실제로 제한하는지는 구조로 못 본다.
+            let mut where_inputs = BTreeSet::new();
+            collect_input_roots(&where_, &mut where_inputs);
+            let mut guard_inputs = BTreeSet::new();
+            collect_input_roots(&access["args"], &mut guard_inputs);
+            if hides_rows && !where_inputs.is_subset(&guard_inputs) {
+                self.advisory(
+                    "DEF.ADVISORY_PUBLIC_COUNT_INPUT",
+                    format!(
+                        "aggregate `{}`의 count는 where에 호출자의 `input`을 쓰는 공개 count: `{source}`의 `rows read` 정책을 적용하지 않으므로 호출자가 input 값을 바꿔 가며 읽을 수 없는 행의 필드 값을 센다(이분 탐색으로 숨은 값을 추정할 수 있음). 의도한 공개 값이 아니면 where에 행 정책을 AND 항으로 적고, sourceAccess guard가 같은 input을 제한하게 하거나 sum 집계를 쓴다",
+                        a.name
+                    ),
+                    a.span,
+                );
+            }
+        }
         let mut out = json!({
             "ty": tt.show(), "tyRange": a.ty.range.map(|(x, y)| json!([x, y])), "input": ij, "source": source, "sourceAccess": access, "groupKey": a.group_key,
             "where": where_, "callerFilter": a.caller_filter, "rowOutput": a.row_output, "release": release,
@@ -2917,6 +2944,20 @@ fn valid_message_queue(value: &str) -> bool {
 /// `condition`이 참이면 `policy`도 참임을 정규화된 식의 구조만으로 보인다(보수적이라 같은 뜻의 다른 식은 거부한다).
 /// `condition`의 AND 항 중에 정책 전체가 있거나, 정책이 AND이면 모든 항이, OR이면 한 가지가 같은 방식으로 충족되어야 한다.
 /// facts 안에 `input.*` 경로가 있는지.
+/// `input.<name>` roots that a facts tree reads.
+fn collect_input_roots(v: &Value, out: &mut BTreeSet<String>) {
+    match v {
+        Value::Object(o) => {
+            if let Some(root) = o.get("path").and_then(|p| p["root"].as_str()).filter(|r| r.starts_with("input.")) {
+                out.insert(root.to_string());
+            }
+            o.values().for_each(|x| collect_input_roots(x, out));
+        }
+        Value::Array(a) => a.iter().for_each(|x| collect_input_roots(x, out)),
+        _ => {}
+    }
+}
+
 fn facts_mention_input(v: &Value) -> bool {
     match v {
         Value::Object(o) => {

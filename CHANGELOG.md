@@ -8,6 +8,7 @@
 - `release-candidate` workflow: 필수 workflow 전부를 경로 필터 없이 한 SHA에서 실행하고 모두 `success`일 때만 통과하는 집계 job (`.github/workflows/release-candidate.yml`).
 - `SECURITY.md`, `CONTRIBUTING.md`, 이 파일.
 - 문서: [1.0 지원 범위](product/SUPPORT.md)(지원 11, 조건부 7, 제외 1, PostgreSQL 17 한정, 공개 count, 계약 헤더 오류 코드), [표현력 한계와 확장 우회](product/LIMITS.md)(E1~E9), COMPATIBILITY의 1.0 호환 약속과 정의 검사 변경.
+- `DEF.ADVISORY_PUBLIC_COUNT_INPUT` 경고(정의는 통과, 응답·계약 지문 불변): `where`가 호출자의 `input`을 쓰는 `count`는 원본 `rows read`를 적용하지 않아 input 값을 바꿔 가며 읽을 수 없는 행의 필드 값 분포를 셀 수 있다(`plan-docs/hardening-1.0/policy.md` F1). where가 행 정책을 함의하거나 sourceAccess guard가 같은 input을 받으면 나오지 않는다. 저장소 `.aip`·`.e/.h` 정의 71개에서 새로 나온 경고는 0건이다.
 
 ### Changed
 - **호환 변경(정의 검사 강화): 숨겨진 필드(`field ... read when`)의 값이 다른 경로로 호출자에게 건너가는 정의를 `DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION`으로 거부한다.** 술어 호출 안과 `actor.*` 경로를 `from`·`to`가 읽는 것, 효과 create·update 값과 update·delete 대상 조건, compose `create ... from` 출처, `sameScope`, 그리고 호출자가 정하는 값(`input`, `expose create`의 새 행 값, `patch` 필드)을 `expose create` allow·`check`·operation allow·집계 `where`·집계 `sourceAccess` guard에서 가려진 필드와 견주는 것이다. 모두 PostgreSQL 17 serve에서 가려진 값을 복원한 반례다. 저장소의 `.aip` 정의 68개는 새로 거부되지 않는다. 근거와 판정은 [plan-docs/hardening-1.0/policy.md](plan-docs/hardening-1.0/policy.md).

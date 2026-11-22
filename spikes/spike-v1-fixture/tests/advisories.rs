@@ -134,3 +134,72 @@ fn unsupported_forms_name_what_is_allowed_without_mentioning_spike() {
         assert!(!message.to_lowercase().contains("spike"), "{message}");
     }
 }
+
+// A-01(F1): `where`가 호출자의 `input`을 쓰는 count는 원본 `rows read`를 적용하지 않아, 호출자가 input을 바꿔 가며
+// 읽을 수 없는 행의 필드 값 분포를 센다(이분 탐색). 응답 값은 공개 count 계약대로 두고 경고만 낸다.
+const INPUT_COUNT: &str = r#"
+actor Member
+access allMembers(a: Member) = true
+access ofName(a: Member, n: Int) = true
+resource Member {
+  fields { id: Uuid; owner: Member; name: Text(1..100); score: Int }
+  rows read when owner = actor
+  aggregate probe: Int {
+    input { n: Int }
+    source Member
+    sourceAccess allMembers(actor)
+    where score >= input.n
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  expose aggregate probe
+}
+"#;
+
+fn advisory_aggregates(src: &str, code: &str) -> Vec<String> {
+    let checked = load_str(src, Form::A).unwrap_or_else(|ds| panic!("{:?}", ds.iter().map(|d| (d.code, d.msg.clone())).collect::<Vec<_>>()));
+    checked.advisories.iter().filter(|d| d.code == code).map(|d| d.msg.split('`').nth(1).unwrap_or("").to_string()).collect()
+}
+
+#[test]
+fn a_count_whose_where_reads_input_reports_the_input_probe_advisory_and_keeps_the_facts() {
+    let checked = load_str(INPUT_COUNT, Form::A).expect("공개 count는 오류가 아니다");
+    let codes: Vec<_> = checked.advisories.iter().map(|d| d.code).collect();
+    assert_eq!(codes, ["DEF.ADVISORY_PUBLIC_COUNT_INPUT"], "where 없는 count 경고와 다른 코드, 한 번만");
+    let message = &checked.advisories[0].msg;
+    assert!(message.contains("probe") && message.contains("input") && message.contains("rows read"), "{message}");
+    // 응답 의미와 계약 digest 입력(facts)은 그대로다. 경고는 facts에 키를 더하지 않는다.
+    let facts = &checked.execution["resources"]["Member"]["aggregates"]["probe"];
+    assert!(facts["where"].is_object() && facts["release"] == "count" && facts["callerFilter"] == "none", "{facts}");
+}
+
+#[test]
+fn the_input_probe_advisory_follows_the_row_policy_and_the_guard() {
+    // sum은 원본 행 정책을 다시 걸어 값을 내보내므로 대상이 아니다.
+    let sum = INPUT_COUNT.replace("release count", "release sum(score)");
+    assert!(advisory_aggregates(&sum, "DEF.ADVISORY_PUBLIC_COUNT_INPUT").is_empty());
+    // where가 원본 행 정책을 함의하면 센 행은 모두 읽을 수 있는 행이다.
+    let implied = INPUT_COUNT.replace("where score >= input.n", "where owner = actor and score >= input.n");
+    assert!(advisory_aggregates(&implied, "DEF.ADVISORY_PUBLIC_COUNT_INPUT").is_empty());
+    // `rows read when true`는 숨은 행이 없다.
+    let open = INPUT_COUNT.replace("rows read when owner = actor", "rows read when true");
+    assert!(advisory_aggregates(&open, "DEF.ADVISORY_PUBLIC_COUNT_INPUT").is_empty());
+    // rows read가 없으면 모든 행이 호출자에게 보이지 않는다. 그래도 센다.
+    let denied = INPUT_COUNT.replace("  rows read when owner = actor\n", "");
+    assert_eq!(advisory_aggregates(&denied, "DEF.ADVISORY_PUBLIC_COUNT_INPUT"), ["probe"]);
+    // where에 input이 없는 count(서버 상수 비교)는 호출자가 값을 고르지 못해 이 경고의 대상이 아니다.
+    let constant = INPUT_COUNT.replace("input { n: Int }\n    ", "").replace("score >= input.n", "score >= 3");
+    assert!(advisory_aggregates(&constant, "DEF.ADVISORY_PUBLIC_COUNT_INPUT").is_empty());
+    // sourceAccess guard가 where가 쓰는 input을 받으면 호출자가 값을 고를 수 있는 범위를 guard가 정한다(구조 판정).
+    let guarded = INPUT_COUNT.replace("sourceAccess allMembers(actor)", "sourceAccess ofName(actor, input.n)");
+    assert!(advisory_aggregates(&guarded, "DEF.ADVISORY_PUBLIC_COUNT_INPUT").is_empty());
+    // guard가 다른 input만 받으면 where의 input은 여전히 자유롭다.
+    let other = INPUT_COUNT
+        .replace("input { n: Int }", "input { n: Int; m: Int }")
+        .replace("sourceAccess allMembers(actor)", "sourceAccess ofName(actor, input.m)");
+    assert_eq!(advisory_aggregates(&other, "DEF.ADVISORY_PUBLIC_COUNT_INPUT"), ["probe"]);
+    // 같은 정의가 where 없는 count와 겹치지 않는다: where가 없으면 기존 경고만 낸다.
+    let nowhere = INPUT_COUNT.replace("input { n: Int }\n    ", "").replace("    where score >= input.n\n", "");
+    assert_eq!(codes(&nowhere), ["DEF.ADVISORY_PUBLIC_COUNT"]);
+}

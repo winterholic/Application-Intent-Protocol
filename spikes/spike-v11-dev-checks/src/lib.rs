@@ -16,8 +16,13 @@ pub struct Advisory {
 /// Compiler advisories reported even when the development checks are off. The policy advisories are here because AIP
 /// has no automatic tenant isolation: a forgotten tenant condition is exposure, and `service check` without
 /// `--dev-checks` is what most definitions are checked with.
-const ALWAYS_ON: [&str; 4] =
-    ["DEF.ADVISORY_PUBLIC_COUNT", "DEF.ADVISORY_TENANT_UNSCOPED_READ", "DEF.ADVISORY_WRITE_WIDER_THAN_READ", "DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD"];
+const ALWAYS_ON: [&str; 5] = [
+    "DEF.ADVISORY_PUBLIC_COUNT",
+    "DEF.ADVISORY_PUBLIC_COUNT_INPUT",
+    "DEF.ADVISORY_TENANT_UNSCOPED_READ",
+    "DEF.ADVISORY_WRITE_WIDER_THAN_READ",
+    "DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD",
+];
 
 pub struct Checked {
     pub output: Output,
