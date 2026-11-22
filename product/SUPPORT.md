@@ -39,7 +39,7 @@ Core의 자동 tenant 격리, search, publishable, consent, subscribe 같은 기
 | 13 | tenant 자동 격리 | **제외** | 제품 경로에 구현이 없다(Core PoC에만 있다). 조직 경계는 `rows read when org = actor.org`처럼 정의에 직접 쓰고 모든 정책에 반복해야 한다. 이 명시 패턴 자체는 조건부로 동작한다 |
 | 14 | fingerprint(계약 지문) | 지원 | 지문이 다르면 `WIRE.CONTRACT_MISMATCH`. 구버전 클라이언트 동시 지원은 없다 |
 | 15 | 초기화·migration | 조건부 | **PostgreSQL 한정.** 롤백은 백업 복원뿐이며 역방향 migration은 없다. 대형 테이블 무중단 변경은 범위 밖 |
-| 16 | Node/Python 확장 | 조건부 | 확장 ABI는 확정 전이다(결정 OI-X2). Linux Bubblewrap 격리는 CI가 있다. **macOS Seatbelt 격리는 CI 없이 수동 검증이다.** PostgreSQL 쓰기 확장은 허용 목록 안에서 `ctx.data.read`, `ctx.data.apply`, `ctx.data.create`를 지원한다. 암호화 리소스의 확장 create는 제외다 |
+| 16 | Node/Python 확장 | 조건부 | 확장 ABI는 확정 전이다(결정 OI-X2). Linux Bubblewrap과 macOS Seatbelt 격리는 각각 전용 GitHub Actions workflow가 있다. macOS workflow는 Seatbelt profile, Node/Python 네트워크 차단, operation-only service, v6 worker lifetime/sandbox 시험을 실행한다. Run `44985825145`의 `macos-sandbox` job은 main SHA `c86d69021284d19ebf769d8f53ad41e2d2f89bb3`에서 성공했다. 2026-11-21 감사는 당시 기록대로 CI 미실행을 남겼으며, 이 run은 후보 `c781dbf7`이나 최종 Core SHA를 검증하지 않았다. PostgreSQL 쓰기 확장은 허용 목록 안에서 `ctx.data.read`, `ctx.data.apply`, `ctx.data.create`를 지원한다. 암호화 리소스의 확장 create는 제외다 |
 | 17 | durable job | 조건부 | **PostgreSQL job store만.** MySQL job store는 출시 묶음에 없다 |
 | 18 | 진단·관측 | 조건부 | OTLP, 감사 기록, trace는 엔진 시험까지 확인했다. 대시보드와 SLO는 제공하지 않는다 |
 | 19 | 설치 SDK·패키지 | 조건부 | 버전은 Cargo workspace 한 곳에서 파생해 CLI·TypeScript SDK·Python SDK가 같다(`1.0.0`). 이름은 `product/release.config.json`을 따른다. Windows는 지원하지 않는다([플랫폼](INSTALL.md#지원-플랫폼과-최소-요구)) |
@@ -94,5 +94,5 @@ Core의 자동 tenant 격리, search, publishable, consent, subscribe 같은 기
 ## 이 표의 한계
 
 - 표는 2026-11-21 감사 시점의 근거를 따른다. 이후 코드가 바뀌면 [COMPATIBILITY](../COMPATIBILITY.md)와 [CHANGELOG](../CHANGELOG.md)로 변경을 확인한다.
-- 외부 IdP 실계정, 실제 AWS·GCS, macOS Seatbelt 격리는 감사에서 실행하지 않았다.
+- 외부 IdP 실계정, 실제 AWS·GCS, macOS Seatbelt 격리는 2026-11-21 감사에서 실행하지 않았다. 이후 Run `44985825145`가 원격 main `c86d69021284d19ebf769d8f53ad41e2d2f89bb3`에서 macOS workflow를 통과했지만, 후보 `c781dbf7`과 최종 Core SHA는 아직 실행 검증하지 않았다.
 - 1.0 이후의 문법 추가가 기존 `.aip`를 깨지 않는다는 자동 보장 장치(문법 버전 필드, 호환 골든)는 감사에서 확인하지 못했다. 업그레이드 전에는 새 binary로 `aip service check`를 먼저 실행한다.

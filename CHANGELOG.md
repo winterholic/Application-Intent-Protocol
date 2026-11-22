@@ -45,7 +45,7 @@
 - **진단 JSON 고정**: `aip service check`의 성공(종료 0, stdout)과 실패(종료 1, stderr) JSON의 키 집합과 타입을 시험으로 고정했다. 경고 항목에 `severity: "warning"`, 정의 오류 항목에 `severity: "error"`가 더해졌다(`7e367ead`).
 - 소비자 앱 3유형(협업형 SaaS, 콘텐츠·커뮤니티, 주문·재고)을 실제 HTTP·PostgreSQL 17·TypeScript·Python SDK로 실행하는 시험과 CI 단계, 실행 기록([consumer-apps](plan-docs/expressiveness-1.0/consumer-apps.md))을 더했다(`c59b8588`, `fc56293e`, `dc68e4e6`).
 - 앱 패키지 설치·변경 배포, Docker·네이티브 서비스 실행 경로.
-- Linux worker 격리(Bubblewrap, 선택적 cgroup v2 한도)와 macOS Seatbelt 격리(수동 검증).
+- Linux worker 격리(Bubblewrap, 선택적 cgroup v2 한도)와 macOS Seatbelt 격리용 CI workflow. Run `44985825145`의 macOS job은 원격 main SHA `c86d69021284d19ebf769d8f53ad41e2d2f89bb3`에서 성공했다. 2026-11-21 감사 당시의 미실행 기록은 당시 상태로 유지하며, 후보 `c781dbf7`과 최종 Core SHA 실행을 뜻하지 않는다.
 - FlaskBB 포팅: Topic.move, Post.unhide, PostOrder 계약.
 - 1.0 릴리스 게이트 스크립트(`scripts/release-gate.sh`): 새 clone 전체 회귀, 묶음 smoke, 업그레이드·롤백 드릴.
 

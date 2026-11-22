@@ -36,7 +36,7 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 - [백엔드 기능 포괄성 감사 기준](plan-docs/sources/founder-backend-capability-directive-2026-10-09.md): SQL 외 비동기·이벤트·외부 연동·파일·실시간·운영까지 후속 보완의 원문 기준. 현재 단계는 분석·고도화 제안이며, 기존 PoC 기능을 제품 지원으로 합산하지 않는다.
 - [백엔드 기능 포괄성 감사 A~F](plan-docs/backend-capability/README.md): 105개 최소 항목·SQL 밖 여섯 시나리오·독립 상호 검토·실행 반례. 현재 단계는 분석과 고도화 제안이다.
 
-Core 검증은 GitHub Actions Ubuntu에서 실행한다. Linux worker 격리와 durable job smoke도 Bubblewrap을 적용해 확인했다([검증 결과](product/VERIFICATION.md#linux-격리-workerjob-smoke-2026-10-14)). macOS Seatbelt 동작, 외부 IdP 계정, TLS reverse proxy의 실제 배포 검증은 별도 환경이 필요하다. 로컬 제품 실행 검증은 macOS의 실제 PostgreSQL과 통제된 HTTPS/JWT fixture를 사용한다. 대형 테이블 무중단 변경, 자동 역방향 migration, 최종 Id 표현·쓰기 조합 선택은 범위 밖이다.
+Core 검증은 GitHub Actions의 Ubuntu workflow와 macOS platform-tests workflow에서 실행한다. Linux worker 격리와 durable job smoke는 Bubblewrap을 적용해 확인했고([검증 결과](product/VERIFICATION.md#linux-격리-workerjob-smoke-2026-10-14)), macOS workflow는 Seatbelt profile, Node/Python 네트워크 차단, operation-only service, macOS 전용 worker lifetime/sandbox 시험을 실행한다. Run `44985825145`는 원격 main SHA `c86d69021284d19ebf769d8f53ad41e2d2f89bb3`에서 성공했다. 이 실행은 2026-11-21 감사 당시의 미실행 기록을 소급 변경하지 않으며, 후보 `c781dbf7`이나 최종 Core SHA를 검증한 결과도 아니다. 외부 IdP 계정과 TLS reverse proxy의 실제 배포 검증은 별도 환경이 필요하다. 로컬 제품 실행 검증은 macOS의 실제 PostgreSQL과 통제된 HTTPS/JWT fixture를 사용한다. 대형 테이블 무중단 변경, 자동 역방향 migration, 최종 Id 표현·쓰기 조합 선택은 범위 밖이다.
 
 ## 기존 PoC 구조 (1.0 정식 경로가 아니다)
 
