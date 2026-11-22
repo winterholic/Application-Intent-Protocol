@@ -2,6 +2,7 @@
 TypeScript 시나리오(e2e.ts)와 같은 업무(공유, 권한 거부, 멱등, 낙관적 잠금, 확장)를 Python 호출 경로로 확인한다."""
 import os
 import time
+from datetime import datetime
 from aip_sdk import connect, AipError
 from todo_binding import CONTRACT_FINGERPRINT
 
@@ -86,7 +87,8 @@ step("node write extension reschedule from python", ext["output"])
 ext_replay = alice.apply({"extension": "TodoItem.reschedule", "input": {"id": tea, "rule": "WEEKLY"}}, key=f"pyresched-{RUN}")
 assert ext_replay.get("replayed") is True
 after = alice.read({"read": "TodoItem", "select": ["id", "dueAt", "version"], "filter": [{"field": "id", "op": "eq", "value": tea}]})
-assert after[0]["dueAt"] == "2026-12-08T00:00:00Z" and after[0]["version"] == 2, after
+# 확장 출력은 확장이 만든 문자열("Z")이고 읽기는 offset 형식("+00:00")이라 시각으로 비교한다.
+assert datetime.fromisoformat(after[0]["dueAt"]) == datetime.fromisoformat("2026-12-08T00:00:00Z") and after[0]["version"] == 2, after
 step("extension replay does not re-run; result persisted once", after[0])
 
 unshare = alice.apply({"apply": "ListShare.unshare", "target": {"ids": [share_id]}}, key=f"pyunshare-{RUN}")
