@@ -22,7 +22,7 @@
 
 1. **이미 해결됨(다시 하지 말 것)**: 숨은 필드 우회 D1~D13, 공개 count의 `callerFilter read` 오라클과 공개 count 경고, 외부 저장소 create 판정 순서, `/apply` 멱등 조회 오류 무시, SERIALIZABLE 확장의 `WIRE.INTERNAL` 누출, 줄 생성 뒤 compose·`target.where` 교착, worker slot 선점, 표현력 P0-A~D(`refs`, 제한 산술, `ctx.data.create`, bundle 안 compose), Decimal sum, BOM, 앱 패키저 fail-open, 1.0.0 버전 정합, release-candidate 집계 workflow. 목록과 근거는 2.9절.
 2. **미해결 결함(우선순위 순)**:
-   - 독립 소비자 E2E가 과거 Core `4e132564`에 고정돼 있고 `release-candidate`에도 없다(C-01, F-01).
+   - 독립 소비자 E2E가 과거 Core `4e132564`에 고정돼 있고 `release-candidate`에도 없다(C-01, F-01). → Track C가 해결(`track-c.md`).
    - 반대 순서 bundle 교착은 이번에 재현했다. 2건 동시에 1.18초(교착 1회 후 재시도), 계약 결정이 필요하다(B-01).
    - `durable.rs:1201` `if let Ok(Some(row))`가 취소 확인 쿼리 오류를 조용히 버린다(B-02). 중복 실행은 없다고 코드로 추정했고 재현은 안 했다.
    - macOS 전용 테스트 5곳이 어떤 workflow에서도 실행되지 않는다(B-05).
@@ -160,9 +160,9 @@
 
 | 항목 | 현재 분류 | 근거 |
 |---|---|---|
-| 독립 소비자(taskshare, stockdesk) 검증이 과거 Core에 고정 | **미해결 결함** | `.github/workflows/independent-consumer-rc.yml:20 ref: 4e1325644b267f2b3177a327258c0882ee5711c2`, `:63 name: independent-consumers-4e132564`. `verification/1.0-consumers/run.py`가 `assert revision == "4e1325644b…"`(`git rev-parse HEAD` 단언)와 `aip-sdk-1.0.0.tgz`, `application_intent_protocol_sdk-1.0.0-*.whl`, `version == "aip 1.0.0"`를 하드코딩. 이 SHA는 현재 main의 조상(`git merge-base --is-ancestor` 참)이고 HEAD보다 104커밋 뒤라(`git rev-list --count 4e132564..origin/main`), 그 사이의 hardening 수정을 하나도 검증하지 못한다 → C-01 |
-| 그 workflow의 실행 조건 | **미해결 결함** | 트리거는 `push: branches: [verify/1.0-independent-consumer-20261121]`와 `workflow_dispatch`뿐. `release-candidate.yml`의 `needs`에 없다 → F-01 |
-| 소비자 실행 결과와 대상 SHA의 일치 기록 | **미해결 결함** | `run.py`는 SHA를 하드 고정 단언할 뿐 결과 파일에 SHA를 적지 않는다. 증거 로그 이름도 고정 SHA → C-02 |
+| 독립 소비자(taskshare, stockdesk) 검증이 과거 Core에 고정 | **해결됨**(Track C. 이 행의 아래 근거는 해결 전 상태) | `.github/workflows/independent-consumer-rc.yml:20 ref: 4e1325644b267f2b3177a327258c0882ee5711c2`, `:63 name: independent-consumers-4e132564`. `verification/1.0-consumers/run.py`가 `assert revision == "4e1325644b…"`(`git rev-parse HEAD` 단언)와 `aip-sdk-1.0.0.tgz`, `application_intent_protocol_sdk-1.0.0-*.whl`, `version == "aip 1.0.0"`를 하드코딩. 이 SHA는 현재 main의 조상(`git merge-base --is-ancestor` 참)이고 HEAD보다 104커밋 뒤라(`git rev-list --count 4e132564..origin/main`), 그 사이의 hardening 수정을 하나도 검증하지 못한다 → C-01 |
+| 그 workflow의 실행 조건 | **해결됨**(`workflow_call`로 RC에 연결, Track C. 실제 Actions 실행은 미확인) | 트리거는 `push: branches: [verify/1.0-independent-consumer-20261121]`와 `workflow_dispatch`뿐. `release-candidate.yml`의 `needs`에 없다 → F-01 |
+| 소비자 실행 결과와 대상 SHA의 일치 기록 | **해결됨**(Track C) | `run.py`는 SHA를 하드 고정 단언할 뿐 결과 파일에 SHA를 적지 않는다. 증거 로그 이름도 고정 SHA → C-02 |
 | 업그레이드 시험의 baseline 고정(`4c27040c…`) | **해결됨**(의도) | 업그레이드 시험의 의도적 baseline. 최신 검증과 섞이지 않는다 |
 | `release-candidate`가 동일 SHA에서 필요한 검증을 모두 하는가 | **부분 해결** | 맞는 점: 모든 job이 `workflow_call`로 호출자 SHA에서 돌고, `required`가 `skipped`·`cancelled`를 실패로 본다(`release-candidate.yml` "A skipped or cancelled workflow is not a pass"), `aip-release-gate`는 `--ref "$GITHUB_SHA"`. 틈: (1) 독립 소비자 미포함, (2) HEAD에서 RC 실행 이력 없음, (3) `release.yml`의 태그 게시 조건은 같은 SHA의 `aip-release-gate` 성공만 보고 RC `required` 성공은 요구하지 않음(`release.yml` verify job), (4) main 브랜치 보호·필수 체크 없음 → F-01~F-04, F-07 |
 | main push에서 경로 필터로 안 도는 workflow | **미해결 결함**(구조) | `596ab5dd`에서 실행된 8개 외 미실행: `database-contracts`, `deploy-checks`, `dependencies`, `flaskbb-parity`, `flaskbb-post-order`(경로 필터), `sdk-semantic-e2e`, `semantic-conformance`(PR 전용, push 트리거 없음) → F-03 |
@@ -179,7 +179,7 @@
 | P0-D bundle 안 compose | **해결됨** | `583c4e07`, `expr_compose_bundle.rs`, `spikes/spike-v6-transport/tests/expr_compose_bundle_http.rs` |
 | worker ctx 타입(d.ts, Protocol) | **해결됨** | `3a6edf5f` |
 | 정책 작성 경고 3종 | **해결됨** | `79f2d3e8` |
-| 주문·재고, 다중 사용자 소비자 시나리오 | **부분 해결** | `product/tests/fixtures/expr-apps/{orders,saas,community}`가 Verify의 "Run expressiveness consumer apps on PostgreSQL" step에서 매 push 실행(`verify.yml:199-206`). 항목별(재고 동시 차감, 외부 결제 대역, 여러 조직·공유 권한) 커버리지를 표로 대조한 문서는 없다 → C-03 |
+| 주문·재고, 다중 사용자 소비자 시나리오 | **해결됨**(Track C가 `teamdocs`, `storefront` 추가) | `product/tests/fixtures/expr-apps/{orders,saas,community}`가 Verify의 "Run expressiveness consumer apps on PostgreSQL" step에서 매 push 실행(`verify.yml:199-206`). 항목별(재고 동시 차감, 외부 결제 대역, 여러 조직·공유 권한) 커버리지를 표로 대조한 문서는 없다 → C-03 |
 
 ### 2.9 재작업 금지 목록(이미 해결됨, 한 줄 요약)
 
@@ -216,10 +216,10 @@
 
 | ID | 항목 | 분류 | 추정 수정 위치 | 비고 |
 |---|---|---|---|---|
-| C-01 | 최신 HEAD로 두 소비자 앱을 돌린다(과거 SHA 고정 해제) | 미해결 결함 | `verification/1.0-consumers/run.py`(SHA 단언, SDK 파일명 하드코딩), `independent-consumer-rc.yml:20`(`ref`를 `github.sha`/입력으로) | F-01과 한 쌍. SDK 아티팩트 이름은 `node product/tools/version.mjs npm-tarball`로 파생. 업그레이드 baseline 고정은 그대로 둔다. `run.py` 단독 실행은 cwd가 Core 체크아웃이고 docker와 release 빌드가 필요하다(미실행) |
-| C-02 | 소스 SHA·빌드 엔진 SHA·SDK 아티팩트 버전·출처·결과의 일치를 결과에 기록 | 미해결 | `run.py`가 JSON 요약을 쓰고 workflow가 artifact로 올린다 | C1 요구 |
-| C-03 | 신규 시나리오(주문·결제 직전, 다중 사용자 업무)와 기존 `expr-apps`의 커버리지 대조 | 근거 부족 | `product/tests/fixtures/expr-apps/{orders,saas,community}`, `verification/1.0-consumers/apps/{taskshare,stockdesk}` | 항목별 표(재고 동시 차감, 원자 생성, 가격·수량 검증, 상태 전이, 여러 조직, 공유 권한, 집계·필드 제한)를 만들고 빠진 것만 추가. 외부 결제는 대역 |
-| C-04 | 표현력 분류(선언만 / 복잡 / 확장 필요 / 원자성 깨짐 / 불가) | 부분 해결 | `plan-docs/expressiveness-1.0/audit.md`(21행, 기준 `4e132564`), `consumer-apps.md` | 감사는 `4e132564` 기준이라 P0-A~D 이후 등급을 갱신해야 한다 |
+| C-01 | 최신 HEAD로 두 소비자 앱을 돌린다(과거 SHA 고정 해제) | **해결됨**(`d627c4d7`, `b818613d`, 최종 실행 `1ce3c6ab`: `track-c.md` 2절) | `verification/1.0-consumers/run.py`(SHA 단언, SDK 파일명 하드코딩), `independent-consumer-rc.yml:20`(`ref`를 `github.sha`/입력으로) | F-01과 한 쌍. SDK 아티팩트 이름은 `node product/tools/version.mjs npm-tarball`로 파생. 업그레이드 baseline 고정은 그대로 둔다. `run.py` 단독 실행은 cwd가 Core 체크아웃이고 docker와 release 빌드가 필요하다(미실행) |
+| C-02 | 소스 SHA·빌드 엔진 SHA·SDK 아티팩트 버전·출처·결과의 일치를 결과에 기록 | **해결됨**(결과 JSON `aip-independent-consumers/1`. 엔진 SHA는 `aip --version`에 없어 `BUILD.json` `source_revision`·`binary_sha256`로 대조: `track-c.md` 2.2절) | `run.py`가 JSON 요약을 쓰고 workflow가 artifact로 올린다 | C1 요구 |
+| C-03 | 신규 시나리오(주문·결제 직전, 다중 사용자 업무)와 기존 `expr-apps`의 커버리지 대조 | **해결됨**(`expr-apps/{teamdocs,storefront}`, `PASS 87 / FAIL 0 / SKIP 0`: `track-c.md` 4절) | `product/tests/fixtures/expr-apps/{orders,saas,community}`, `verification/1.0-consumers/apps/{taskshare,stockdesk}` | 항목별 표(재고 동시 차감, 원자 생성, 가격·수량 검증, 상태 전이, 여러 조직, 공유 권한, 집계·필드 제한)를 만들고 빠진 것만 추가. 외부 결제는 대역 |
+| C-04 | 표현력 분류(선언만 / 복잡 / 확장 필요 / 원자성 깨짐 / 불가) | **해결됨**(`track-c.md` 5절, `audit.md` 머리 절). 신규 제품 결함 4건은 `track-c.md` 7절 | `plan-docs/expressiveness-1.0/audit.md`(21행, 기준 `4e132564`), `consumer-apps.md` | 감사는 `4e132564` 기준이라 P0-A~D 이후 등급을 갱신해야 한다 |
 
 ### Track D: 의미 정합·SDK
 
@@ -249,7 +249,7 @@
 
 | ID | 항목 | 분류 | 추정 수정 위치 | 비고 |
 |---|---|---|---|---|
-| F-01 | 독립 소비자 workflow를 RC에 연결 + 최신 SHA 사용 | 미해결 결함 | `release-candidate.yml`(`jobs`와 `required.needs`), `independent-consumer-rc.yml`(`workflow_call` 추가, `ref` 제거) | C-01과 같이 |
+| F-01 | 독립 소비자 workflow를 RC에 연결 + 최신 SHA 사용 | **해결됨**(Track C가 두 파일의 해당 부분만 수정: `release-candidate.yml`의 `independent-consumers` job과 `required.needs`, `independent-consumer-rc.yml`의 `workflow_call`. 실제 Actions 실행은 미확인) | `release-candidate.yml`(`jobs`와 `required.needs`), `independent-consumer-rc.yml`(`workflow_call` 추가, `ref` 제거) | C-01과 같이 |
 | F-02 | 최신 HEAD 필수 검증 재현 단일 진입점 | 미해결 | 새 `scripts/` 스크립트(가칭), `tools/verify.sh` 재사용 | 릴리스 검증은 dry-run/수동 |
 | F-03 | main push에서 경로 필터로 미실행되는 workflow | 미해결 결함(구조) | 각 workflow의 `on.push.paths`, `sdk-semantic-e2e.yml`·`semantic-conformance.yml`에 push 트리거 없음 | HEAD에서 7개 미실행(1절). PR 필수 체크화는 저장소 설정(F-07) |
 | F-04 | RC 안의 `tools/verify.sh` 이중 실행 | 근거 부족 | `scripts/release-gate.sh:94`, `verify.yml` | 의도된 격리(깨끗한 clone)인지 확인 후 판단 |
@@ -361,7 +361,7 @@ CI와 같은 컨테이너 방식은 `postgres:17`(`verify.yml` services: `POSTGR
 | worker(확장) | `cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked`, spike-v6 `write_extension_*` | node, python3. Linux는 bwrap과 `AIP_TEST_BWRAP=1` | macOS는 `Isolation::MacNetDeny`. `AIP_TEST_BWRAP=1` 없이 Linux에서 돌면 일부 시험이 **조용히 통과**한다(6.3절) |
 | SDK(TS, Python) | `node --test --test-concurrency=1 product/tests/sdk-semantic-e2e.test.mjs`, `python3 -W error::ResourceWarning -m unittest product.tests.python_sdk_test` | `npm ci --prefix spikes/spike-0-ts`, `cargo build --locked -p aip-cli`, PG17 | `sdk-semantic-e2e.yml:65-77`. 이번에 `미실행` |
 | 소비자 앱(최신) | `node product/tests/fixtures/expr-apps/run.mjs` | PG17(없으면 docker로 `postgres:17`을 띄움), `AIP_BIN` 또는 cargo 빌드, `tsc` | 실행(이번) PASS 64 |
-| 독립 소비자 | `python3 verification/1.0-consumers/run.py` | cwd가 Core 체크아웃, docker, `cargo build --release -p aip-cli`, `npm ci` | **현재 `4e132564`를 단언**. HEAD에서는 실패한다(`미실행`, C-01) |
+| 독립 소비자 | `python3 verification/1.0-consumers/run.py` | cwd가 Core 체크아웃, docker, `cargo build --release -p aip-cli`, `npm ci` | Track C 이후: 대상 SHA(`--core-sha`, 기본 checkout HEAD)와 HEAD 일치를 단언하고 결과 JSON(`--result`)에 출처를 남긴다. 최종 실행 `1ce3c6ab` exit 0 |
 | 외부 create | `AIP_BIN=… node --test product/tests/external-create-order.test.mjs` | PG17, `psql`, cli 빌드 | 실행(이번) 통과 |
 | 릴리스 게이트 | `bash scripts/release-gate.sh --baseline 4c27040c6d4a2a2931321e1980842be79512bdb0 --ref <sha> --out <새 디렉터리>` | docker native fixtures, PG, node, python | 내부에서 `tools/verify.sh`를 다시 돈다. 실행하지 않음 |
 | Core 전체 | `bash tools/verify.sh` | `AIP_TEST_DATABASE_URL`, `AIP_TEST_ADMIN_URL`, `psql`, `mypy` 2.4.0 또는 `uv`, `tsc` | 무겁다. 이번에 `미실행` |
@@ -387,7 +387,7 @@ CI와 같은 컨테이너 방식은 `postgres:17`(`verify.yml` services: `POSTGR
 | `flaskbb-post-order.yml` | 경로 필터(+ 개별 브랜치) | dispatch, call | 원본 oracle 비교(`continue-on-error` 14개), `latest_effect_match`, `diagnostics`, post-order·topic-move·post-unhide 시험 | O |
 | `sdk-semantic-e2e.yml` | **push 트리거 없음** | PR(경로 필터), dispatch, call | `cargo fmt --all -- --check`; clippy(`aip-cli`, `aip-service`, `aip-execution`); `node --test --test-concurrency=1 product/tests/sdk-semantic-e2e.test.mjs` | O |
 | `semantic-conformance.yml` | **push 트리거 없음** | PR(경로 필터), dispatch, call | `cargo test -p aip-sema --test shared_semantic_fixture`; `-p aip-cli --features poc-runtime --test core_semantic_fixture`; `-p aip-cli --test service_flow` | O |
-| `independent-consumer-rc.yml` | 브랜치 `verify/1.0-independent-consumer-20261121` push만 | dispatch | Core `4e132564` 빌드, `python3 verification/1.0-consumers/run.py` | **X**(F-01) |
+| `independent-consumer-rc.yml` | `workflow_call`(RC)·dispatch(Track C 이후) | `core_sha` 입력, 기본 `github.sha` | 대상 SHA 빌드, `python3 verification/1.0-consumers/run.py --core-sha …` | **O**(Track C. 실제 Actions 실행은 미확인) |
 | `release-candidate.yml` | — | dispatch, `release/**` push, `v*` 태그 push | 위 15개를 `workflow_call`로 호출, `required` job이 전부 `success`인지 확인 | — |
 | `release.yml` | — | `v*` 태그 push(게시), PR 경로·dispatch는 dry-run | 버전 검사, CLI·SDK 빌드, `assemble`, `publish-*`(태그 push + `release` environment 승인 시) | — (게시 금지) |
 

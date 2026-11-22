@@ -5,6 +5,8 @@
 ## [Unreleased]
 
 ### Added
+- 독립 소비자 검증(`verification/1.0-consumers`)이 과거 SHA 고정 대신 실행 대상 SHA를 쓴다: `run.py --core-sha`(CI는 `inputs.core_sha` 또는 `github.sha`)와 checkout HEAD가 다르면 실패하고, 결과 JSON에 소스 SHA·엔진(`aip --version`, 바이너리·패키지 BUILD.json)·SDK 아티팩트(npm tarball·wheel 이름·버전·sha256·내용 대조)를 기록한다. 업그레이드 baseline 고정(`aip-release-gate.yml --baseline`)은 `upgradeBaseline`에 따로 표시한다. `independent-consumer-rc.yml`을 `workflow_call`로 바꿔 `release-candidate.yml`의 `required`에 연결했다.
+- 소비자 앱 시나리오: taskshare·stockdesk를 TypeScript와 Python 클라이언트로 모두 실행하고 서버 SIGKILL·DB 연결 끊김 뒤 복구를 확인한다. `expr-apps`에 `teamdocs`(여러 조직·공유·필드 제한)와 `storefront`(결제 test double·상태 머신·재고 반환·동시성)를 추가했다(`plan-docs/stabilization-20261122/track-c.md`).
 - `release-candidate` workflow: 필수 workflow 전부를 경로 필터 없이 한 SHA에서 실행하고 모두 `success`일 때만 통과하는 집계 job (`.github/workflows/release-candidate.yml`).
 - `SECURITY.md`, `CONTRIBUTING.md`, 이 파일.
 - 문서: [1.0 지원 범위](product/SUPPORT.md)(지원 11, 조건부 7, 제외 1, PostgreSQL 17 한정, 공개 count, 계약 헤더 오류 코드), [표현력 한계와 확장 우회](product/LIMITS.md)(E1~E9), COMPATIBILITY의 1.0 호환 약속과 정의 검사 변경.
