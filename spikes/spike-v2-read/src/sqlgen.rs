@@ -106,9 +106,17 @@ impl Dialect {
         self == Dialect::MySql
     }
 
-    /// 식별자 인용. PostgreSQL은 기존 계약대로 소문자 snake 이름을 그대로 쓰고, MySQL은 예약어와 충돌하지 않게 백틱으로 감싼다.
+    /// PostgreSQL 키워드인 필드 이름은 큰따옴표로, MySQL 식별자는 백틱으로 감싼다.
     pub fn ident(self, name: &str) -> String {
         match self {
+            Dialect::Postgres
+                if matches!(
+                    name,
+                    "grant" | "order" | "group" | "limit" | "check" | "user" | "table" | "column" | "default" | "offset" | "select" | "desc"
+                ) =>
+            {
+                format!("\"{}\"", name.replace('"', "\"\""))
+            }
             Dialect::Postgres => name.to_string(),
             Dialect::MySql => format!("`{}`", name.replace('`', "``")),
         }
@@ -728,7 +736,8 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                 let ty = fd["ty"].as_str().unwrap();
                 let nullable = ty.ends_with('?');
                 let base = ty.trim_end_matches('?');
-                let col = column(facts, name, f).unwrap();
+                let raw_col = column(facts, name, f).unwrap();
+                let col = Dialect::Postgres.ident(&raw_col);
                 let sql_ty = if f == "id" && base.starts_with("Id<") {
                     // id는 서버가 만든다. seed처럼 명시 값도 받는다.
                     if crate::id_wire::id_kind(facts, name) == "uuid" {
@@ -774,8 +783,10 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                 if let Some(enc) = fd.get("encrypted") {
                     if enc.get("lookup").and_then(Value::as_str) == Some("eq") {
                         let bidx_nn = if nullable { "" } else { " NOT NULL" };
-                        cols.push(format!("{col}__bidx text{bidx_nn}"));
-                        cols.push(format!("{col}__bidx_next text"));
+                        let bidx = Dialect::Postgres.ident(&format!("{raw_col}__bidx"));
+                        let bidx_next = Dialect::Postgres.ident(&format!("{raw_col}__bidx_next"));
+                        cols.push(format!("{bidx} text{bidx_nn}"));
+                        cols.push(format!("{bidx_next} text"));
                     }
                 }
             }
@@ -809,7 +820,7 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
     for (resource, field, target) in deferred_refs {
         let id = spike_v1_fixture::digest(&serde_json::json!([resource, field]));
         let constraint = format!("aip_fk_{}", &id[..32]);
-        let col = column(facts, &resource, &field).unwrap();
+        let col = Dialect::Postgres.ident(&column(facts, &resource, &field).unwrap());
         out.push(format!("ALTER TABLE {} ADD CONSTRAINT {constraint} FOREIGN KEY ({col}) REFERENCES {}(id)", table(&resource), table(&target)));
     }
     for (name, r) in res {
@@ -820,10 +831,11 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                 .iter()
                 .map(|c| {
                     let field = c.as_str().unwrap();
-                    let col = column(facts, name, field).unwrap();
+                    let raw_col = column(facts, name, field).unwrap();
+                    let col = Dialect::Postgres.ident(&raw_col);
                     let fd = &r["fields"][field];
                     if fd.get("encrypted").and_then(|e| e.get("lookup")).and_then(Value::as_str) == Some("eq") {
-                        format!("{col}__bidx")
+                        Dialect::Postgres.ident(&format!("{raw_col}__bidx"))
                     } else {
                         col
                     }

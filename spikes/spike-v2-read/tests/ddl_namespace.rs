@@ -11,3 +11,20 @@ fn deployment_namespace_does_not_mutate_request_namespace() {
     assert_eq!(spike_v2_read::sqlgen::schema(), before);
     assert!(spike_v2_read::sqlgen::create_ddl_in("x; DROP SCHEMA public", &facts).is_err());
 }
+
+#[test]
+fn postgres_ddl_quotes_reserved_field_names() {
+    let words = ["grant", "order", "group", "limit", "check", "user", "table", "column", "default", "offset", "select", "desc"];
+    let mut fields = serde_json::Map::new();
+    fields.insert("name".into(), json!({"ty":"Text"}));
+    for word in words {
+        fields.insert(word.into(), json!({"ty":"Text"}));
+    }
+    let facts = json!({"resources":{"Item":{"fields":fields,"invariants":{}}}});
+    let ddl = spike_v2_read::sqlgen::create_ddl_in("aip_reserved_fields", &facts).unwrap().join("\n");
+    for word in words {
+        assert!(ddl.contains(&format!("\"{word}\" text NOT NULL")), "{word}: {ddl}");
+    }
+    assert!(ddl.contains("name text NOT NULL"), "ordinary identifiers retain their spelling: {ddl}");
+    assert_eq!(spike_v2_read::sqlgen::Dialect::Postgres.ident("grant"), "\"grant\"");
+}

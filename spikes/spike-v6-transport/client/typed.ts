@@ -166,8 +166,23 @@ function validDecimal(value: string, type: string): boolean {
   return integerDigits <= precision - scale;
 }
 
+function validJson(value: unknown, seen = new Set<object>()): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object" || seen.has(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return false;
+  if (Object.getOwnPropertySymbols(value).length !== 0) return false;
+  seen.add(value);
+  const valid = Array.isArray(value)
+    ? Object.keys(value).length === value.length && value.every((item) => validJson(item, seen))
+    : Object.values(value).every((item) => validJson(item, seen));
+  seen.delete(value);
+  return valid;
+}
+
 function validScalar(value: unknown, d: ScalarDescriptor, wire: IdWireKind): boolean {
-  if (value === null) return d.nullable === true;
+  if (value === null) return d.type === "Json" || d.nullable === true;
   if (d.range !== undefined) {
     if (!Array.isArray(d.range) || d.range.length !== 2 || !d.range.every(Number.isSafeInteger)) return false;
     const measured = typeof value === "string" ? [...value].length : typeof value === "number" ? value : NaN;
@@ -185,6 +200,7 @@ function validScalar(value: unknown, d: ScalarDescriptor, wire: IdWireKind): boo
     case "Email": return typeof value === "string" && validEmail(value);
     case "Date": return typeof value === "string" && validDate(value);
     case "Time": return typeof value === "string" && validTime(value);
+    case "Json": return validJson(value);
     case "Enum": return typeof value === "string" && Array.isArray(d.values) && d.values.includes(value);
     default: return false;
   }
