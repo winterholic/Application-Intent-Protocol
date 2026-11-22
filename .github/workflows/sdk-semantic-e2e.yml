@@ -72,7 +72,7 @@ jobs:
           rustup component add rustfmt clippy
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y postgresql-client bubblewrap apparmor
       - name: Build service CLI
         run: cargo build --locked -p aip-cli
       - name: Check formatting and changed crate Clippy
@@ -81,6 +81,25 @@ jobs:
           cargo clippy --locked --all-targets --no-deps -p aip-cli -p aip-service -p aip-execution -- -D warnings
       - name: Validate isolated PostgreSQL target
         run: node --input-type=module -e 'import { requireTestDatabase } from "./product/test-support/postgres-guard.mjs"; const target = requireTestDatabase(); console.log(`${target.host}:${target.port}/${target.dbname}`)'
+      - name: Configure CI Bubblewrap user namespace policy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+            # A separate attachment avoids overriding distribution or third-party bwrap profiles.
+            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
+            mkdir -p "$sandbox_bin"
+            cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
+            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
+            echo "$sandbox_bin" >> "$GITHUB_PATH"
+          fi
       # The D5 measurement asserts contract-header codes and fixed aggregate deadline semantics. Its lock probe holds a table for about 7 seconds, so keep it in this isolated PG17 job, not the DB-free SDK regressions.
       - name: Run generated SDK and D semantic journeys on PostgreSQL 17
         run: >-
