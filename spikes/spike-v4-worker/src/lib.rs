@@ -490,7 +490,8 @@ fn check_read_value(facts: &Value, ty: &str, value: &Value, wire: IdWire, output
     let base = ty.trim_end_matches('?');
     let code = if output { "WIRE.OUTPUT_INVALID" } else { "WIRE.BAD_VALUE" };
     if value.is_null() {
-        return if ty.ends_with('?') { Ok(()) } else { rej(code, format!("{ty} null 불가")) };
+        // JSON null is a value of type Json, not a missing one (check_typed does the same for the legacy wire).
+        return if ty.ends_with('?') || base == "Json" { Ok(()) } else { rej(code, format!("{ty} null 불가")) };
     }
     if base.starts_with("Id<") || base.starts_with("Ref<") {
         if spike_v2_read::id_wire::id_cast(facts, base) == "uuid" {

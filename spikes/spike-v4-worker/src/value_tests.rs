@@ -1,5 +1,6 @@
-use super::check_record;
+use super::{check_read_record, check_record};
 use serde_json::{json, Value};
+use spike_v2_read::id_wire::IdWire;
 
 fn check(field: &str, ty: &str, value: Value, what: &str) -> Result<(), spike_v2_read::plan::Reject> {
     let facts = json!({ "enums": { "Role": ["ADMIN", "MEMBER"] } });
@@ -86,4 +87,20 @@ fn decimal_worker_input_and_output_are_lossless_strings_with_declared_precision(
 #[test]
 fn json_null_is_a_json_value_even_when_the_field_is_not_nullable() {
     check("payload", "Json", Value::Null, "입력").expect("JSON null is a value, not a missing input field");
+}
+
+#[test]
+fn json_null_is_a_json_value_on_every_id_wire_and_in_both_directions() {
+    let facts = json!({ "enums": {} });
+    let decl = json!([["payload", "Json"]]);
+    for wire in [IdWire::Legacy, IdWire::SafeNumber, IdWire::DecimalString] {
+        for what in ["입력", "출력"] {
+            check_read_record(&facts, &decl, &json!({ "payload": Value::Null }), what, wire)
+                .unwrap_or_else(|error| panic!("{wire:?} {what}: Json null must be accepted, got {}: {}", error.code, error.msg));
+        }
+    }
+    // A missing key is still not a Json null, and other non-nullable scalars still reject null.
+    assert_eq!(check_read_record(&facts, &decl, &json!({}), "입력", IdWire::DecimalString).unwrap_err().code, "WIRE.BAD_VALUE");
+    let text = json!([["name", "Text"]]);
+    assert_eq!(check_read_record(&facts, &text, &json!({ "name": Value::Null }), "입력", IdWire::DecimalString).unwrap_err().code, "WIRE.BAD_VALUE");
 }
