@@ -17,6 +17,28 @@ fn product_cli_checks_the_caller_definition() {
     assert_eq!(result["executionDigest"].as_str().unwrap().len(), 64);
 }
 
+#[test]
+fn postgres_init_check_reports_default_database_incompatibility_without_connecting() {
+    let dir = tempfile::tempdir().unwrap();
+    let definition = dir.path().join("default.aip");
+    std::fs::write(&definition, "actor principal\nresource Item { fields { id: Id; createdAt: Time default database } rows read when false }\n")
+        .unwrap();
+    let path = definition.to_str().unwrap();
+
+    let generic = aip(&["service", "check", path]);
+    assert_eq!(generic.status.code(), Some(0), "generic check validates definition syntax and semantics");
+
+    let managed = aip(&["service", "check", path, "--for-postgres-init"]);
+    assert_eq!(managed.status.code(), Some(1), "the target-specific check must reject before any database access");
+    assert!(managed.stdout.is_empty());
+    let error: Value = serde_json::from_slice(&managed.stderr).unwrap();
+    assert_eq!(error["code"], "EXTERNAL_DEFAULT_REQUIRED", "{error}");
+
+    std::fs::write(&definition, "actor principal\nresource Item { fields { id: Id; createdAt: Time } rows read when false }\n").unwrap();
+    let compatible = aip(&["service", "check", path, "--for-postgres-init"]);
+    assert_eq!(compatible.status.code(), Some(0), "a managed-init-compatible definition passes the same check");
+}
+
 /// The part of the `service check` JSON a tool may rely on, checked as a minimum: the keys below must exist with these types, and
 /// any other key is ignored. Adding an optional field must not break this (G3 of `plan-docs/hardening-1.0/diagnostics-contract.md`);
 /// removing or retyping one of these must.

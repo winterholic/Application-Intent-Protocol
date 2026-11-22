@@ -40,11 +40,14 @@ pub enum Command {
         #[arg(long, requires = "discovery_url")]
         expected_issuer: Option<String>,
     },
-    /// Validate any of the five caller-definition formats
+    /// Validate any of the five caller-definition formats; optionally check compatibility with PostgreSQL managed init
     Check {
         file: PathBuf,
         #[arg(long)]
         dev_checks: bool,
+        /// Also validate the definition against the PostgreSQL owned-schema init path (no database connection).
+        #[arg(long)]
+        for_postgres_init: bool,
     },
     /// Generate a caller read/apply binding for the shared product SDK
     Gen {
@@ -993,8 +996,11 @@ pub async fn run(command: Command) -> Result<Value, Value> {
                 json!({"ok":true,"stages":{"discovery":"passed","issuer":"matched","jwks":"valid","tls":"verified"},"metadata":{"keyCount":result.key_count,"algorithms":result.algorithms}}),
             )
         }
-        Command::Check { file, dev_checks } => {
+        Command::Check { file, dev_checks, for_postgres_init } => {
             let checked = load(&file, dev_checks)?;
+            if for_postgres_init {
+                aip_migrate::creation("aip_check", &checked.output.execution)?;
+            }
             let worker_extensions = worker_extensions(&checked.output.execution);
             Ok(check_report(&checked, worker_extensions))
         }
