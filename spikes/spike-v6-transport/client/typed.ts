@@ -2,7 +2,7 @@ import { connect, isIdWire, validResultId, type ApplyOptions } from "./transport
 import { createJobsClient } from "./jobs.ts";
 import { createInfrastructureClient } from "./infrastructure.ts";
 import { createRagClient } from "./rag.ts";
-import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, WriteBinding, CreateContractShape, ComposeContractShape, BundleRequest, BundleBuilder, CheckedBundle, Created, BundleResult, ComposeRequest, ComposeResult, PendingWrite, ExtensionContractShape, ExtensionDescriptors, OperationDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
+import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, WriteBinding, CreateContractShape, ComposeContractShape, BundleRequest, BundleBuilder, Created, BundleResult, ComposeRequest, ComposeResult, PendingWrite, ExtensionContractShape, ExtensionDescriptors, OperationDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
 
 export function connectTypedApply<C extends ContractShape<C>, A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}>(base: string, token: string | null, binding: ApplyBinding<C, A> & WriteBinding<Cr, Cp>, fetchImpl: typeof fetch = fetch) {
   const idWire = binding?.idWire;
@@ -15,27 +15,9 @@ export function connectTypedApply<C extends ContractShape<C>, A extends ApplyCon
 // 전이만 있는 계약에서 `bundle()`을 쓰면 그 pending 결과는 `applied` 유무로 좁혀 읽는다(README의 한계).
 type PendingOf<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>, Cp extends ComposeContractShape<Cp>> = [keyof Cr | keyof Cp] extends [never] ? PendingResult<A> : PendingWrite<A, Cr, Cp>;
 
-/**
- * `bundle`의 호출 형태 둘. 빌더 함수, 또는 원시 요청(`{ atomic: [...] }`). 원시 요청에서 `refs`를 쓴 create는 참조로 채운 필드를 `values`에서 빼고
- * 나머지 필수 필드를 모두 줘야 컴파일된다(`CheckedBundle`). 변수에 담긴 `BundleRequest`는 기존처럼 그대로 받는다.
- */
-interface BundleFn<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>, Cp extends ComposeContractShape<Cp>> {
-  (builder: (builder: BundleBuilder<A, Cr, Cp>) => void, options?: ApplyOptions): Promise<BundleResult<A, Cr, Cp>>;
-  <const R extends BundleRequest<A, Cr, Cp>>(request: R & CheckedBundle<R, Cr>, options?: ApplyOptions): Promise<BundleResult<A, Cr, Cp>>;
-}
-
 // 전이 하나(apply), 공개 동작 묶음(bundle), 대상 목록 조합(compose)은 같은 /apply 경로와 같은 멱등 키·재확정 규칙을 쓴다.
 function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}>(client: ReturnType<typeof typedClient<C>>) {
   const { callManaged, ...publicClient } = client;
-  const bundle: BundleFn<A, Cr, Cp> = ((request: BundleRequest<A, Cr, Cp> | ((builder: BundleBuilder<A, Cr, Cp>) => void), options?: ApplyOptions): Promise<BundleResult<A, Cr, Cp>> => {
-    let body: BundleRequest<A, Cr, Cp>;
-    try {
-      body = typeof request === "function" ? buildBundle<A, Cr, Cp>(request) : request;
-    } catch (error) {
-      return Promise.reject(error);
-    }
-    return client.apply(body, options) as Promise<BundleResult<A, Cr, Cp>>;
-  }) as BundleFn<A, Cr, Cp>;
   return {
     ...publicClient,
     apply<const K extends keyof A & string>(request: ApplyRequest<A, K> & { readonly apply: K }, options?: ApplyOptions): Promise<ApplyResult<A[K]["idOutput"]>> {
@@ -46,7 +28,15 @@ function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>
      * 원시 요청(`{ atomic: [...] }`) 또는 빌더 함수를 받는다. 빌더의 `create`가 돌려주는 핸들은 뒤 연산의 `refs`·`target`에 넣어
      * 서버가 만든 행의 id로 풀게 한다(`bundle(b => { const o = b.create("Order", {...}); b.create("Line", {...}, { order: o }); })`).
      */
-    bundle,
+    bundle(request: BundleRequest<A, Cr, Cp> | ((builder: BundleBuilder<A, Cr, Cp>) => void), options?: ApplyOptions): Promise<BundleResult<A, Cr, Cp>> {
+      let body: BundleRequest<A, Cr, Cp>;
+      try {
+        body = typeof request === "function" ? buildBundle<A, Cr, Cp>(request) : request;
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      return client.apply(body, options) as Promise<BundleResult<A, Cr, Cp>>;
+    },
     /** 서버가 공개한 조합(`expose compose`): 대상 목록에 허용된 전이·생성 단계를 조합한다. */
     compose<const K extends keyof Cp & string>(request: ComposeRequest<Cp, K> & { readonly compose: K }, options?: ApplyOptions): Promise<ComposeResult<Cp, K>> {
       return client.apply(request, options) as Promise<ComposeResult<Cp, K>>;

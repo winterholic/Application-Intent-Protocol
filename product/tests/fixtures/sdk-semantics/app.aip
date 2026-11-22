@@ -40,6 +40,14 @@ resource Order {
   expose apply confirm { target id; bulk maxRows 3 }
   expose create { allow owner = actor and status = "open"; fields owner, status, total }
   expose compose { bulk maxRows 3; transitions confirm }
+  extension write place {
+    input { owner: Member.Id; product: Product.Id; explode: Bool }
+    output { id: Order.Id }
+    access create.Order, create.OrderLine
+    effect db
+    deadline 3s
+    implementation "sdk.place"
+  }
 }
 resource OrderLine {
   fields { id: Id; order: Order; product: Product; qty: Int(1..100); price: Decimal(10,2); note: Text? }
