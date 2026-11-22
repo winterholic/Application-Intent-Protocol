@@ -82,9 +82,25 @@ type ResourceOf<Name extends string> = Name extends `${infer R}.${string}` ? R :
 export type BundleApplyRequest<A extends ApplyContractShape<A>, K extends keyof A & string = keyof A & string> = {
   [Name in K]: { readonly apply: Name; readonly target: ApplyTarget<A[Name]> | ("id" extends A[Name]["targets"] ? Created<ResourceOf<Name>> : never) } & ApplyInput<A[Name]>
 }[K];
-/** `refs`를 쓰는 create의 원시 형식. 참조로 채운 필드는 `values`에서 빼도 된다(필수 필드 검사는 서버가 한다). */
+type LastOf<T> = U2I<T extends unknown ? () => T : never> extends () => infer L ? L : never;
+type UnionTuple<U, L = LastOf<U>> = [U] extends [never] ? [] : [...UnionTuple<Exclude<U, L>>, L];
+/**
+ * 참조 필드마다 "refs로 채움 / values로 채움" 중 하나를 고른 모든 조합(공집합 제외). refs로 채운 필드는 `values`에서 빼고(중복 금지) 나머지 필수
+ * 필드는 모두 요구한다. 참조 필드가 6개를 넘으면 조합이 너무 많아져 values를 `Partial`로 두던 이전 형식으로 돌아간다.
+ */
+type RefSplit<S extends CreateShape, Fs extends readonly string[], Skip, Rf> =
+  Fs extends readonly [infer F extends string, ...infer Rest extends readonly string[]]
+    ? RefSplit<S, Rest, Skip & { readonly [P in F]?: never }, Rf & { readonly [P in F]: Created<RefTarget<S["fields"][F]>> }> | RefSplit<S, Rest, Skip, Rf>
+    : [keyof Rf] extends [never] ? never : { readonly values: Omit<CreateValues<S>, keyof Rf> & Skip; readonly refs: Rf };
+type RefOp<N extends string, S extends CreateShape> = UnionTuple<keyof CreateRefs<S> & string> extends infer Fs extends readonly string[]
+  ? Fs["length"] extends 0 ? never
+    : `${Fs["length"]}` extends "1" | "2" | "3" | "4" | "5" | "6"
+      ? { readonly create: N } & RefSplit<S, Fs, {}, {}>
+      : { readonly create: N; readonly values: Partial<CreateValues<S>>; readonly refs: CreateRefs<S> }
+  : never;
+/** `refs`를 쓰는 create의 원시 형식. 참조로 채운 필드는 `values`에서 빼야 하고 나머지 필수 필드는 그대로 요구한다(필수 필드 검사는 서버도 한다). */
 export type CreateOpWithRefs<Cr extends CreateContractShape<Cr>, K extends keyof Cr & string = keyof Cr & string> = {
-  [N in K]: { readonly create: N; readonly values: Partial<CreateValues<Cr[N]>>; readonly refs: CreateRefs<Cr[N]> }
+  [N in K]: RefOp<N, Cr[N]>
 }[K];
 /** 한 요청에 묶는 공개 동작: 서버가 선언한 `expose apply` 전이와 `expose create`만 고를 수 있다. 하나 이상. */
 export type BundleOp<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>, Cp extends ComposeContractShape<Cp> = {}> =
@@ -93,18 +109,6 @@ export type BundleOp<A extends ApplyContractShape<A>, Cr extends CreateContractS
   | ComposeRequest<Cp>;
 /** `T`의 키 가운데 `Allowed`에 없는 것은 값을 never로 만들어 추론된 객체의 초과 키를 거부한다. */
 export type NoExtraKeys<T, Allowed> = { readonly [K in Exclude<keyof T, keyof Allowed>]: never };
-/**
- * 원시 묶음 요청의 create 연산 검사. `refs`가 있는 연산은 참조로 채우는 필드를 `values`에서 빼고(중복 금지) 나머지 필수 필드를 모두 요구한다.
- * 변수에 담긴 `BundleRequest`처럼 `refs` 키가 선택인 형태는 검사하지 않는다(리터럴이 아니라 어떤 필드가 참조인지 알 수 없다).
- */
-export type CheckedBundle<R, Cr extends CreateContractShape<Cr>> = R extends { readonly atomic: infer Ops extends readonly unknown[] }
-  ? { readonly atomic: { readonly [I in keyof Ops]: CheckedBundleOp<Ops[I], Cr> } }
-  : unknown;
-type CheckedBundleOp<Op, Cr extends CreateContractShape<Cr>> = Op extends { readonly create: infer N extends keyof Cr & string; readonly refs: infer Rf }
-  ? {} extends Rf
-    ? unknown
-    : { readonly values: Omit<CreateValues<Cr[N]>, keyof Rf> & { readonly [P in keyof Rf]?: never } }
-  : unknown;
 /**
  * 묶음 빌더(`client.bundle(b => { ... })`). 연산은 호출 순서대로 쌓이고 `create`가 돌려주는 핸들을 뒤 연산의 `refs`·`target`에 넣는다.
  * 핸들은 이 빌더가 만든 것만 받는다. 요청은 빌더가 끝난 뒤 한 번에 보내진다.
