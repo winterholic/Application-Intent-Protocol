@@ -1209,22 +1209,22 @@ async fn execute_inner(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease:
     // The worker is gone; what is left is recording how the run ended. A step that fails before the decision changed nothing, so it is
     // tried again a few times: giving up silently would leave a cancelled run in CANCEL_REQUESTED until its lease expires, and it would
     // then fail as CANCELLATION_UNCONFIRMED although the stop was observed.
-    let mut ack_unknown = None;
+    let mut outcome_unknown = None;
     let mut last_failure = "";
     let mut decided = None;
     for attempt in 0..SETTLE_ATTEMPTS {
         if attempt > 0 {
             tokio::time::sleep(SETTLE_BACKOFF * 2u32.pow(attempt as u32 - 1)).await;
         }
-        match settle_attempt(&rt, &facts, wire, &store, &lease, &grant, &result, retry_after_ms, ack_unknown).await {
+        match settle_attempt(&rt, &facts, wire, &store, &lease, &grant, &result, retry_after_ms, outcome_unknown.as_ref()).await {
             Settlement::Decided { state, code } => {
                 decided = Some((state, code));
                 break;
             }
             Settlement::Transient(step) => last_failure = step,
-            Settlement::AckUnknown { state, code } => {
-                ack_unknown = Some((state, code));
-                last_failure = "cancel commit";
+            Settlement::AckUnknown(expected) => {
+                outcome_unknown = Some(expected);
+                last_failure = "outcome commit";
             }
         }
     }
@@ -1249,8 +1249,37 @@ enum Settlement {
     Decided { state: &'static str, code: Option<&'static str> },
     /// A step before the decision failed. Nothing was changed, so another attempt may succeed.
     Transient(&'static str),
-    /// The cancellation was recorded but the COMMIT did not answer: it may or may not be stored. The next attempt looks before it acts.
-    AckUnknown { state: &'static str, code: Option<&'static str> },
+    /// The outcome COMMIT did not answer: the next bounded attempt checks the exact current attempt before it reports a result.
+    AckUnknown(OutcomeExpectation),
+}
+
+#[derive(Clone)]
+struct OutcomeExpectation {
+    /// The state reported in metrics and spans; `RETRY` is persisted as `QUEUED` or `FAILED`.
+    state: &'static str,
+    code: Option<&'static str>,
+    output: Option<Value>,
+}
+
+impl OutcomeExpectation {
+    fn matches(&self, row: &tokio_postgres::Row, lease: &Lease) -> bool {
+        let stored_state: String = row.get(0);
+        let state_matches = match self.state {
+            "RETRY" => matches!(stored_state.as_str(), "QUEUED" | "FAILED"),
+            expected => stored_state == expected,
+        };
+        let epoch: i64 = row.get(1);
+        let attempt: i32 = row.get(2);
+        let lease_owner: Option<String> = row.get(3);
+        let output: Option<Value> = row.get(4);
+        let error: Option<String> = row.get(5);
+        state_matches
+            && epoch == lease.epoch
+            && attempt == lease.attempt
+            && lease_owner.is_none()
+            && output == self.output
+            && error.as_deref() == self.code
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1263,7 +1292,7 @@ async fn settle_attempt(
     grant: &DurablePrincipal,
     result: &Result<Value>,
     retry_after_ms: Option<i64>,
-    ack_unknown: Option<(&'static str, Option<&'static str>)>,
+    outcome_unknown: Option<&OutcomeExpectation>,
 ) -> Settlement {
     let Ok(mut db) = connect(rt).await else { return Settlement::Transient("connect") };
     let Ok(tx) = db.transaction().await else { return Settlement::Transient("begin") };
@@ -1288,12 +1317,17 @@ async fn settle_attempt(
     };
     if observed.is_none() {
         // The lease no longer names this run. After an unanswered COMMIT that is how an acknowledgement that did go through looks.
-        if let Some((state, code)) = ack_unknown {
-            let stored = tx.query_opt(&format!("SELECT state FROM {s}.aip_jobs WHERE id=$1"), &[&lease.run_id]).await;
+        if let Some(expected) = outcome_unknown {
+            let stored = tx
+                .query_opt(
+                    &format!("SELECT state,lease_epoch,attempt,lease_owner,output,error FROM {s}.aip_jobs WHERE id=$1 AND owner=$2 FOR UPDATE"),
+                    &[&lease.run_id, &lease.owner],
+                )
+                .await;
             match stored {
-                Ok(Some(row)) if row.get::<_, String>(0) == state => return Settlement::Decided { state, code },
+                Ok(Some(row)) if expected.matches(&row, lease) => return Settlement::Decided { state: expected.state, code: expected.code },
                 Ok(_) => {}
-                Err(_) => return Settlement::Transient("cancel verification"),
+                Err(_) => return Settlement::Transient("outcome verification"),
             }
         }
     }
@@ -1308,7 +1342,10 @@ async fn settle_attempt(
         };
         match updated {
             Ok(true) => {}
-            Ok(false) => eprintln!("{{\"event\":\"job_cancel_unconfirmed\",\"id\":\"{}\"}}", lease.run_id),
+            Ok(false) => {
+                eprintln!("{{\"event\":\"job_cancel_update_rejected\",\"id\":\"{}\",\"epoch\":{}}}", lease.run_id, lease.epoch);
+                return Settlement::Transient("cancel update rejected");
+            }
             Err(_) => return Settlement::Transient("cancel update"),
         }
         return match tx.commit().await {
@@ -1316,7 +1353,7 @@ async fn settle_attempt(
                 let _ = db.release().await;
                 Settlement::Decided { state, code }
             }
-            Err(_) => Settlement::AckUnknown { state, code },
+            Err(_) => Settlement::AckUnknown(OutcomeExpectation { state, code, output: None }),
         };
     }
     let checked = async {
@@ -1347,6 +1384,7 @@ async fn settle_attempt(
         Err(code) if retryable(rt, &lease.operation, code) => ("RETRY", Some(*code)),
         Err(code) => ("FAILED", Some(*code)),
     };
+    let expected_output = settled.as_ref().ok().cloned();
     let updated = match settled {
         Ok(out) => store.finish(&tx, lease, out).await,
         Err(code) if retryable(rt, &lease.operation, code) => store.retry_after(&tx, lease, code, retry_after_ms).await,
@@ -1354,15 +1392,18 @@ async fn settle_attempt(
     };
     match updated {
         Ok(true) => {}
-        Ok(false) => eprintln!("{{\"event\":\"job_outcome_rejected\",\"id\":\"{}\",\"epoch\":{}}}", lease.run_id, lease.epoch),
+        Ok(false) => {
+            eprintln!("{{\"event\":\"job_outcome_update_rejected\",\"id\":\"{}\",\"epoch\":{}}}", lease.run_id, lease.epoch);
+            return Settlement::Transient("outcome update rejected");
+        }
         // A failed statement aborted the transaction: committing it would record nothing.
         Err(_) => return Settlement::Transient("outcome update"),
     }
     if tx.commit().await.is_err() {
-        eprintln!("{{\"event\":\"job_outcome_commit_unknown\",\"id\":\"{}\"}}", lease.run_id);
-    } else {
-        let _ = db.release().await;
+        eprintln!("{{\"event\":\"job_outcome_commit_unknown\",\"id\":\"{}\",\"epoch\":{}}}", lease.run_id, lease.epoch);
+        return Settlement::AckUnknown(OutcomeExpectation { state: job_state, code: job_code, output: expected_output });
     }
+    let _ = db.release().await;
     Settlement::Decided { state: job_state, code: job_code }
 }
 

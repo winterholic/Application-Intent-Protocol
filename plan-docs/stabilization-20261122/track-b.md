@@ -123,7 +123,7 @@ PROBE_N=<동시 요청> PROBE_ROWS=<대상 행> PROBE_ORDER=opposite|shuffle|sor
 
 ## 3. B2: durable·transport 정산 불변식
 
-여섯 불변식의 코드는 `spikes/spike-v6-transport/src/{durable,lib}.rs` 및 기존 B 책임 영역에 반영했다. PostgreSQL 실행 결과는 이 worktree에서 만들지 않았다. 아래 DB 회귀의 실행은 필수 PostgreSQL 17 CI에 남긴다.
+여섯 불변식의 코드는 `spikes/spike-v6-transport/src/{durable,lib}.rs` 및 기존 B 책임 영역에 반영했다. 기존 여섯 회귀는 앞선 작업에서 컴파일까지만 했고 PG17 실행은 Verify에 남아 있다. 이번 정산 후속 표적 실행 결과는 아래에 별도로 기록한다.
 
 | # | 불변식 | 회귀 | 검증 |
 |---:|---|---|---|
@@ -133,6 +133,19 @@ PROBE_N=<동시 요청> PROBE_ROWS=<대상 행> PROBE_ORDER=opposite|shuffle|sor
 | 4 | 취소 확인 행 조회 연결 오류를 “취소 없음”으로 취급하지 않고 정산을 재시도한다. | `cancel_is_confirmed_after_the_job_row_lookup_loses_its_connection` | durable fault-proxy 시험, PG17 CI 실행 대상 |
 | 5 | 취소 UPDATE 뒤 COMMIT이 DB에 도달하지 않은 경우 정산을 재시도한다. | `cancel_is_confirmed_after_the_commit_never_reaches_postgres` | durable fault-proxy 시험, PG17 CI 실행 대상 |
 | 6 | COMMIT은 반영됐으나 ACK만 유실되면 저장 상태를 확인하고 취소 결과를 보존한다. | `cancel_stays_cancelled_when_the_commit_ack_is_lost` | durable fault-proxy 시험, PG17 CI 실행 대상 |
+
+정산 후속 회귀(2026-11-22): `durable_cancel_settlement.rs`에 취소/일반 결과 UPDATE 0행, 일반 완료 COMMIT 미전달 재시도, COMMIT ACK 뒤 동일한 현재 시도 결과의 확인과 다른 저장 결과의 거부를 추가했다. 기존 유한 재시도 경계 안에서 행 수·epoch·attempt·state/code/output을 확인하며, 작업 실행 횟수는 1로 유지한다. 로컬에서 이미 실행 중인 PostgreSQL 17(55422)에 연결해 표적 파일을 실행했고 DB를 시작하거나 재기동하지 않았다.
+
+```
+env -u PGHOST -u PGPORT -u PGUSER -u PGDATABASE -u PGPASSWORD -u PGSERVICE -u PGSERVICEFILE \
+  AIP_TEST_DATABASE_URL='host=127.0.0.1 port=55422 dbname=aip_test_ci user=runner' \
+  AIP_TEST_ADMIN_URL='host=127.0.0.1 port=55422 dbname=postgres user=runner' \
+  cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --features test-db \
+    --target-dir target --test durable_cancel_settlement
+test result: ok. 8 passed; 0 failed; 0 ignored
+```
+
+구현 전 RED에서는 취소/일반 결과 UPDATE 0행의 확정 메트릭, DB 미도달 COMMIT 뒤 성공 오보고, 다른 저장 결과를 현재 시도 성공으로 확정하는 네 회귀가 실패했고 기존 취소 오류·ACK 회귀 3개는 통과했다. 구현 후 정상 결과와 손실 ACK의 일치/불일치도 포함해 같은 명령에서 8개 모두 통과했다.
 
 비DB 검사 실행 결과:
 

@@ -24,6 +24,9 @@ const DATABASE: &str = aip_test_support::test_database_url!();
 const CANCEL_LOOKUP: &str = "lease_owner=$3 FOR UPDATE";
 /// `Store::acknowledge_cancel`의 UPDATE에만 있는 조각이다. 이 문장을 보낸 연결에서만 COMMIT 단계 장애를 일으킨다.
 const CANCEL_ACK: &str = "state='CANCELLED'";
+/// `Store::finish`의 UPDATE에만 있는 조각이다. 이 문장을 보낸 연결에서만 COMMIT 단계 장애를 일으킨다.
+const FINISH_UPDATE: &str = "state='SUCCEEDED',output=$5";
+const METRICS_TOKEN: &str = "settlement-test";
 
 static SCHEMA_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -97,8 +100,31 @@ async fn post(addr: SocketAddr, path: &str, fp: &str, body: Value) -> Value {
     serde_json::from_str(String::from_utf8(out).unwrap().split_once("\r\n\r\n").unwrap().1).unwrap()
 }
 
+async fn metrics(addr: SocketAddr) -> String {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(
+            format!("GET /metrics HTTP/1.1\r\nhost: localhost\r\nauthorization: Bearer {METRICS_TOKEN}\r\nconnection: close\r\n\r\n").as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut out = Vec::new();
+    tokio::time::timeout(Duration::from_secs(8), stream.read_to_end(&mut out)).await.unwrap().unwrap();
+    String::from_utf8(out).unwrap().split_once("\r\n\r\n").unwrap().1.to_string()
+}
+
+fn job_metric(metrics: &str, operation: &str, state: &str) -> u64 {
+    let prefix = format!("aip_jobs_total{{operation=\"{operation}\",state=\"{state}\",code=\"");
+    metrics
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .and_then(|line| line.split_whitespace().last())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
 /// 취소한 `slow` job(worker가 5초 잠든다)의 마지막 상태. 장애 뒤에도 몇 초 안에 끝나지 않으면 마지막으로 본 상태를 돌려준다.
-async fn cancel_slow_job(fault: Fault, needle: Option<&'static str>) -> (Value, String) {
+async fn cancel_slow_job(fault: Option<(Fault, Option<&'static str>)>, suppress_update: bool) -> (Value, String, u64) {
     let _lock = SCHEMA_LOCK.lock().await;
     let schema = format!("aip_dur_cancel_{}", std::process::id());
     sqlgen::set_schema(&schema);
@@ -112,17 +138,33 @@ async fn cancel_slow_job(fault: Fault, needle: Option<&'static str>) -> (Value, 
         ))
         .await
         .unwrap();
+    if suppress_update {
+        direct
+            .batch_execute(&format!(
+                "CREATE FUNCTION {schema}.suppress_cancelled_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='CANCELLED' THEN RETURN NULL; END IF; RETURN NEW; END $$; \
+                 CREATE TRIGGER suppress_cancelled_update BEFORE UPDATE ON {schema}.aip_jobs FOR EACH ROW EXECUTE FUNCTION {schema}.suppress_cancelled_update()"
+            ))
+            .await
+            .unwrap();
+    }
     let iat: i64 = direct.query_one("SELECT floor(extract(epoch from clock_timestamp()))::bigint", &[]).await.unwrap().get(0);
     let fingerprint = spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, IdWire::DecimalString);
-    let (proxy, fired) = match needle {
-        Some(needle) => start_after(needle, fault).await,
-        None => start(fault).await,
+    let (database_url, fired) = match fault {
+        Some((fault, Some(needle))) => {
+            let (proxy, fired) = start_after(needle, fault).await;
+            (aip_test_support::database_url_via_proxy(proxy.port()), Some(fired))
+        }
+        Some((fault, None)) => {
+            let (proxy, fired) = start(fault).await;
+            (aip_test_support::database_url_via_proxy(proxy.port()), Some(fired))
+        }
+        None => (DATABASE.to_string(), None),
     };
     let server = listen_with_infrastructure(
         facts.clone(),
         IdWire::DecimalString,
         "127.0.0.1:0".parse().unwrap(),
-        aip_test_support::database_url_via_proxy(proxy.port()),
+        database_url,
         Some(ReadExtensions { lang: WorkerLang::Node, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
         ServerOptions::default(),
         false,
@@ -131,10 +173,15 @@ async fn cancel_slow_job(fault: Fault, needle: Option<&'static str>) -> (Value, 
         None,
         false,
         // Cancelling does not depend on the worker sandbox (`Auto` needs bwrap on Linux).
-        Infrastructure { worker_launch: WorkerLaunchConfig { isolation: Isolation::None, ..Default::default() }, ..Default::default() },
+        Infrastructure {
+            worker_launch: WorkerLaunchConfig { isolation: Isolation::None, ..Default::default() },
+            metrics_token: Some(METRICS_TOKEN.into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
+    let before = job_metric(&metrics(server.address).await, "slow", "CANCELLED");
     let queued = post(server.address, "/jobs/enqueue", &fingerprint, json!({"operation":"slow","input":{},"key":"cancel-me","delayMs":0})).await;
     let id = queued["run"]["id"].as_str().unwrap_or_else(|| panic!("enqueue: {queued}")).to_string();
     // The worker is running its 5s sleep once the job is RUNNING; cancelling earlier would just cancel a queued job.
@@ -148,19 +195,114 @@ async fn cancel_slow_job(fault: Fault, needle: Option<&'static str>) -> (Value, 
     let cancelled = post(server.address, "/jobs/cancel", &fingerprint, json!({"id":id})).await;
     assert_eq!(cancelled["ok"], true, "{cancelled}");
     let mut status = Value::Null;
-    for _ in 0..160 {
+    if suppress_update {
+        tokio::time::sleep(Duration::from_millis(750)).await;
         status = post(server.address, "/jobs/status", &fingerprint, json!({"id":id})).await;
-        if !["QUEUED", "RUNNING", "CANCEL_REQUESTED"].contains(&status["run"]["state"].as_str().unwrap_or("")) {
-            break;
+    } else {
+        for _ in 0..160 {
+            status = post(server.address, "/jobs/status", &fingerprint, json!({"id":id})).await;
+            if !["QUEUED", "RUNNING", "CANCEL_REQUESTED"].contains(&status["run"]["state"].as_str().unwrap_or("")) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let phase = tokio::time::timeout(Duration::from_secs(1), fired)
-        .await
-        .unwrap_or_else(|_| panic!("the proxy must have injected its fault; status={status}"))
-        .unwrap();
+    let phase = if let Some(fired) = fired {
+        tokio::time::timeout(Duration::from_secs(1), fired)
+            .await
+            .unwrap_or_else(|_| panic!("the proxy must have injected its fault; status={status}"))
+            .unwrap()
+    } else {
+        "no injected database fault".into()
+    };
+    let after = job_metric(&metrics(server.address).await, "slow", "CANCELLED");
     server.shutdown().await.unwrap();
-    (status, phase)
+    (status, phase, after.saturating_sub(before))
+}
+
+/// `Store::finish`가 성공을 시도한다. 선택적으로 그 UPDATE를 0행으로 만들거나 COMMIT 경계를 끊는다.
+async fn count_job(fault: Option<Fault>, suppress_update: bool, alter_committed_output: bool) -> (Value, String, u64, Option<Value>) {
+    let _lock = SCHEMA_LOCK.lock().await;
+    let schema = format!("aip_dur_cancel_{}", std::process::id());
+    sqlgen::set_schema(&schema);
+    let _cleanup = SchemaCleanup(schema.clone());
+    let facts = load_str(include_str!("fixtures/jobs.aip"), Form::A).unwrap().execution;
+    aip_migrate::init(DATABASE, &schema, &facts).await.unwrap();
+    let direct = spike_v2_read::connect_owned_with_url(DATABASE).await.unwrap();
+    direct
+        .batch_execute(&format!(
+            "INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1)"
+        ))
+        .await
+        .unwrap();
+    if suppress_update {
+        direct
+            .batch_execute(&format!(
+                "CREATE FUNCTION {schema}.suppress_succeeded_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='SUCCEEDED' THEN RETURN NULL; END IF; RETURN NEW; END $$; \
+                 CREATE TRIGGER suppress_succeeded_update BEFORE UPDATE ON {schema}.aip_jobs FOR EACH ROW EXECUTE FUNCTION {schema}.suppress_succeeded_update()"
+            ))
+            .await
+            .unwrap();
+    }
+    if alter_committed_output {
+        direct
+            .batch_execute(&format!(
+                "CREATE TABLE {schema}.tamper_once(apply boolean NOT NULL); INSERT INTO {schema}.tamper_once VALUES(true); \
+                 CREATE FUNCTION {schema}.alter_succeeded_output() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+                   IF NEW.state='SUCCEEDED' AND (SELECT apply FROM {schema}.tamper_once) THEN \
+                     UPDATE {schema}.tamper_once SET apply=false; NEW.output='{{\"length\":999}}'::jsonb; \
+                   END IF; RETURN NEW; END $$; \
+                 CREATE TRIGGER alter_succeeded_output BEFORE UPDATE ON {schema}.aip_jobs FOR EACH ROW EXECUTE FUNCTION {schema}.alter_succeeded_output()"
+            ))
+            .await
+            .unwrap();
+    }
+    let iat: i64 = direct.query_one("SELECT floor(extract(epoch from clock_timestamp()))::bigint", &[]).await.unwrap().get(0);
+    let fingerprint = spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, IdWire::DecimalString);
+    let (database_url, fired) = if let Some(fault) = fault {
+        let (proxy, fired) = start_after(FINISH_UPDATE, fault).await;
+        (aip_test_support::database_url_via_proxy(proxy.port()), Some(fired))
+    } else {
+        (DATABASE.to_string(), None)
+    };
+    let server = listen_with_infrastructure(
+        facts.clone(),
+        IdWire::DecimalString,
+        "127.0.0.1:0".parse().unwrap(),
+        database_url,
+        Some(ReadExtensions { lang: WorkerLang::Node, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
+        ServerOptions::default(),
+        false,
+        Arc::new(Auth { schema: schema.clone(), iat }),
+        Some(DeploymentFence::new(schema.clone(), spike_v1_fixture::digest(&facts)).unwrap()),
+        None,
+        false,
+        Infrastructure {
+            worker_launch: WorkerLaunchConfig { isolation: Isolation::None, ..Default::default() },
+            metrics_token: Some(METRICS_TOKEN.into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let before = job_metric(&metrics(server.address).await, "count", "SUCCEEDED");
+    let queued =
+        post(server.address, "/jobs/enqueue", &fingerprint, json!({"operation":"count","input":{"text":"abc"},"key":"count-settlement","delayMs":0}))
+            .await;
+    let id = queued["run"]["id"].as_str().unwrap_or_else(|| panic!("enqueue: {queued}")).to_string();
+    let phase = if let Some(fired) = fired {
+        tokio::time::timeout(Duration::from_secs(5), fired).await.expect("the proxy must inject the COMMIT fault").unwrap()
+    } else {
+        "no injected database fault".into()
+    };
+    // Let the finite settlement retries finish even when the lost ACK means the row already looks terminal.
+    tokio::time::sleep(Duration::from_millis(750)).await;
+    let status = post(server.address, "/jobs/status", &fingerprint, json!({"id":id})).await;
+    let stored_output: Option<Value> =
+        direct.query_one(&format!("SELECT output FROM {schema}.aip_jobs WHERE id=$1::text::uuid"), &[&id]).await.unwrap().get(0);
+    let after = job_metric(&metrics(server.address).await, "count", "SUCCEEDED");
+    server.shutdown().await.unwrap();
+    (status, phase, after.saturating_sub(before), stored_output)
 }
 
 /// 취소는 사용자가 요청했고 worker는 멈췄고 걸린 효과도 없다. 확정 단계의 일시 장애가 이 사실을 바꾸지 않는다.
@@ -175,20 +317,60 @@ fn assert_cancelled(status: &Value, phase: &str) {
 /// 취소 확인의 `FOR UPDATE` 조회 결과가 오기 전에 연결이 끊긴다. `if let Ok(Some(row))`는 이 오류를 "취소 요청 없음"처럼 넘겼다.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_is_confirmed_after_the_job_row_lookup_loses_its_connection() {
-    let (status, phase) = cancel_slow_job(Fault::CutAfterStatement(CANCEL_LOOKUP), None).await;
+    let (status, phase, _) = cancel_slow_job(Some((Fault::CutAfterStatement(CANCEL_LOOKUP), None)), false).await;
     assert_cancelled(&status, &phase);
 }
 
 /// 확인 UPDATE 뒤 COMMIT이 PostgreSQL에 닿지 않는다. `let _ = tx.commit()`은 이 실패를 버렸다.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_is_confirmed_after_the_commit_never_reaches_postgres() {
-    let (status, phase) = cancel_slow_job(Fault::CutOnCommitSent, Some(CANCEL_ACK)).await;
+    let (status, phase, _) = cancel_slow_job(Some((Fault::CutOnCommitSent, Some(CANCEL_ACK))), false).await;
     assert_cancelled(&status, &phase);
 }
 
 /// COMMIT은 PostgreSQL이 받았지만 응답을 잃었다. 확인은 이미 저장됐으므로 다시 확인하거나 다른 상태로 바꾸지 않는다.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_stays_cancelled_when_the_commit_ack_is_lost() {
-    let (status, phase) = cancel_slow_job(Fault::AckDropFin, Some(CANCEL_ACK)).await;
+    let (status, phase, _) = cancel_slow_job(Some((Fault::AckDropFin, Some(CANCEL_ACK))), false).await;
     assert_cancelled(&status, &phase);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_update_affecting_zero_rows_emits_no_cancelled_metric() {
+    let (status, phase, cancelled_metrics) = cancel_slow_job(None, true).await;
+    assert_eq!(status["run"]["state"], "CANCEL_REQUESTED", "an UPDATE affecting zero rows cannot confirm cancellation: {status}");
+    assert_eq!(cancelled_metrics, 0, "phase={phase}: cancellation without a stored UPDATE must not be measured as confirmed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn result_update_affecting_zero_rows_emits_no_success_metric() {
+    let (status, phase, success_metrics, _) = count_job(None, true, false).await;
+    assert_eq!(status["run"]["state"], "RUNNING", "an UPDATE affecting zero rows cannot finish the job: {status}");
+    assert_eq!(success_metrics, 0, "phase={phase}: success without a stored UPDATE must not be measured as confirmed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn finish_commit_withheld_from_postgres_retries_settlement_without_rerunning_job() {
+    let (status, phase, success_metrics, _) = count_job(Some(Fault::CutOnCommitSent), false, false).await;
+    assert_eq!(status["run"]["state"], "SUCCEEDED", "phase={phase}; a withheld outcome commit should retry this result: {status}");
+    assert_eq!(status["run"]["attempt"], 1, "settlement retries must not rerun the job: {status}");
+    assert_eq!(success_metrics, 1, "the persisted current-attempt result is confirmed once");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn finish_commit_ack_confirms_the_exact_current_attempt_result() {
+    let (status, phase, success_metrics, stored_output) = count_job(Some(Fault::AckDropFin), false, false).await;
+    assert_eq!(status["run"]["state"], "SUCCEEDED", "phase={phase}; the committed current-attempt result should be confirmed");
+    assert_eq!(status["run"]["attempt"], 1, "outcome verification must not rerun the job: {status}");
+    assert_eq!(stored_output.unwrap()["length"], 3, "the database result matches this attempt: {status}");
+    assert_eq!(success_metrics, 1, "the verified result is counted once");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn finish_commit_ack_confirms_only_the_current_attempt_result() {
+    let (status, phase, success_metrics, stored_output) = count_job(Some(Fault::AckDropFin), false, true).await;
+    assert_eq!(status["run"]["state"], "SUCCEEDED", "phase={phase}; the trigger changed only the stored result after the commit");
+    assert_eq!(status["run"]["attempt"], 1, "the outcome commit must not rerun the job: {status}");
+    assert_eq!(stored_output.unwrap()["length"], 999, "the database holds the deliberately changed result: {status}");
+    assert_eq!(success_metrics, 0, "a COMMIT ACK is not enough when the database result differs from this attempt");
 }
