@@ -27,13 +27,15 @@ STABLE=(
   e5_saturated_slots_replay_status_and_inflight_duplicates
 )
 # Exploratory: a1 deliberately reproduces the open opposite-order deadlock (LIMITS E9) and takes seconds per round at scale;
-# a2-a4 are guarded by permanent regression tests (bundle_lock_order_*.rs), a5 by write rollback tests.
+# a2-a4 are guarded by permanent regression tests (bundle_lock_order_*.rs), a5 by write rollback tests, and e6 measures
+# replay latency against an artificial database round trip while all worker slots are occupied.
 EXPLORATORY=(
   a1_opposite_order_two_product_bundles
   a2_line_first_then_compose_on_same_product
   a3_line_first_then_where_target_apply
   a4_line_first_then_ids_apply_control
   a5_failure_after_creates_leaves_no_rows_and_no_idempotency_record
+  e6_saturated_replay_latency_by_database_round_trip
 )
 
 if [[ "${1:-}" == "--list" ]]; then

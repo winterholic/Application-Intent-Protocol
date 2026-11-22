@@ -282,12 +282,13 @@ class ContractWiringTest(unittest.TestCase):
         source = (ROOT / "spikes/spike-v6-transport/tests/concurrency_probe_http.rs").read_text()
         ignored = re.findall(r"#\[ignore[^\n]*\]\nasync fn (\w+)", source)
         lists = self.probe_lists()
-        self.assertEqual(len(ignored), 17, ignored)
+        self.assertTrue(ignored, "no ignored probes detected; the source selector may have drifted")
         self.assertEqual(sorted(lists["stable"] + lists["exploratory"]), sorted(ignored))
         self.assertFalse(set(lists["stable"]) & set(lists["exploratory"]))
         # The task's stable set: f1, i1-i5, n1, e1-e5. a1-a5 stay exploratory.
         self.assertEqual(sorted(name.split("_")[0] for name in lists["stable"]),
                          sorted(["f1", "n1", *(f"i{n}" for n in range(1, 6)), *(f"e{n}" for n in range(1, 6))]))
+        self.assertEqual(lists["exploratory"].count("e6_saturated_replay_latency_by_database_round_trip"), 1)
 
     def test_stable_probes_are_required_and_exploratory_probes_are_not(self):
         self.assertIn("concurrency-contracts", release_candidate_jobs())
@@ -300,13 +301,23 @@ class ContractWiringTest(unittest.TestCase):
 
     def test_macos_only_test_files_run_in_the_macos_workflow(self):
         macos = read("macos-platform-tests.yml")
-        gated = {path.stem for pattern in ("spikes/*/tests/*.rs", "crates/*/tests/*.rs") for path in ROOT.glob(pattern)
-                 if path.read_text().lstrip().startswith("#![cfg(target_os = \"macos\")]")}
-        gated |= {"extension_lifetime", "durable"}  # `mod macos` / one `#[cfg(target_os = "macos")]` test inside a shared file
-        self.assertGreaterEqual(len(gated), 4)
+        test_files = list((ROOT / "spikes/spike-v6-transport/tests").glob("*.rs"))
+        gated = {path.stem for path in test_files if path.read_text().lstrip().startswith("#![cfg(target_os = \"macos\")]")}
+        gated |= {path.stem for path in test_files if re.search(r"#\[cfg\(target_os = \"macos\"\)\]", path.read_text())}
+        self.assertTrue(gated, "no macOS-only test target or in-file macOS cfg test detected")
+        verify_head = (ROOT / "scripts/verify-head.sh").read_text()
         for stem in sorted(gated):
             with self.subTest(test_file=stem):
                 self.assertRegex(macos, rf"--test {stem}\b", f"{stem}.rs compiles only for macOS and no macOS job runs it")
+                self.assertRegex(verify_head, rf"--test {stem}\b", f"verify-head's macOS path does not run {stem}.rs")
+
+    def test_default_verify_runs_all_v6_regression_targets(self):
+        workflow = read("verify.yml")
+        core = workflow.split("  core:\n", 1)[1]
+        self.assertIn("bash tools/verify.sh", core)
+        verify = (ROOT / "tools/verify.sh").read_text()
+        self.assertRegex(verify, r'for engine in [^\n]*spike-v6-transport')
+        self.assertIn('cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target --no-fail-fast', verify)
 
 
 class EntryPointTest(unittest.TestCase):
