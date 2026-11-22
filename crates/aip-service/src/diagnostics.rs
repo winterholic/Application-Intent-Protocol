@@ -4,11 +4,12 @@
 //! (exit 1, stderr). Any other failure is `{"ok":false,"code":"<CODE>","message":".."}` with an optional `reason` (exit 1,
 //! stderr). A check that passes is `{"ok":true,"executionDigest":..,"advisories":[..],"workers":{..}}` (exit 0, stdout).
 //! The field-by-field contract of the diagnostics is `plan-docs/stabilization-20261122/diagnostics-fields.md`.
-//! Everything here only builds values; the exit code and the stream are chosen by `execute`.
+//! The values are built here and `finish` writes them and picks the exit code.
 
 use serde_json::{Value, json};
 use spike_v1_fixture::diag::Diag;
 use spike_v11_dev_checks::{Advisory, Checked};
+use std::{io::Write, process::ExitCode};
 
 /// A failure that is not a rejected definition. `code` has no area prefix (`SOURCE_IO`, `UNSUPPORTED_FORM`).
 pub(crate) fn error(code: &str, message: &str) -> Value {
@@ -101,4 +102,36 @@ pub(crate) fn redact_json_reason(full: &str) -> String {
     }
     // A message written by a `Deserialize` implementation may quote the value: say only that it is wrong.
     "a value is not accepted".to_string()
+}
+
+/// One JSON line on stdout.
+pub(crate) fn report(value: &Value) -> std::io::Result<()> {
+    let mut out = std::io::stdout().lock();
+    writeln!(out, "{value}")?;
+    out.flush()
+}
+
+/// One JSON line on stderr.
+pub(crate) fn output_error(value: &Value) {
+    let _ = writeln!(std::io::stderr().lock(), "{value}");
+}
+
+/// Writes the result of a command to the stream its outcome belongs to and picks the exit code: 0 and stdout for a result,
+/// 1 and stderr for every failure. A closed stdout (`BrokenPipe`) is still 0, as before; that the JSON may then not have
+/// been delivered is an open owner decision (G10).
+pub(crate) fn finish(result: Result<Value, Value>) -> ExitCode {
+    match result {
+        Ok(value) => match report(&value) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+            Err(_) => {
+                output_error(&error("OUTPUT_IO", "결과 출력 실패"));
+                ExitCode::FAILURE
+            }
+        },
+        Err(value) => {
+            output_error(&value);
+            ExitCode::FAILURE
+        }
+    }
 }

@@ -8,7 +8,7 @@ mod triggers;
 use clap::{Subcommand, ValueEnum};
 #[cfg(test)]
 use diagnostics::redact_json_reason;
-use diagnostics::{check_report, definition_rejected, error, error_with_reason, json_error, server_start_error};
+use diagnostics::{check_report, definition_rejected, error, error_with_reason, finish, json_error, output_error, report, server_start_error};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use spike_v2_read::{id_wire::IdWire, sqlgen};
@@ -911,14 +911,6 @@ fn migrate_database_url(config: &Config) -> Result<String, Value> {
     install_database_ca(config)?;
     std::env::var(name).ok().filter(|v| !v.trim().is_empty()).ok_or_else(|| error("DB_CONFIG", "설정에 지정한 migration DB 환경 변수가 필요함"))
 }
-fn report(value: &Value) -> std::io::Result<()> {
-    let mut out = std::io::stdout().lock();
-    writeln!(out, "{value}")?;
-    out.flush()
-}
-fn output_error(value: &Value) {
-    let _ = writeln!(std::io::stderr().lock(), "{value}");
-}
 
 fn write_binding(file: &Path, out: &Path, content: &str) -> Result<(), Value> {
     let source = file.canonicalize().map_err(|_| error("SOURCE_IO", "정의 경로 확인 실패"))?;
@@ -1722,20 +1714,7 @@ pub fn execute(command: Command) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(run(command)) {
-        Ok(value) => match report(&value) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
-            Err(_) => {
-                output_error(&error("OUTPUT_IO", "결과 출력 실패"));
-                ExitCode::FAILURE
-            }
-        },
-        Err(value) => {
-            output_error(&value);
-            ExitCode::FAILURE
-        }
-    }
+    finish(runtime.block_on(run(command)))
 }
 
 #[cfg(test)]
