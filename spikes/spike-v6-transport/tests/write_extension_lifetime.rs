@@ -1,4 +1,3 @@
-#![cfg(target_os = "macos")]
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{connect_with_url, id_wire::IdWire, sqlgen};

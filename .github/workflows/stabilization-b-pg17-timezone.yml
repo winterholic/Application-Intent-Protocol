@@ -1,0 +1,63 @@
+name: Track B PostgreSQL 17 timezone checks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stabilization-b-pg17-timezone-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  latest-projections:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+          - '127.0.0.1:5432:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Verify latest projections in UTC and Asia/Seoul sessions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for timezone in UTC Asia/Seoul; do
+            echo "::group::PostgreSQL session TimeZone=$timezone"
+            psql -X -q "$AIP_TEST_ADMIN_URL" -v ON_ERROR_STOP=1 \
+              -c "ALTER DATABASE aip_test_ci SET timezone TO '$timezone'"
+            actual="$(psql -X -q "$AIP_TEST_DATABASE_URL" -Atc 'SHOW TimeZone')"
+            test "$actual" = "$timezone"
+            echo "session TimeZone=$actual"
+            cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --test latest_effect_values
+            cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --test latest_nullable_projection
+            echo "::endgroup::"
+          done
