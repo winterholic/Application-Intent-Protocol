@@ -1,0 +1,217 @@
+{
+  "Int-unbounded-beyond-2^53": {
+    "title": "Int without a range holding bigint values above the JS safe range",
+    "check": "pass",
+    "runtime": "server=[{\"id\":\"1\",\"n\":9007199254740993},{\"id\":\"2\",\"n\":9223372036854775807}] | ts=CLIENT.PROTOCOL_ERROR | python=[{\"id\": \"1\", \"n\": 9007199254740993}, {\"id\": \"2\", \"n\": 9223372036854775807}]"
+  },
+  "Int-range-bigint-bounds": {
+    "title": "Int(0..9223372036854775807) beyond safe integer",
+    "check": "pass",
+    "runtime": "check-only"
+  },
+  "Decimal-min-max": {
+    "title": "Decimal aggregate min/max with groupKey",
+    "check": "fail DEF.TYPE_MISMATCH",
+    "runtime": "-"
+  },
+  "Decimal-sum": {
+    "title": "Decimal sum per group",
+    "check": "pass",
+    "runtime": "ok rows=[{\"id\":\"1\",\"total\":\"3.35\"}]"
+  },
+  "Int-min-per-group": {
+    "title": "Int min per group with an empty group",
+    "check": "pass",
+    "runtime": "ok rows=[{\"id\":\"1\",\"low\":3},{\"id\":\"2\",\"low\":null}]"
+  },
+  "nullable-sort-cursor": {
+    "title": "nullable sort field together with cursor paging",
+    "check": "fail DEF.CURSOR_NULLABLE_SORT",
+    "runtime": "-"
+  },
+  "cursor-sort-not-selected": {
+    "title": "cursor paging with a sort field that is not selected",
+    "check": "fail DEF.CURSOR_SORT_NOT_SELECTED",
+    "runtime": "-"
+  },
+  "traverse-depth-below-need": {
+    "title": "budget depth 1 with a traverse that needs depth 2",
+    "check": "fail DEF.BUDGET_DEPTH_TOO_SMALL",
+    "runtime": "-"
+  },
+  "cost-too-low": {
+    "title": "budget cost 1 on a plain read",
+    "check": "pass",
+    "runtime": "WIRE.COST_EXCEEDED"
+  },
+  "deadline-1ms": {
+    "title": "budget deadline 1ms",
+    "check": "pass",
+    "runtime": "answers within {ok, WIRE.DEADLINE_EXCEEDED}: true"
+  },
+  "rows-1-with-limit": {
+    "title": "budget rows 1 with 3 rows present",
+    "check": "pass",
+    "runtime": "ok rows=[{\"id\":\"1\"}]"
+  },
+  "text-range-codepoints": {
+    "title": "Text(1..3) with three emoji and with a combining mark",
+    "check": "pass",
+    "runtime": "3 emoji=ok 4 emoji=WIRE.BAD_VALUE e+combining x3=WIRE.BAD_VALUE nul=WIRE.BAD_VALUE"
+  },
+  "decimal-literal-forms": {
+    "title": "Decimal(5,2) literals in to: 0, 0.00, \"0.0\"",
+    "check": "fail DEF.BAD_VALUE",
+    "runtime": "-"
+  },
+  "decimal-literal-string-short": {
+    "title": "Decimal(5,2) literal \"0.5\" (fewer digits than scale)",
+    "check": "pass",
+    "runtime": "ok {\"changed\":[\"1\"]} | ok rows=[{\"d\":\"0.50\"}]"
+  },
+  "arith-on-nullable": {
+    "title": "f = f + 1 on a nullable Int field",
+    "check": "fail DEF.TYPE_MISMATCH",
+    "runtime": "-"
+  },
+  "arith-overflow-range": {
+    "title": "n = n + 1 on Int(0..2) at 2",
+    "check": "pass",
+    "runtime": "WIRE.BAD_VALUE"
+  },
+  "arith-decimal-int-term": {
+    "title": "Decimal field += Int literal",
+    "check": "pass",
+    "runtime": "ok {\"changed\":[\"1\"]} | ok rows=[{\"d\":\"2.50\"}]"
+  },
+  "arith-this-field": {
+    "title": "n = n + this.m",
+    "check": "pass",
+    "runtime": "ok {\"changed\":[\"1\"]} | ok rows=[{\"n\":8}]"
+  },
+  "arith-this-field-zero-able": {
+    "title": "n = n + this.m where m may be 0 or negative",
+    "check": "pass",
+    "runtime": "WIRE.BAD_VALUE | ok rows=[{\"n\":5}]"
+  },
+  "input-int-range-includes-zero": {
+    "title": "transition input Int(0..5)",
+    "check": "fail DEF.BAD_RANGE",
+    "runtime": "-"
+  },
+  "input-in-allow-compare-hidden": {
+    "title": "input compared with a field-read-policy field in allow",
+    "check": "fail DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+    "runtime": "-"
+  },
+  "compose-with-input": {
+    "title": "compose step naming a transition with input",
+    "check": "fail DEF.UNSUPPORTED",
+    "runtime": "-"
+  },
+  "apply-where-target": {
+    "title": "apply with target where on a filter the read exposes, and on one it does not",
+    "check": "pass",
+    "runtime": "tag=ok changed=1 other=WIRE.FILTER_NOT_ALLOWED"
+  },
+  "apply-maxRows-over-bundle-cap": {
+    "title": "expose apply bulk maxRows 5000 (bundle row cap is 1000)",
+    "check": "pass",
+    "runtime": "direct=ok bundle=WIRE.BULK_LIMIT"
+  },
+  "enum-in-filter": {
+    "title": "enum field with filter in and a transition assigning an enum literal",
+    "check": "pass",
+    "runtime": "ok rows=[{\"id\":\"1\",\"s\":\"A\"}]"
+  },
+  "filter-isNull-nullable": {
+    "title": "filter isNull on a nullable Text",
+    "check": "pass",
+    "runtime": "ok rows=[{\"id\":\"1\",\"n\":null}]"
+  },
+  "filter-like-percent": {
+    "title": "Text filter like with a literal percent and underscore",
+    "check": "pass",
+    "runtime": "contains(%)=1 prefix(50%)=1 like(50\\%%)=1 contains(_)=3"
+  },
+  "sort-bool-desc-null": {
+    "title": "sort by a nullable Bool, ASC then DESC",
+    "check": "pass",
+    "runtime": "asc=3,2,1 desc=1,2,3"
+  },
+  "row-policy-null-actor": {
+    "title": "rows read when actor = null on a non-null actor reference",
+    "check": "pass",
+    "runtime": "check-only"
+  },
+  "traverse-many": {
+    "title": "1:N traverse with limit and a child row policy",
+    "check": "pass",
+    "runtime": "ok rows=[{\"id\":\"1\",\"kids\":[{\"id\":\"1\"},{\"id\":\"3\"}]}]"
+  },
+  "unique-with-null": {
+    "title": "unique on a nullable column, two NULL rows",
+    "check": "pass",
+    "runtime": "nullx2=ok xx=WIRE.ALREADY_EXISTS"
+  },
+  "delete-transition": {
+    "title": "transition delete then read",
+    "check": "pass",
+    "runtime": "ok {\"changed\":[\"1\"]} | ok rows=[{\"id\":\"2\"}]"
+  },
+  "latest-effect-null": {
+    "title": "update effect with latest ... when no candidate row exists (no otherwise / otherwise this.created)",
+    "check": "pass",
+    "runtime": "ok {\"changed\":[\"1\"]} | ok rows=[{\"created\":\"2024-01-01T00:00:00+00:00\",\"label\":null}]"
+  },
+  "shared-primary-key-sort-id": {
+    "title": "id: Member (1:1 shared primary key) with `sort id`",
+    "check": "fail DEF.OP_TYPE_MISMATCH",
+    "runtime": "-"
+  },
+  "shared-primary-key-no-sort": {
+    "title": "the same resource without a sort list: read and patch work",
+    "check": "pass",
+    "runtime": "ok {\"changed\":[\"1\"]} | ok rows=[{\"bio\":\"y\",\"id\":\"1\"}]"
+  },
+  "sort-on-reference-field": {
+    "title": "sort by a reference field",
+    "check": "fail DEF.OP_TYPE_MISMATCH",
+    "runtime": "-"
+  },
+  "filter-decimal-in": {
+    "title": "Decimal filter with the in operator",
+    "check": "fail DEF.OP_TYPE_MISMATCH",
+    "runtime": "-"
+  },
+  "select-same-field-twice": {
+    "title": "the same field selected twice in one read",
+    "check": "pass",
+    "runtime": "WIRE.DUPLICATE"
+  },
+  "time-now-policy": {
+    "title": "rows read when t >= now",
+    "check": "pass",
+    "runtime": "ok ids=1"
+  },
+  "json-field": {
+    "title": "Json field read",
+    "check": "pass",
+    "runtime": "ok rows=[{\"id\":\"1\",\"j\":{\"a\":[1,2.5,null]}}]"
+  },
+  "email-url-date": {
+    "title": "Email/Url/Date scalars round trip",
+    "check": "pass",
+    "runtime": "ok rows=[{\"d\":\"2024-02-29\",\"e\":\"a@b.co\",\"id\":\"1\",\"u\":\"https://x.y/z\"}]"
+  },
+  "check-and-invariant": {
+    "title": "check clause and limit/invariant at commit",
+    "check": "pass",
+    "runtime": "ok,ok,WIRE.INVARIANT_VIOLATED"
+  },
+  "read-extension-undeclared": {
+    "title": "read extension without access declarations",
+    "check": "pass",
+    "runtime": "check-only"
+  }
+}
