@@ -2,7 +2,7 @@
 
 - 기존 DB 기준 시험은 **PostgreSQL 17.11(Homebrew, 포트 55424)** 에서 실행했다. 이번 재개 시점의 기준 브랜치는 `origin/main` `c86d6902`이며, D 작업 브랜치는 `stab/d-20261122`다.
 - 이 문서는 1.0 출시 승인이 아니다. 태그, GitHub Release, npm, PyPI 게시는 하지 않았다.
-- 핵심 파일(`sema.rs`, `spike-v3-write/src/lib.rs`, `spike-v6-transport/src/lib.rs`)은 수정하지 않았다. 그 파일이 필요한 결함은 9절 "핵심 파일 대기 목록"에 재현 시험과 함께 적었다.
+- 초기 분석 시점에는 핵심 파일(`sema.rs`, `spike-v3-write/src/lib.rs`, `spike-v6-transport/src/lib.rs`)을 수정하지 않았다. 이후 v3 write는 사용자 허용 범위 안에서 C-D1 보완만 했고, 그 외 대기 결함은 9절 "핵심 파일 대기 목록"에 재현 시험과 함께 적었다.
 
 ## 1. 변경(파일·목적·커밋)
 
@@ -17,6 +17,7 @@
 | `f76752c2` | `product/tests/semantic-definition-matrix.test.mjs`, `product/tests/fixtures/definition-matrix.expected.json` | D1: 정의 조각별 check 결과와 PG17 런타임 결과 표(골든), 핵심 파일 대기 todo 재현 3개 |
 | `f39b390c` | `CHANGELOG.md`, `plan-docs/stabilization-20261122/**`, `product/LIMITS.md`, `product/SUPPORT.md` | D 결과, 결정, 기준선·지원 범위 기록 |
 | `a514c941` | `spikes/spike-v2-read/src/sqlgen.rs`, `spikes/spike-v2-read/src/scalar.rs`, `spikes/spike-v2-read/tests/ddl_namespace.rs`, `spikes/spike-v4-worker/src/lib.rs`, `spikes/spike-v6-transport/client/typed.ts`, 관련 단위 시험 | C-D1 예약어 필드와 C-D2 확장 Json 입력의 소비자 수정 |
+| `75a54a7e` | `spikes/spike-v3-write/src/lib.rs` | C-D1 보완: v3 쓰기 SQL이 예약어 필드 컬럼을 인용 |
 
 ## 2. D1: check 통과인데 런타임 미지원 / 실행 가능한데 정적 거부 (현재 HEAD 반례 탐색)
 
@@ -206,13 +207,13 @@ python3 -m unittest product.tests.python_sdk_contract_test
 - 원격 갱신 후 `origin/main`은 `0e3f0c80`이고 D 브랜치는 이 기준에서 8커밋 앞이었다. 추적 변경은 없었다. 현재 문서의 1절 커밋 ID를 이 worktree의 실제 SHA로 맞췄다.
 - 이후 F1 커밋 `5df0e878`, `b5ae2e0a`, `9a867577`와 E 통합 `c86d6902`가 main에 도착했다. E 통합은 D 소유 테스트·문서 일부를 삭제했으며 E 소유 파일과도 겹쳤다. D의 기존 변경만 최신 `c86d6902` 위로 rebase했고 충돌 없이 적용됐다. D 독립 수정 커밋은 `a514c941`이다.
 - PG17 의존 D2·D4 재실행은 하지 않았다. 이전 증거의 범위는 D2의 직접 apply/bundle/compose/쓰기 확장 경로 결과와 DB 상태, D4의 멱등 재생·동시 요청·숨은 필드·원자 생성 사례다. 이번 변경은 그 시나리오의 fixture와 핵심 파일을 수정하지 않았다.
-- `Int` 안전 정수 경계와 공개 계약 결정, `sema.rs`·`spike-v3-write/src/lib.rs`·`spike-v6-transport/src/lib.rs`는 건드리지 않았다. workflow도 변경하지 않았다.
+- `Int` 안전 정수 경계와 공개 계약 결정은 건드리지 않았다. 당시에는 `sema.rs`·`spike-v3-write/src/lib.rs`·`spike-v6-transport/src/lib.rs`를 수정하지 않았다. workflow도 변경하지 않았다.
 
 ### 독립 수정
 
 | 항목 | 변경 | 확인 |
 |---|---|---|
-| C-D1 예약어 필드 | PostgreSQL 식별자 생성에서 C-D 발견 12개 필드 이름을 인용. 일반 이름은 기존 출력 유지. | `ddl_namespace`에서 12개 필드의 DDL을 확인. PG 서버 실행은 하지 않음. |
+| C-D1 예약어 필드 | PostgreSQL DDL 및 v3 쓰기 SQL에서 C-D 발견 12개 필드 이름을 인용. 일반 이름은 기존 출력 유지. | `ddl_namespace` 및 v3 인용 회귀 시험. v3 SQL을 실제 PG17에 실행하는 검증은 미실행. |
 | C-D2 확장 Json 입력 | 서버 scalar 검사와 TS typed 검사에서 배열·객체·문자열·숫자·불리언·null JSON을 허용. JS의 비유한 수, undefined, Date, cycle 등 JSON wire에 담을 수 없는 값은 전송 전에 거부. | 서버 JSON scalar 및 worker 값 단위 검사, TS operation/WRITE 입력 테스트. 실제 PostgreSQL을 통한 storefront 여정은 미실행. |
 | C-D3 `default database` 검사 차이 | 수정하지 않음. check는 외부 저장소 채택 여부를 받지 않지만 init은 관리형 스키마 생성을 선택했을 때만 이를 거부한다. 무조건 check 오류를 추가하면 외부 채택 정의도 거부할 수 있다. | C가 남긴 check 통과/init 거부 근거를 유지. 모드 정보를 쓰는 설계가 없으므로 추후 소유자 결정 대상으로 남김. |
 
@@ -232,4 +233,13 @@ python3 -m unittest product.tests.python_sdk_contract_test
 - D1 todo 3건(C1 cost, C2 this-field 산술 하한, C3 공유 기본키 sort)은 `sema.rs`가 필요하다. C5 bundle 상한 정적 경고와 C6 Int 경계도 핵심 파일/공개 의미 결정을 기다린다. D-DEC-1~7은 확정하지 않았다.
 - C-D3 check/init 모드 정합은 mode-aware check 또는 소유자 결정이 필요하다.
 - D2·D4 PG17 재실행과 전체 `semantic-definition-matrix`, `sdk-contract-semantics`, `semantic-wire-measure` 검증은 프로젝트 GitHub Actions 또는 dedicated PG17에서 이어간다. workflow는 수정하지 않았다.
-- 핵심 파일 인계: `spikes/spike-v1-fixture/src/sema.rs`는 E 합류 전, `spikes/spike-v3-write/src/lib.rs`와 `spikes/spike-v6-transport/src/lib.rs`는 B 인계 전 수정하지 않는다.
+- 소유권 인계: `spikes/spike-v1-fixture/src/sema.rs`는 E 통합까지, `spikes/spike-v6-transport/src/lib.rs`·`durable.rs`는 B의 PG17 후보 검증·통합까지 B/E가 소유한다. 사용자가 허용한 v3 write 예외는 C-D1~D3에만 검토했고, 필요한 C-D1 보완만 `75a54a7e`에서 적용했다. B가 확인 중인 v3 테스트 두 파일은 수정하지 않았다.
+
+## 13. v3 쓰기 경로 보완 및 현재 인계 (2026-11-22)
+
+- `origin/main` 최신 기준은 `c86d6902`; v3 코드 보완은 `75a54a7e`에 commit 됐다. 원격 `stab/d-20261122`는 이전 재기록 계열 `a29315db`를 가리킨다. 두 커밋 계열은 fast-forward 관계가 아니어서 이 세션에서 원격 ref를 바꾸지 않았다.
+- C-D1은 DDL과 read SQL을 고친 뒤에도 v3 writer가 `column()` 결과를 따옴표 없이 SQL에 보간하는 독립 경로가 남아 있었다. C-D 발견 12개 필드와 일반 필드의 identifier 출력을 대상으로 회귀 시험을 추가하고, writer 경계에서 PostgreSQL 식별자를 인용한다.
+- RED: `AIP_TEST_NO_DB=1 cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --lib write_column_quotes_postgres_reserved_field_names` → 실패, `grant` 기대값 `"grant"`, 실제값 `grant`.
+- GREEN: 같은 명령 → 1 passed, 0 failed. `cargo fmt --manifest-path spikes/spike-v3-write/Cargo.toml -- --check`와 `git diff --check`도 통과했다.
+- PG17 통합 검증은 실행하지 않았다. 이전 별도 Codex 환경에서 관측된 PostgreSQL 초기화 `shmget` 권한 거부를 반복하거나 우회하지 않는다. 읽기/DDL과 쓰기 SQL의 종단 간 동작은 CI 또는 전용 PG17에서 확인해야 한다.
+- C-D3는 `crates/aip-migrate/src/lib.rs`에서 관리형 신규 생성과 외부 채택을 구분해 초기화를 거부하는 동작이다. `service check`가 그 모드를 받지 않는 현재 호출 계약에서 이를 v3 write 수정으로 바꿀 수 없으므로 미수정 상태로 남긴다. 공개 계약을 바꾸지 않았다.
