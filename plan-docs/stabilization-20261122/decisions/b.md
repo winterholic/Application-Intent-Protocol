@@ -60,4 +60,4 @@
 
 ## B-D2. `SATURATED_REPLAY_BUDGET`(500ms) 등 계약 값
 
-바꾸지 않았다. 측정·권고는 track-b.md 5절.
+바꾸지 않았다. `track-b.md` 5절과 `track-b-bench/` 원시 결과를 확인했으나, 이는 bundle 선잠금(E9) 측정이다. `SATURATED_REPLAY_BUDGET` 500ms의 선정 근거나 해당 budget의 측정 결과는 기록에서 확인되지 않았다. **근거 미확인**으로 남기며, 이 값이 측정으로 정당화됐다고 인용하지 않는다.

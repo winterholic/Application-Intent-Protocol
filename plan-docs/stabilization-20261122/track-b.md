@@ -4,7 +4,7 @@
 
 ## 0. 병합 커밋
 
-(병합 뒤 채운다)
+별도 merge commit 없이 `origin/main`에 선형으로 통합됐다. 최종 기준 `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6`의 조상에서 B 구현·CI 관련 커밋을 확인했다: `cf429b31966c6ae9e481ca1d20e7f53ae4e81fe8`(bundle 선잠금), `d3edb84c15664b08f1de6d54b896b376d70540cb` 및 `afaac8e2d2ed00c2d567b2273e27bd0851bbe94e`(Track B PG17 CI 경로), `9f85a1504181f95e8e63333b6247e56b6e5aa587` 및 `d2c2b269d987e9b2053bc366d6bda2b148b19b07`(정산 수정), `c5898ed0e81ac20bedc04cd40726719200a8ac8e`(Verify 연결 안정화). 이 목록은 병합 커밋 하나가 아니라 main에 반영된 관련 커밋이다.
 
 ## 1. 변경 요약
 
@@ -183,3 +183,4 @@ bundle 측정은 `cf429b31966c6ae9e481ca1d20e7f53ae4e81fe8` 기록을 재사용�
 
 - v3는 기준 구현·측정 근거를 인계할 준비가 됐고 PG17 CI 실행이 남았다. v6 변경은 소스 검사·cargo check·4개 테스트 파일 컴파일·fmt까지 끝났으며 여섯 DB 불변식의 PG17 CI 실행이 남았다.
 - 기존 `tools/verify.sh`의 엔진 루프는 유지하고 `Verify` workflow에 Track B 전용 수동 입력만 추가했다. v2 read 변경은 쓰기 확장 read-conflict 분류를 위한 기존 B 책임 변경이다.
+- B-D2의 `SATURATED_REPLAY_BUDGET` 500ms 값에 대한 선정 근거·측정 결과는 이 Track의 재현, 격자 원시 결과, CI 대조에서 확인되지 않았다. 상수와 E6 측정 하네스의 존재는 확인되지만, 그 사실만으로 500ms를 뒷받침하는 결과로 간주하지 않는다. **근거 미확인.**

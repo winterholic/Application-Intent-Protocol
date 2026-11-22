@@ -209,7 +209,7 @@
 | B-04 | 확장 `ctx.data.read/apply/create`, bundle·compose, COMMIT_UNKNOWN 경로의 오류 무시·변환 전수 | 근거 부족 | `spikes/spike-v6-transport/src/write_extension.rs`, `spikes/spike-v4-worker/src/write.rs`, `spikes/spike-v3-write/src/lib.rs` | 이번 grep(`if let Ok`, `.await.ok()`, `let _ = …execute/query`)은 `durable.rs:1201` 외 쿼리 오류 무시를 찾지 못했다. 그러나 `match`로 오류를 다른 코드로 바꾸는 경로는 grep으로 못 본다 |
 | B-05 | macOS 전용 테스트가 어떤 workflow에서도 실행되지 않음 | **F1이 연결**(`macos-platform-tests.yml`) | 5곳 실행(로컬 macOS) 통과, `track-f1.md` 6절 | 구조 시험이 macOS 전용 파일이 macOS workflow에서 빠지면 실패시킨다 |
 | B-06 | `concurrency_probe_http.rs` 17개가 CI에 없음 | **F1이 연결**: 안정 12개는 `concurrency-contracts.yml`(필수), 탐색 5개는 `concurrency-exploration.yml`(수동·주간) | `scripts/run-concurrency-probes.sh` | 시험 함수는 17개다(기준선의 18은 오기) |
-| B-07 | `SATURATED_REPLAY_BUDGET = 500ms` | 결정 | `spikes/spike-v6-transport/src/lib.rs:136` | 작업이 정한 값. DB가 500ms보다 느리면 포화 요청은 재생 대신 `WORKER_BUSY` |
+| B-07 | `SATURATED_REPLAY_BUDGET = 500ms` | 근거 미확인 | `spikes/spike-v6-transport/src/lib.rs:136`; 측정 하네스 `concurrency_probe_http.rs` E6 | 상수와 측정 하네스는 있으나, 500ms 선정 근거·결과를 기록에서 확인하지 못함. 초과 시 동작 설명은 구현 주석 기준 |
 | B-08 | 격리 모드 worker, 외부 저장소 위 확장, MySQL 경로에서 동시성 | 근거 부족 / MySQL은 범위 밖 | — | `concurrency.md` §6 "미검증" |
 
 ### Track C: 소비자 E2E·표현력

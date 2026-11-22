@@ -179,11 +179,19 @@ probe 함수는 17개다(기준선 6.1의 "18개"는 오기. 시험이 `#[ignore
 
 ## 8. CI 결과
 
-(아래 9절의 표를 push 후 채웠다.)
+최종 Core main `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6`에서 리드가 조회해 전달한 결과다. 아래는 리드 확인 결과이며, 이 문서 편집 세션에서 Run 로그를 별도로 다시 조회한 것은 아니다.
+
+| Workflow / job | Run ID | SHA | 리드 확인 결과 |
+|---|---:|---|---|
+| Verify (`core`, `head-fast`) | `45014410289` | `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6` | success |
+| SDK semantic (`sdk-postgres-17`) | `45014412421` | `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6` | success |
+| independent-consumer-rc (`consumers`) | `45014414753` | `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6` | success |
+
+이 표는 최종 main SHA에서 수행한 세 검증의 결과다. release-candidate 전체 실행이나 게시를 뜻하지 않는다. 그 전 후보의 실패 및 수정 내역은 §10에 남긴다.
 
 ## 9. 처리 못한 항목, 요청, 권고
 
-CI 실행 결과는 이 절 아래 "8. CI 결과"에 둔다.
+최종 main CI 결과는 §8에 기록했다. release-candidate 전체 dispatch와 게시 workflow는 실행하지 않았다.
 
 ## 10. 2026-11-22 후속: provenance fast 경로와 정책 거부 계약
 
