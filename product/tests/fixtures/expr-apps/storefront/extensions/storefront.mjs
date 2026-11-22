@@ -56,3 +56,7 @@ function slotGap(input) {
   const present = [1, 2, 3].map((slot) => input[`product${slot}`] !== null && input[`product${slot}`] !== undefined);
   return present[1] === false && present[2] === true;
 }
+
+export async function probeJson(input, ctx) {
+  return { ok: input.payload !== undefined };
+}

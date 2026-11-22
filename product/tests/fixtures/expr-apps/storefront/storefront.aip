@@ -54,6 +54,15 @@ resource Order {
     deadline 4s
     implementation "storefront.checkout"
   }
+  // 결함 C-D2 탐침: Json 입력 필드가 어떤 값도 받지 못하는지 시나리오 S0이 기록한다(LIMITS E8은 Json으로 받으라고 안내한다).
+  extension write probeJson {
+    input { payload: Json }
+    output { ok: Bool }
+    access read.Product
+    effect db
+    deadline 2s
+    implementation "storefront.probeJson"
+  }
   extension write cancelAndRestock {
     input { order: Order.Id }
     output { id: Order.Id; restored: Int }
