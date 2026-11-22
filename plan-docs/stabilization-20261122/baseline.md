@@ -65,7 +65,7 @@
 | count가 `rows read`를 상속하지 않음, sum/min/max는 상속 | **결정 필요**(계약으로 유지 중) | `spikes/spike-v2-read/src/plan.rs:119 measure`: count(`:124-126` 근처)는 `count(*)`, sum/min/max는 `FILTER (WHERE visible)`. `product/SUPPORT.md` "공개 count", `product/SDK.md` Public count contract. 옵션 O1~O5는 `plan-docs/expressiveness-1.0/decisions.md` "공개 count" 표 |
 | `callerFilter read` count 오라클 | **해결됨** | P0-2 행 |
 | where 없는 count 경고 | **해결됨** | `sema.rs:2379-2394` |
-| `where ... input` + `callerFilter none` count가 숨은 행 수를 노출(F1) | **결정 필요** | `plan-docs/hardening-1.0/policy.md` §2 F1(선택지 a/b/c, 1.0에는 c 권고). 현재 경고 조건이 `a.where_.is_none()`뿐이라(`sema.rs:2379`) F1은 경고도 없다 → A-01 |
+| `where ... input` + `callerFilter none` count가 숨은 행 수를 노출(F1) | **부분 해결**(경고 구현 `DEF.ADVISORY_PUBLIC_COUNT_INPUT`, `b292a880`). 거부는 **결정 필요**(`decisions/a.md` D-A2) | `plan-docs/hardening-1.0/policy.md` §2 F1(선택지 a/b/c, 1.0에는 c 권고). 현재 경고 조건이 `a.where_.is_none()`뿐이라(`sema.rs:2379`) F1은 경고도 없다 → A-01 |
 | Q1 `avg`, 관련 필드 정렬·필터, 다중 `groupKey`, nullable cursor | **범위 밖**(1.1 후보, SUPPORT 4번에 명시) | `decisions.md` P1 후보 표 |
 | Q1 Decimal `sum` | **해결됨** | 커밋 `7e367ead` HTTP·SDK Decimal sum 진단 시험, `79f2d3e8` P1 정책 경고·Decimal sum |
 | Q2 관련 행 증감 `update Member where id = author { score = score + 1 }` | **해결됨** | 실행(이번) `aip service check` → `ok:true`. 커밋 `acaed2ab` P0-B, 테스트 `spikes/spike-v3-write/tests/expr_arith.rs`, `spikes/spike-v1-fixture/tests/expr_arith.rs` |
@@ -91,15 +91,15 @@
 | D13 | 외부 저장소 create가 권한 판정 전에 유일 제약 오류를 냄 | **해결됨** | `0e5344ee`. 회귀 `product/tests/external-create-order.test.mjs`, 실행(이번) `ℹ pass 1`. Verify 연결 `7d2418da`, `tools/verify.sh` node 목록 |
 | F1 | where+`input` count | **결정 필요** | 2.2 |
 | R1 | 읽기 확장 `ctx.data.read`가 `access read.<Resource>` 선언 없이 `expose read`가 있는 어느 resource든 읽음 | **결정 필요**(결함 아님, 우회 못 찾음) | 코드 확인: `sema.rs:2794 extension`의 읽기 확장 access 루프(`:2869-2893`)는 `mongo`/`redis`와 `Resource.aggregate`만 받는다. 런타임 `spikes/spike-v4-worker/src/lib.rs:896` `"read" =>`는 계약 access를 보지 않는다(aggregate만 `:883`에서 `ACCESS_NOT_DECLARED`). 선택지 (a) opt-in, (b) 필수, (c) 경고만은 `policy.md` §2. 선택지 (b)와 같은 시도 `900f8325`는 FaceReview가 깨져 퇴보 판정(`old-branches.md`). 정적 경고는 별도 → E-02 |
-| K1 | `unique`에 숨은 필드: 값 존재 확인 | **결정 필요** | `sema.rs:1913` unique는 필드 존재만 검사한다. 선택지 `policy.md` §2 → A-04 |
-| K2 | 숨은 범위 필드의 리터럴 증감 | **결정 필요** | 현재 허용. (a) 거부 (b) 허용·문서화 → A-04 |
-| K3 | 숨은 자식 행 때문에 부모 삭제가 `REFERENCE_CONFLICT` | **결정 필요** | `spikes/spike-v3-write/src/lib.rs:862 23503 → WIRE.REFERENCE_CONFLICT` → A-04 |
-| K4 | 외부 저장소 create `allow`가 생략한 `default database` 필드를 읽음 | **결정 필요** | D13 수정 뒤에도 남음. 선택지 (a) 정의 오류 거부(1.0 권고). 현재 sema에 해당 검사 없음(`default database` 처리는 `sema.rs:293-300`뿐) → A-04 |
+| K1 | `unique`에 숨은 필드: 값 존재 확인 | **결정 필요**(PG17 재검증·시험 고정, `decisions/a.md` D-A3) | `sema.rs:1913` unique는 필드 존재만 검사한다. 선택지 `policy.md` §2 → A-04 |
+| K2 | 숨은 범위 필드의 리터럴 증감 | **결정 필요**(PG17 재검증·시험 고정, D-A4) | 현재 허용. (a) 거부 (b) 허용·문서화 → A-04 |
+| K3 | 숨은 자식 행 때문에 부모 삭제가 `REFERENCE_CONFLICT` | **결정 필요**(PG17 재검증·시험 고정, D-A5) | `spikes/spike-v3-write/src/lib.rs:862 23503 → WIRE.REFERENCE_CONFLICT` → A-04 |
+| K4 | 외부 저장소 create `allow`가 생략한 `default database` 필드를 읽음 | **부분 해결**(그 필드를 안 읽는 AND 항을 INSERT 전에 판정, `74ba5b6b`). 잔여 노출은 **결정 필요**(D-A6) | D13 수정 뒤에도 남음. 선택지 (a) 정의 오류 거부(1.0 권고). 현재 sema에 해당 검사 없음(`default database` 처리는 `sema.rs:293-300`뿐) → A-04 |
 | C1~C8 | 다른 테넌트 id=없는 id 응답, bundle refs, 확장 ctx.data, internal 전이, 커서·정렬·필터, 멱등 key, 읽기 확장 read/aggregate | **해결됨**(정상 확인) | `plan-docs/hardening-1.0/policy-probes/policy-probes.mjs C1~C8`. 이번에 재실행하지 않았다(`미실행`) |
 | C9 | 소유 스키마 create는 `allow`가 INSERT `WHERE`에 있어 권한 없으면 INSERT 미실행 | **해결됨**(구조) | `policy.md` §3 C9. 이번에 재실행하지 않음 |
 | S1, S2 | 필터·정렬·집계 정의 단계 거부, 오류 본문에 행 id·값 없음 | **해결됨** | `DEF.POLICY_FIELD_NOT_FILTERABLE`, `DEF.POLICY_FIELD_NOT_AGGREGATABLE`(`sema.rs:2246`) |
-| A2 요청: 권한 판정 전에 DB 제약 오류가 나오는 다른 경로 | **근거 부족** | 공개 create(소유 스키마)와 외부 create는 확인됨. **전이(`apply`) 경로**에서 권한 없는 호출자의 unique·check 충돌 순서는 시험 기록이 없다. 확장 `ctx.data.create`를 외부 저장소 위에서 돌린 실행도 없다(`policy.md` §4 "미실행") → A-05 |
-| A3 | 테넌트 조건 누락 조언 | **부분 해결** | 상시 경고 3종(`DEF.ADVISORY_TENANT_UNSCOPED_READ`, `DEF.ADVISORY_WRITE_WIDER_THAN_READ`, `DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD`): `spikes/spike-v1-fixture/src/policy_advice.rs`, `79f2d3e8`. 구조상 미탐: `exists`가 있는 정책은 판정 안 함(`policy_advice.rs` 머리 주석), relation·aggregate·extension을 통한 간접 접근의 커버리지는 확인 못함 → A-03 |
+| A2 요청: 권한 판정 전에 DB 제약 오류가 나오는 다른 경로 | **해결됨**(Track A가 PG17로 전이·limit·check·FK·외부 전이·확장 create on 외부 저장소를 재검증: 결함은 K4 한 가지, `track-a.md` 4절) | 공개 create(소유 스키마)와 외부 create는 확인됨. **전이(`apply`) 경로**에서 권한 없는 호출자의 unique·check 충돌 순서는 시험 기록이 없다. 확장 `ctx.data.create`를 외부 저장소 위에서 돌린 실행도 없다(`policy.md` §4 "미실행") → A-05 |
+| A3 | 테넌트 조건 누락 조언 | **부분 해결**(5개 상황 오탐·미탐 표와 시험 `tenant_advice_matrix.rs`, 오탐 1·미탐 1 수정, 나머지 한계는 `decisions/a.md` D-A7) | 상시 경고 3종(`DEF.ADVISORY_TENANT_UNSCOPED_READ`, `DEF.ADVISORY_WRITE_WIDER_THAN_READ`, `DEF.ADVISORY_PUBLIC_READ_TENANT_FIELD`): `spikes/spike-v1-fixture/src/policy_advice.rs`, `79f2d3e8`. 구조상 미탐: `exists`가 있는 정책은 판정 안 함(`policy_advice.rs` 머리 주석), relation·aggregate·extension을 통한 간접 접근의 커버리지는 확인 못함 → A-03 |
 
 ### 2.4 hardening `concurrency.md`와 LIMITS E1~E9
 
@@ -193,11 +193,11 @@
 
 | ID | 항목 | 분류 | 추정 수정 위치 | 선행 가능한 작업 / 비고 |
 |---|---|---|---|---|
-| A-01 | F1: `where`에 `input`이 있는 count가 숨은 행 수를 노출(`callerFilter none`) | 결정 | `sema.rs:2379` 경고 조건(`a.where_.is_none()`)을 `input` 포함으로 확장, `tests/advisories.rs` | 응답 값이 안 바뀌는 선택지 (c) 경고 확장은 호환 영향이 없다. (a) 거부는 `recruitment.aip` `approvedCount` 같은 기존 정의를 깬다(`policy.md` F1) |
-| A-02 | 공개 count 기본 의미(O1~O5) | 결정 | 의미를 바꾸면 `plan.rs:119 measure`, `sema.rs:2197 aggregate`, `syntax_card.rs`, SDK 생성 계약 | 이번 안정화에서 임의 변경 금지. PG17 반례 매트릭스(sourceAccess 유무, 다른 테넌트 포함, 같은 정의의 count/sum 범위 차이)를 `crates/aip-cli/tests/service_flow.rs`(기존 `service_policy_aggregate_noninterference_http_postgres`)에 더하면 결정 근거가 된다 |
-| A-03 | 테넌트 조언의 미탐 정리 | 근거 부족 | `spikes/spike-v1-fixture/src/policy_advice.rs`, `spikes/spike-v11-dev-checks/src/lib.rs` | `exists` 정책, relation·aggregate·extension 경유 접근을 반례 정의로 `check`해 오탐·미탐 표를 만든다. 자동 tenant 격리는 범위 밖 |
-| A-04 | K1~K4(`unique`·범위 증감·FK 거부·외부 create `allow`의 default 필드) | 결정 | K1·K4: `sema.rs:1913`, `:293-300`. K3: `spikes/spike-v3-write/src/lib.rs:862`. K4 런타임: `create_row`(`:1236`) | 권한 있는 호출자의 진단을 훼손하는 "코드 통일"은 금지. 정의 단계 제한(K1 a, K4 a)이 응답 코드를 안 바꾼다. 저장소 정의 68개와 FaceReview·uuid 입양 정의 영향 확인 필요 |
-| A-05 | 권한 판정 전 DB 제약 오류가 나오는 다른 경로 | 근거 부족 | `spikes/spike-v3-write/src/lib.rs` `apply`(`:287`)의 `judge`와 write 순서 | **전이 경로**에서 권한 없는 호출자가 unique·check 충돌 값을 보내는 반례를 PG17에서 먼저 만든다(`plan-docs/hardening-1.0/policy-probes/h.mjs` 재사용). 확장 `ctx.data.create` on 외부 저장소도 미실행 |
+| A-01 | F1: `where`에 `input`이 있는 count가 숨은 행 수를 노출(`callerFilter none`) | 경고 구현됨(`b292a880`), 거부는 결정 | `sema.rs:2379` 경고 조건(`a.where_.is_none()`)을 `input` 포함으로 확장, `tests/advisories.rs` | 응답 값이 안 바뀌는 선택지 (c) 경고 확장은 호환 영향이 없다. (a) 거부는 `recruitment.aip` `approvedCount` 같은 기존 정의를 깬다(`policy.md` F1) |
+| A-02 | 공개 count 기본 의미(O1~O5) | 결정(PG17 반례 매트릭스 시험 완료, 3안 비교·추천 `decisions/a.md` D-A1) | 의미를 바꾸면 `plan.rs:119 measure`, `sema.rs:2197 aggregate`, `syntax_card.rs`, SDK 생성 계약 | 이번 안정화에서 임의 변경 금지. PG17 반례 매트릭스(sourceAccess 유무, 다른 테넌트 포함, 같은 정의의 count/sum 범위 차이)를 `crates/aip-cli/tests/service_flow.rs`(기존 `service_policy_aggregate_noninterference_http_postgres`)에 더하면 결정 근거가 된다 |
+| A-03 | 테넌트 조언의 미탐 정리 | 부분 해결(표·시험·수정 2건, `track-a.md` 5절) | `spikes/spike-v1-fixture/src/policy_advice.rs`, `spikes/spike-v11-dev-checks/src/lib.rs` | `exists` 정책, relation·aggregate·extension 경유 접근을 반례 정의로 `check`해 오탐·미탐 표를 만든다. 자동 tenant 격리는 범위 밖 |
+| A-04 | K1~K4(`unique`·범위 증감·FK 거부·외부 create `allow`의 default 필드) | 결정(K4는 판정 순서로 좁힘, 저장소 영향 조사 포함 `decisions/a.md`) | K1·K4: `sema.rs:1913`, `:293-300`. K3: `spikes/spike-v3-write/src/lib.rs:862`. K4 런타임: `create_row`(`:1236`) | 권한 있는 호출자의 진단을 훼손하는 "코드 통일"은 금지. 정의 단계 제한(K1 a, K4 a)이 응답 코드를 안 바꾼다. 저장소 정의 68개와 FaceReview·uuid 입양 정의 영향 확인 필요 |
+| A-05 | 권한 판정 전 DB 제약 오류가 나오는 다른 경로 | 해결됨(재검증, 결함은 K4 한 가지 수정, `policy-residual-paths.test.mjs`) | `spikes/spike-v3-write/src/lib.rs` `apply`(`:287`)의 `judge`와 write 순서 | **전이 경로**에서 권한 없는 호출자가 unique·check 충돌 값을 보내는 반례를 PG17에서 먼저 만든다(`plan-docs/hardening-1.0/policy-probes/h.mjs` 재사용). 확장 `ctx.data.create` on 외부 저장소도 미실행 |
 
 ### Track B: 동시성·트랜잭션·멱등
 
