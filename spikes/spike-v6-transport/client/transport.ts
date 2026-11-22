@@ -23,7 +23,7 @@ export function validResultId(value: unknown, wire: IdWireKind, kind: "uuid" | "
 }
 
 function validWriteResponse(res: any, wire?: IdWireKind, extensionWrite = false, request?: any, kinds?: Readonly<Record<string,"uuid"|"bigint">>): boolean {
-  const valid = (v:unknown,res:string) => wire === undefined || validResultId(v,wire,kinds?.[res] ?? "bigint");
+  const valid = (v:unknown,res:string|undefined) => wire === undefined || validResultId(v,wire,(res === undefined ? undefined : kinds?.[res]) ?? "bigint");
   const metadata = wire === undefined || (res?.replayed === undefined || typeof res.replayed === "boolean") && (res?.recovered === undefined || typeof res.recovered === "boolean");
   if (!metadata) return false;
   if (res?.ok === false) return typeof res.code === "string" && (wire === undefined || res.msg === undefined || typeof res.msg === "string");
@@ -31,8 +31,26 @@ function validWriteResponse(res: any, wire?: IdWireKind, extensionWrite = false,
   if (extensionWrite) return res.output !== null && typeof res.output === "object" && !Array.isArray(res.output);
   // 묶음·조합 결과: 연산마다 바뀐 id와 만든 행. 만든 행의 id는 `id` 열이 없는 resource면 null이다.
   if (res.applied !== undefined || res.created !== undefined) {
-    const appliedResources = Array.isArray(request?.atomic) ? request.atomic.filter((op:any)=>typeof op?.apply==="string").map((op:any)=>op.apply.split(".")[0]) : Array(res.applied?.length ?? 0).fill(request?.compose);
-    const idsOk = (ids: unknown,resource:string) => Array.isArray(ids) && ids.every(id => valid(id,resource));
+    // 각 `applied` 행이 어느 resource의 것인지로 id 종류(Uuid·정수)를 고른다. compose는 단계마다 행을 더해 연산 번호와 행 번호가 어긋나므로,
+    // 묶음 안에 compose가 있으면 서버가 주는 `ops[i].applied = [시작, 끝)`으로 행을 연산에 맞춘다.
+    let appliedResources: (string | undefined)[];
+    if (!Array.isArray(request?.atomic)) {
+      appliedResources = Array(res.applied?.length ?? 0).fill(request?.compose);
+    } else if (res.ops !== undefined) {
+      appliedResources = [];
+      const spans = res.ops;
+      if (!Array.isArray(spans) || spans.length !== request.atomic.length) return false;
+      for (const [index, op] of request.atomic.entries()) {
+        const span = spans[index]?.applied;
+        if (!Array.isArray(span) || span.length !== 2 || !span.every(Number.isSafeInteger) || span[0] < 0 || span[0] > span[1]) return false;
+        const resource = typeof op?.apply === "string" ? op.apply.split(".")[0] : typeof op?.compose === "string" ? op.compose : undefined;
+        for (let row = span[0]; row < span[1]; row++) appliedResources[row] = resource;
+      }
+      if (!Array.isArray(res.applied) || appliedResources.length !== res.applied.length) return false;
+    } else {
+      appliedResources = request.atomic.filter((op:any)=>typeof op?.apply==="string").map((op:any)=>op.apply.split(".")[0]);
+    }
+    const idsOk = (ids: unknown,resource:string|undefined) => Array.isArray(ids) && ids.every(id => valid(id,resource));
     return Array.isArray(res.applied) && Array.isArray(res.created) &&
       res.applied.every((row: any,index:number) => row !== null && typeof row === "object" && idsOk(row.changed,appliedResources[index]) && idsOk(row.unchanged,appliedResources[index])) &&
       res.created.every((row: any) => row !== null && typeof row === "object" && typeof row.resource === "string" &&

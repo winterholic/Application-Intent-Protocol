@@ -12,6 +12,9 @@ resource Account {
   expose apply rename { target id; bulk maxRows 3 }
   expose apply deposit { target id; bulk maxRows 3 }
   expose apply withdraw { target id; bulk maxRows 3 }
+  transition touch { allow owner = actor; from true; to cap = null }
+  expose apply touch { target id; bulk maxRows 3 }
+  expose compose { bulk maxRows 3; transitions touch }
   expose create { allow owner = actor; fields owner, label, memo, balance }
   extension write adjust {
     input { a: Account.Id; amount: Decimal(12,2); fail: Bool }
