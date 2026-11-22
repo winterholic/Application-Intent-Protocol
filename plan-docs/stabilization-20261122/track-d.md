@@ -8,13 +8,14 @@
 
 | 커밋 | 파일 | 목적 |
 |---|---|---|
-| `e04938c3` | `product/test-support/service-fixture.mjs`, `product/tests/semantic-path-parity.test.mjs` | D2: 같은 전이를 직접 apply, bundle, compose, 쓰기 확장 네 경로로 PG17에서 비교하는 시험과 공용 서비스 픽스처 |
-| `cd4f715a` | `product/tests/semantic-wire-measure.test.mjs`, `product/tests/sdk-type-rejection.test.mjs`, `product/tests/fixtures/sdk-semantics/**` | D6·D1 budget 실측, TS 타입 거부 코퍼스 |
-| `5387e7e9` | `spikes/spike-v6-transport/client/transport.ts`, `product/python/aip_sdk/__init__.py`, `spikes/spike-v6-transport/client/unsettled-codes.test.ts`, `product/tests/python_sdk_contract_test.py` | SDK 결함 수정: 실행 전 거절 코드 5개와 Python 키 재사용 |
-| `8462fbe4` | `spikes/spike-v6-transport/client/transport.ts`, `spikes/spike-v6-transport/client/bundle-result-ids.test.ts` | SDK 결함 수정: Uuid 자원의 compose를 담은 묶음 결과를 형식 오류로 오판 |
-| `251242a0`, `222a1e72` | `spikes/spike-v5-sdk/sdk/generic.ts`, `product/tests/sdk-contract-semantics.test.mjs`, `product/tests/sdk-type-rejection.test.mjs` | TS 타입 개선(참조 키, 중복 select, 원시 refs create)과 TS·Python PG17 여정 시험. `222a1e72`가 `bundle` 오버로드 시도를 되돌리고 필드 조합 union으로 바꿨다(아래 4절) |
-| `222a1e72` | `product/tests/semantic-chain.test.mjs` | D4: 정의 → 실행 기록(감사 행) → DB → SDK 응답 |
-| `d23091a3` | `product/tests/semantic-definition-matrix.test.mjs`, `product/tests/fixtures/definition-matrix.expected.json` | D1: 정의 조각별 check 결과와 PG17 런타임 결과 표(골든), 핵심 파일 대기 todo 재현 3개 |
+| `57e0b0d1` | `product/test-support/service-fixture.mjs`, `product/tests/semantic-path-parity.test.mjs` | D2: 같은 전이를 직접 apply, bundle, compose, 쓰기 확장 네 경로로 PG17에서 비교하는 시험과 공용 서비스 픽스처 |
+| `4e9eea67` | `product/tests/semantic-wire-measure.test.mjs`, `product/tests/sdk-type-rejection.test.mjs`, `product/tests/fixtures/sdk-semantics/**` | D6·D1 budget 실측, TS 타입 거부 코퍼스 |
+| `479fcbb3` | `spikes/spike-v6-transport/client/transport.ts`, `product/python/aip_sdk/__init__.py`, `spikes/spike-v6-transport/client/unsettled-codes.test.ts`, `product/tests/python_sdk_contract_test.py` | SDK 결함 수정: 실행 전 거절 코드 5개와 Python 키 재사용 |
+| `182cd809` | `spikes/spike-v6-transport/client/transport.ts`, `spikes/spike-v6-transport/client/bundle-result-ids.test.ts` | SDK 결함 수정: Uuid 자원의 compose를 담은 묶음 결과를 형식 오류로 오판 |
+| `2e505336` | `spikes/spike-v5-sdk/sdk/generic.ts`, `product/tests/sdk-contract-semantics.test.mjs`, `product/tests/sdk-type-rejection.test.mjs` | TS 타입 개선(참조 키, 중복 select, 원시 refs create)과 TS·Python PG17 여정 시험 |
+| `4a92d1ac` | `product/tests/semantic-chain.test.mjs`, `spikes/spike-v5-sdk/sdk/generic.ts`, `spikes/spike-v6-transport/client/typed.ts` | D4: 정의 → 실행 기록(감사 행) → DB → SDK 응답. bundle overload 시도는 필드 조합 union으로 교체(아래 4절) |
+| `459928a6` | `product/tests/semantic-definition-matrix.test.mjs`, `product/tests/fixtures/definition-matrix.expected.json` | D1: 정의 조각별 check 결과와 PG17 런타임 결과 표(골든), 핵심 파일 대기 todo 재현 3개 |
+| `da8c338f` | `CHANGELOG.md`, `plan-docs/stabilization-20261122/**`, `product/LIMITS.md`, `product/SUPPORT.md` | D 결과, 결정, 기준선·지원 범위 기록 |
 
 ## 2. D1: check 통과인데 런타임 미지원 / 실행 가능한데 정적 거부 (현재 HEAD 반례 탐색)
 
@@ -195,4 +196,38 @@ python3 -m unittest product.tests.python_sdk_contract_test
 
 ## 11. 검증 기록(마지막 실행)
 
-아래는 이 브랜치 마지막 커밋 기준이다. 명령과 출력은 최종 보고에도 적었다.
+이 절의 기존 PG17 기록은 `da8c338f`가 기록한 마지막 D 실행 기준이다. 이번 재개에서는 PG 의존 시험을 반복하지 않았다. 기존 근거는 D2 `semantic-path-parity.test.mjs` 3개(10 시나리오)와 D4 `semantic-chain.test.mjs` 3개이며, 각각 네 실행 경로의 결과/최종 DB 상태와 정의→감사→DB→SDK 흐름을 단언한다. 이번 재개에서 실행한 독립 SDK 및 무DB 표적 검사는 12절에 따로 기록한다.
+
+## 12. 재개 검증·독립 수정·인계 (2026-11-22)
+
+### 기존 변경 확인
+
+- 원격 갱신 후 `origin/main`은 `0e3f0c80`이고 D 브랜치는 이 기준에서 8커밋 앞이었다. 추적 변경은 없었다. 현재 문서의 1절 커밋 ID를 이 worktree의 실제 SHA로 맞췄다.
+- PG17 의존 D2·D4 재실행은 하지 않았다. 이전 증거의 범위는 D2의 직접 apply/bundle/compose/쓰기 확장 경로 결과와 DB 상태, D4의 멱등 재생·동시 요청·숨은 필드·원자 생성 사례다. 이번 변경은 그 시나리오의 fixture와 핵심 파일을 수정하지 않았다.
+- `Int` 안전 정수 경계와 공개 계약 결정, `sema.rs`·`spike-v3-write/src/lib.rs`·`spike-v6-transport/src/lib.rs`는 건드리지 않았다.
+
+### 독립 수정
+
+| 항목 | 변경 | 확인 |
+|---|---|---|
+| C-D1 예약어 필드 | PostgreSQL 식별자 생성에서 C-D 발견 12개 필드 이름을 인용. 일반 이름은 기존 출력 유지. | `ddl_namespace`에서 12개 필드의 DDL을 확인. PG 서버 실행은 하지 않음. |
+| C-D2 확장 Json 입력 | 서버 scalar 검사와 TS typed 검사에서 배열·객체·문자열·숫자·불리언·null JSON을 허용. JS의 비유한 수, undefined, Date, cycle 등 JSON wire에 담을 수 없는 값은 전송 전에 거부. | 서버 JSON scalar 및 worker 값 단위 검사, TS operation/WRITE 입력 테스트. 실제 PostgreSQL을 통한 storefront 여정은 미실행. |
+| C-D3 `default database` 검사 차이 | 수정하지 않음. check는 외부 저장소 채택 여부를 받지 않지만 init은 관리형 스키마 생성을 선택했을 때만 이를 거부한다. 무조건 check 오류를 추가하면 외부 채택 정의도 거부할 수 있다. | C가 남긴 check 통과/init 거부 근거를 유지. 모드 정보를 쓰는 설계가 없으므로 추후 소유자 결정 대상으로 남김. |
+
+### 이번 실행 결과
+
+- PASS — `node --test product/tests/sdk-type-rejection.test.mjs`: 1 passed, 0 failed.
+- PASS — `node --test spikes/spike-v6-transport/client/unsettled-codes.test.ts spikes/spike-v6-transport/client/bundle-result-ids.test.ts`: 10 passed, 0 failed.
+- PASS — `python3 -m unittest product.tests.python_sdk_contract_test`: 5 tests, OK.
+- PASS — `node --test spikes/spike-v6-transport/client/operations.test.ts`: 6 passed, 0 failed; strict `tsc` 표적 검사 exit 0.
+- PASS — `AIP_TEST_NO_DB=1 cargo test --manifest-path spikes/spike-v2-read/Cargo.toml --test accepted_facts_execution_gap --test ddl_namespace --test reference_vs_id`: 6 passed, 0 failed.
+- PASS — `AIP_TEST_NO_DB=1 cargo test --manifest-path spikes/spike-v2-read/Cargo.toml --lib json_scalar_accepts_arrays_objects_and_primitive_values`: 1 passed, 0 failed.
+- PASS — `cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib json_null_is_a_json_value_even_when_the_field_is_not_nullable`: 1 passed, 0 failed. 이 선택 테스트만 실행했고 DB 연결은 하지 않았다.
+- PASS — `cargo fmt --manifest-path spikes/spike-v2-read/Cargo.toml -- --check`, `cargo fmt --manifest-path spikes/spike-v4-worker/Cargo.toml -- --check`, `git diff --check`.
+
+### 남은 일 / 핵심 파일 인계
+
+- D1 todo 3건(C1 cost, C2 this-field 산술 하한, C3 공유 기본키 sort)은 `sema.rs`가 필요하다. C5 bundle 상한 정적 경고와 C6 Int 경계도 핵심 파일/공개 의미 결정을 기다린다. D-DEC-1~7은 확정하지 않았다.
+- C-D3 check/init 모드 정합은 mode-aware check 또는 소유자 결정이 필요하다.
+- D2·D4 PG17 재실행과 전체 `semantic-definition-matrix`, `sdk-contract-semantics`, `semantic-wire-measure` 검증은 프로젝트 GitHub Actions 또는 dedicated PG17에서 이어간다. workflow는 수정하지 않았다.
+- 핵심 파일 인계: `spikes/spike-v1-fixture/src/sema.rs`는 E 합류 전, `spikes/spike-v3-write/src/lib.rs`와 `spikes/spike-v6-transport/src/lib.rs`는 B 인계 전 수정하지 않는다.

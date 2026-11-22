@@ -4,7 +4,7 @@ use serde_json::Value;
 
 pub fn supported(ty: &str) -> bool {
     let ty = ty.trim_end_matches('?');
-    matches!(ty, "Bool" | "Int" | "Text" | "Email" | "Url" | "Time" | "Date")
+    matches!(ty, "Bool" | "Int" | "Text" | "Email" | "Url" | "Time" | "Date" | "Json")
         || decimal_type(ty).is_some()
         || ty.strip_prefix("Enum<").is_some_and(|s| s.ends_with('>'))
 }
@@ -125,6 +125,7 @@ pub fn parse(facts: &Value, ty: &str, value: &Value) -> Result<(String, &'static
         ("Email", Value::String(s)) if valid_email(s) => Ok((s.clone(), "text")),
         ("Time", Value::String(s)) => time_binding(s).map(|s| (s, "timestamptz")),
         ("Date", Value::String(s)) if valid_date(s) => Ok((s.clone(), "date")),
+        ("Json", value) => Ok((value.to_string(), "jsonb")),
         (ty, Value::String(s)) if ty.starts_with("Enum<") => {
             let name = ty.strip_prefix("Enum<").and_then(|s| s.strip_suffix('>')).ok_or_else(|| bad(base))?;
             if facts["enums"][name].as_array().is_some_and(|members| members.iter().any(|member| member.as_str() == Some(s))) {
@@ -134,6 +135,23 @@ pub fn parse(facts: &Value, ty: &str, value: &Value) -> Result<(String, &'static
             }
         }
         _ => Err(bad(base)),
+    }
+}
+
+#[cfg(test)]
+mod json_input_tests {
+    use super::{parse, supported};
+    use serde_json::json;
+
+    #[test]
+    fn json_scalar_accepts_arrays_objects_and_primitive_values() {
+        let facts = json!({"enums":{}});
+        for value in [json!([]), json!({"a":[1,2.5,null]}), json!("text"), json!(7), json!(true)] {
+            let (encoded, cast) = parse(&facts, "Json", &value).expect("Json input");
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&encoded).unwrap(), value);
+            assert_eq!(cast, "jsonb");
+        }
+        assert!(supported("Json"));
     }
 }
 

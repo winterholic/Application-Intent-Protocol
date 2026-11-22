@@ -445,6 +445,7 @@ fn check_typed(facts: &Value, ty: &str, v: &Value) -> bool {
     let nullable = ty.ends_with('?');
     let base = ty.trim_end_matches('?');
     match (base, v) {
+        ("Json", Value::Null) => true,
         (_, Value::Null) => nullable,
         (t, Value::String(s)) if t.starts_with("Id<") || t.starts_with("Ref<") => {
             if spike_v2_read::id_wire::id_cast(facts, t) == "uuid" {

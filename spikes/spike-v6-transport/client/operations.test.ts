@@ -3,11 +3,17 @@ import assert from "node:assert/strict";
 import { connectTypedExtensions } from "./typed.ts";
 import type { OperationBinding } from "../../spike-v5-sdk/sdk/generic.ts";
 
-type Operations = { length: { input: {text:string}; output: {length:number} } };
+type JsonValue = null | boolean | number | string | JsonValue[] | { readonly [key: string]: JsonValue };
+type WriteExtensions = { probeJson: { input: {payload:JsonValue}; output: {accepted:boolean} } };
+type Operations = { length: { input: {text:string}; output: {length:number} }; echo: { input: {payload:JsonValue}; output: {payload:JsonValue} } };
 const fingerprint = "a".repeat(64);
-const binding: OperationBinding<{}, {}, {}, {}, Operations> = {
+const binding: OperationBinding<{}, {}, {}, WriteExtensions, Operations> = {
   fingerprint,idWire:"safe-number-v13",readDescriptors:{},extensions:{},
-  operations:{length:{input:{text:{type:"Text",nullable:false}},output:{length:{type:"Int",nullable:false}},lifetime:"sync",effect:"none",deadlineMs:2000,dependencies:{worker:[],authorization:["database","principal","deployment"]}}},
+  writeExtensions:{probeJson:{input:{payload:{type:"Json",nullable:false}},output:{accepted:{type:"Bool",nullable:false}},access:[]}},
+  operations:{
+    length:{input:{text:{type:"Text",nullable:false}},output:{length:{type:"Int",nullable:false}},lifetime:"sync",effect:"none",deadlineMs:2000,dependencies:{worker:[],authorization:["database","principal","deployment"]}},
+    echo:{input:{payload:{type:"Json",nullable:false}},output:{payload:{type:"Json",nullable:false}},lifetime:"sync",effect:"none",deadlineMs:2000,dependencies:{worker:[],authorization:["database","principal","deployment"]}},
+  },
 };
 const response = (body:unknown) => new Response(JSON.stringify(body));
 
@@ -34,6 +40,59 @@ test("operation validates typed input and output with the generated contract", a
   await assert.rejects(client.operation("length",{text:"가😀A"}),(error:any)=>error.code==="CLIENT.PROTOCOL_ERROR");
 });
 
+test("operation accepts JSON objects, arrays and scalar values as typed input", async () => {
+  const values: JsonValue[] = [null, [], {a:[1, 2.5, null]}, "text", 7, true];
+  for (const payload of values) {
+    let sent = false;
+    const client = connectTypedExtensions("http://operation.invalid", "token", binding, async (url, init) => {
+      if (new URL(String(url)).pathname === "/session") return response({ok:true,principal:{actorId:"1"},remainingMs:60000});
+      sent = true;
+      assert.deepEqual(JSON.parse(String(init?.body)), {operation:"echo",input:{payload}});
+      return response({ok:true,output:{payload},contractFingerprint:fingerprint});
+    });
+    assert.deepEqual(await client.operation("echo", {payload}), {payload});
+    assert.equal(sent, true);
+  }
+});
+
+test("operation rejects values that cannot be represented as JSON before sending", async () => {
+  const client = connectTypedExtensions("http://operation.invalid", "token", binding, async (url) => {
+    if (new URL(String(url)).pathname === "/session") return response({ok:true,principal:{actorId:"1"},remainingMs:60000});
+    assert.fail("invalid JSON input must not reach the server");
+  });
+  const cyclic: {self?: unknown} = {};
+  cyclic.self = cyclic;
+  for (const payload of [Number.NaN, Number.POSITIVE_INFINITY, undefined, new Date(0), [undefined], cyclic]) {
+    await assert.rejects(client.operation("echo", {payload} as never), (error:any) => error.code === "WIRE.BAD_VALUE");
+  }
+});
+
+test("write extension accepts JSON input and rejects non-JSON values before sending", async () => {
+  const sent: unknown[] = [];
+  const client = connectTypedExtensions("http://operation.invalid", "token", binding, async (url, init) => {
+    if (new URL(String(url)).pathname === "/session") return response({ok:true,principal:{actorId:"1"},remainingMs:60000});
+    sent.push(JSON.parse(String(init?.body)));
+    return response({ok:false,code:"WIRE.EXTENSION_REJECTED",appCode:"OK",msg:"accepted",retry:"never"});
+  });
+  const values: JsonValue[] = [null, [], {a:[1, 2.5, null]}, "text", 7, true];
+  for (const [index, payload] of values.entries()) {
+    const result = await client.writeExtension("probeJson", {payload}, {key:`json-${index}`});
+    assert.equal(result.ok, false);
+  }
+  assert.equal(sent.length, values.length);
+  assert.deepEqual((sent[0] as any).request.input, {payload:null});
+
+  const rejecting = connectTypedExtensions("http://operation.invalid", "token", binding, async (url) => {
+    if (new URL(String(url)).pathname === "/session") return response({ok:true,principal:{actorId:"1"},remainingMs:60000});
+    assert.fail("invalid JSON input must not reach the server");
+  });
+  const cyclic: {self?: unknown} = {};
+  cyclic.self = cyclic;
+  for (const payload of [Number.NaN, Number.POSITIVE_INFINITY, undefined, new Date(0), [undefined], cyclic]) {
+    await assert.rejects(rejecting.writeExtension("probeJson", {payload} as never), (error:any) => error.code === "WIRE.BAD_VALUE");
+  }
+});
+
 test("operation rejects mismatched contracts and responses after a session replacement", async () => {
   let finish!:(response:Response)=>void;
   const fetcher:typeof fetch=async(url)=>{
@@ -54,7 +113,7 @@ test("operation descriptor ranges reject invalid Unicode length and numeric outp
   const ranged: typeof binding = {...binding, operations: {length: {...binding.operations.length,
     input: {text: {type:"Text",nullable:false,range:[1,3]}},
     output: {length: {type:"Int",nullable:false,range:[1,3]}},
-  }}};
+  }, echo: binding.operations.echo}};
   const fetcher:typeof fetch=async(url)=>response(new URL(String(url)).pathname==="/session"?{ok:true,principal:{actorId:"1"},remainingMs:60000}:{ok:true,output:{length:4},contractFingerprint:fingerprint});
   const client=connectTypedExtensions("http://operation.invalid","token",ranged,fetcher);
   await assert.rejects(client.operation("length",{text:"가😀AB"}),(error:any)=>error.code==="WIRE.BAD_VALUE");

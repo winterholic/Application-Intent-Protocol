@@ -82,3 +82,8 @@ fn decimal_worker_input_and_output_are_lossless_strings_with_declared_precision(
     }
     assert_eq!(check_record(&facts, &decl, &json!({ "amount": 12.5 }), "입력").unwrap_err().code, "WIRE.BAD_VALUE");
 }
+
+#[test]
+fn json_null_is_a_json_value_even_when_the_field_is_not_nullable() {
+    check("payload", "Json", Value::Null, "입력").expect("JSON null is a value, not a missing input field");
+}
