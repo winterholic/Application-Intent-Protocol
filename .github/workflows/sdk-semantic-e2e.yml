@@ -13,6 +13,11 @@ on:
       - 'product/python/**'
       - 'product/tools/build-sdk.mjs'
       - 'product/tests/sdk-semantic-e2e.test.mjs'
+      - 'product/tests/semantic-path-parity.test.mjs'
+      - 'product/tests/semantic-definition-matrix.test.mjs'
+      - 'product/tests/sdk-contract-semantics.test.mjs'
+      - 'product/tests/semantic-chain.test.mjs'
+      - 'product/tests/semantic-wire-measure.test.mjs'
       - 'product/tests/SDK-SEMANTIC-E2E.md'
       - 'spikes/spike-0-ts/package*.json'
       - 'spikes/spike-v5-sdk/**'
@@ -76,5 +81,13 @@ jobs:
           cargo clippy --locked --all-targets --no-deps -p aip-cli -p aip-service -p aip-execution -- -D warnings
       - name: Validate isolated PostgreSQL target
         run: node --input-type=module -e 'import { requireTestDatabase } from "./product/test-support/postgres-guard.mjs"; const target = requireTestDatabase(); console.log(`${target.host}:${target.port}/${target.dbname}`)'
-      - name: Run generated TypeScript and Python SDK semantic journeys
-        run: node --test --test-concurrency=1 product/tests/sdk-semantic-e2e.test.mjs
+      # The D5 measurement asserts contract-header codes and fixed aggregate deadline semantics. Its lock probe holds a table for about 7 seconds, so keep it in this isolated PG17 job, not the DB-free SDK regressions.
+      - name: Run generated SDK and D semantic journeys on PostgreSQL 17
+        run: >-
+          node --test --test-concurrency=1
+          product/tests/sdk-semantic-e2e.test.mjs
+          product/tests/semantic-path-parity.test.mjs
+          product/tests/semantic-definition-matrix.test.mjs
+          product/tests/sdk-contract-semantics.test.mjs
+          product/tests/semantic-chain.test.mjs
+          product/tests/semantic-wire-measure.test.mjs

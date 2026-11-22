@@ -8,7 +8,8 @@
 #   fast   no PostgreSQL: script syntax, workflow structure and the release-candidate gate tests, tooling unit tests, version
 #          consistency, cargo fmt, and the sema quick suites. Minutes; this is what Verify runs in CI as `head-fast`.
 #   heavy  needs PostgreSQL 17: tools/verify.sh (fmt, clippy, every engine suite, SDK and package tests), the expressiveness
-#          consumer apps, the stable concurrency probes, worker isolation, semantic conformance and the SDK semantic e2e.
+#          consumer apps, the stable concurrency probes, worker isolation, semantic conformance and the SDK semantic e2e
+#          (D1/D2/D3/D4/D5 semantic cases).
 #          Reuses AIP_TEST_DATABASE_URL/AIP_TEST_ADMIN_URL when set, otherwise starts a throwaway PostgreSQL 17 on --pg-port.
 #   all    fast, then heavy (default).
 #
@@ -73,7 +74,7 @@ else
   add heavy macos-only-v6 "cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --test extension_lifetime --test extension_unix --test write_extension_lifetime --test write_session_outcome && cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --test durable messages_share_atomic_job_effects_and_reject_foreign_acknowledgements && cargo test -p aip-cli --locked --test service_flow operation_only_service_preserves_principal_contract_revocation_and_deployment_fences"
 fi
 add heavy semantic-conformance "cargo test -p aip-sema --locked --test shared_semantic_fixture && cargo test -p aip-cli --locked --features poc-runtime --test core_semantic_fixture && cargo test -p aip-cli --locked --test service_flow"
-add heavy sdk-semantic-e2e "cargo build --locked -p aip-cli && node --test --test-concurrency=1 product/tests/sdk-semantic-e2e.test.mjs"
+add heavy sdk-semantic-e2e "cargo build --locked -p aip-cli && node --test --test-concurrency=1 product/tests/sdk-semantic-e2e.test.mjs product/tests/semantic-path-parity.test.mjs product/tests/semantic-definition-matrix.test.mjs product/tests/sdk-contract-semantics.test.mjs product/tests/semantic-chain.test.mjs product/tests/semantic-wire-measure.test.mjs"
 if (( with_release_gate )); then
   add heavy release-gate "bash scripts/release-gate.sh --baseline 4c27040c6d4a2a2931321e1980842be79512bdb0 --ref \"\$AIP_VERIFY_HEAD_SHA\" --out \"\$AIP_VERIFY_HEAD_OUT/release-gate\""
 fi

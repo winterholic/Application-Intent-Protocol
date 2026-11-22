@@ -416,9 +416,23 @@ class EntryPointTest(unittest.TestCase):
     def test_verify_sh_runs_the_tests_that_no_gate_ran_before(self):
         text = (ROOT / "tools/verify.sh").read_text()
         for needle in ("spikes/spike-v6-transport/client/uuid.test.ts", "spikes/spike-v6-transport/client/extension-rejection.test.ts",
+                       "spikes/spike-v6-transport/client/bundle-result-ids.test.ts", "spikes/spike-v6-transport/client/unsettled-codes.test.ts",
+                       "product/tests/sdk-type-rejection.test.mjs", "product.tests.python_sdk_contract_test",
                        "discover -s tools -p 'test_*.py'", "discover -s scripts -p 'test_*.py'", "product.tests.test_release_candidate_required",
                        "AIP_BIN=target/debug/aip node --test --test-name-pattern='^(a transition the caller may not make|a create the caller may not make)' product/tests/policy-residual-paths.test.mjs"):
             self.assertIn(needle, text)
+
+        head = (ROOT / "scripts/verify-head.sh").read_text()
+        for needle in ("product/tests/semantic-path-parity.test.mjs", "product/tests/semantic-definition-matrix.test.mjs",
+                       "product/tests/sdk-contract-semantics.test.mjs", "product/tests/semantic-chain.test.mjs",
+                       "product/tests/semantic-wire-measure.test.mjs"):
+            self.assertIn(needle, head)
+
+        sdk = (ROOT / ".github/workflows/sdk-semantic-e2e.yml").read_text()
+        for needle in ("product/tests/semantic-path-parity.test.mjs", "product/tests/semantic-definition-matrix.test.mjs",
+                       "product/tests/sdk-contract-semantics.test.mjs", "product/tests/semantic-chain.test.mjs",
+                       "product/tests/semantic-wire-measure.test.mjs"):
+            self.assertIn(needle, sdk)
 
 
 if __name__ == "__main__":
