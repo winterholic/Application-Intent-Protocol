@@ -33,7 +33,7 @@
 
 위치 없음의 표현은 "0:0 유지 + `located:false` 추가"로 구현했다. 1:1로 바꾸는 안은 기존 소비자의 값을 바꾸므로 구현하지 않았고 `decisions/e.md` D-E3에 선택지를 남겼다.
 
-위치 없는 진단이 나오는 곳(`Span::default()`): `limits.rs:12`(`DEF.SOURCE_TOO_LARGE`), `extract.rs`(`DEF.WRONG_BINDING`, `DEF.NO_BLOCK`, `DEF.MULTIPLE_BLOCKS`), `hlit.rs`(`DEF.NO_BLOCK`, `DEF.MULTIPLE_BLOCKS`), `sema.rs`(`DEF.MISSING_ITEM` actor 선언 없음, `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`, `span_of` 대체값). 이들의 위치를 실제 좌표로 채우는 일은 `sema.rs` 해제 뒤 별도(해당 줄은 sema.rs).
+위치를 알 수 있는 진단은 실제 좌표를 갖는다(2라운드에서 채움): 리터럴의 잘못(`DEF.BAD_VALUE`, 조건이 Bool이 아닌 `DEF.TYPE_MISMATCH` 등)은 리터럴, `DEF.SOURCE_TOO_LARGE`는 상한을 넘기는 첫 문자, `DEF.MULTIPLE_BLOCKS`는 두 번째 `aip`/`define`, `DEF.WRONG_BINDING`은 남는 import 또는 첫 사용. 지금도 0:0인 것은 가리킬 텍스트가 없는 `DEF.MISSING_ITEM`(actor 선언 없음), `DEF.NO_BLOCK`, `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`(실행 facts에서 나옴)이다. 시험: `diagnostic_fields.rs`의 `a_bad_literal_points_at_the_literal`, `a_source_over_the_size_limit_points_at_the_byte_that_crosses_it`, `a_second_block_in_an_embedded_file_points_at_the_second_block`, `a_diagnostic_about_the_whole_definition_stays_without_a_position`.
 
 ## 3. 경고 `advisories[]`
 
@@ -80,7 +80,7 @@
 
 ## 7. 문구를 읽어야만 구분되는 오류 종류 (남은 것)
 
-처리한 것: 파일 읽기 실패 4종(`reason`, 위 4절).
+처리한 것: 파일 읽기 실패 4종(`reason`, 위 4절), G9의 `DEF.ACCESS_TARGET_NOT_EXPOSED`.
 
 남은 것. 아래 코드는 한 코드가 서로 다른 조치를 요구하는 상황을 덮는다. 발생지 수는 `grep -o '"DEF\.…"'`로 센 값이다(2026-11-22).
 
@@ -88,11 +88,11 @@
 |---|---|---|
 | `DEF.TYPE_MISMATCH` | 33(sema) | sema.rs |
 | `DEF.DUPLICATE` | 33(sema 27, parser 5, hlit 1) | sema.rs 포함 |
-| `DEF.UNKNOWN_SYMBOL` | 26(sema) | 저장소 안 소비자가 문구로 가르는 곳이 여기다(G9). sema.rs |
+| `DEF.UNKNOWN_SYMBOL` | 24(sema, G9의 두 곳 제외) | 철자 제안은 `help`에 있다 |
 | `DEF.MISSING_ITEM` | 26(sema 22, hmap 3, parser 1) | 시험이 문구로 구분한다(`diagnostics.rs`의 `message.contains("bulk maxRows")` 등). sema.rs 포함 |
 | `DEF.NON_LITERAL` | 24(hlit 19, extract 5) | E 소유 파일. 소비자 없음 |
 | `DEF.UNSUPPORTED` | 22(sema) | sema.rs |
 | `DEF.UNKNOWN_FIELD` | 22(sema) | 철자 제안은 `help`에 있다 |
 | `DEF.H_SHAPE` | 22(hmap) | 호스트 리터럴 형식. 소비자 없음 |
 
-저장소 안에서 문구로 분기하는 소비자는 `.github/workflows/flaskbb-post-order.yml:213`(`"expose apply" in d["message"]`) 하나다. 그 발생지는 `sema.rs`의 `extension`(쓰기 access가 `expose apply`로 공개되지 않은 전이를 가리킴)이라 `sema.rs` 수정이 필요하고, 같은 자리에서 코드를 바꾸는 것은 기존 소비자가 보는 코드를 바꾸는 일이라 소유자 결정이다(D-E4). 소비자가 없는 나머지(`DEF.NON_LITERAL`, `DEF.H_SHAPE` 등)에 코드를 새로 쪼개지는 않았다. 소비자 없이 코드 공간을 늘리면 의미 고정 비용만 늘기 때문이다.
+저장소 안에서 문구로 분기하던 소비자는 `.github/workflows/flaskbb-post-order.yml`(`"expose apply" in d["message"]`) 하나였다. 그 발생지(쓰기 확장과 job의 access가 `expose apply`로 공개되지 않은 전이를 가리킴) 두 곳은 전용 코드 `DEF.ACCESS_TARGET_NOT_EXPOSED`를 낸다(2라운드, D-E4(a)). `DEF.UNKNOWN_SYMBOL`은 나머지 발생지에서 의미가 같다. workflow 전환은 F1 몫이다(`track-e.md` 7절의 diff). 소비자가 없는 나머지(`DEF.NON_LITERAL`, `DEF.H_SHAPE` 등)에 코드를 새로 쪼개지는 않았다. 소비자 없이 코드 공간을 늘리면 의미 고정 비용만 늘기 때문이다.

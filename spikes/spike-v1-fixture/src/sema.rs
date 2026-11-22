@@ -2893,7 +2893,20 @@ impl<'a> Ctx<'a> {
         let (input, ij) = self.params(&x.input);
         let (_, oj) = self.params(&x.output);
         let mut binding = Map::new();
+        // Opt-in: `access read.<Resource>` lists the resources the extension reads with `ctx.data.read`. An extension that lists none keeps
+        // reading any resource with `expose read` (the caller's policies apply either way); one that lists some reads only those.
+        let mut reads = BTreeSet::new();
         for (rn, an) in &x.access {
+            if rn == "read" {
+                if self.res.contains_key(rn.as_str()) {
+                    self.d("DEF.AMBIGUOUS", format!("resource 이름 `{rn}`가 capability 영역과 겹침"), x.span);
+                } else if !self.res.contains_key(an.as_str()) {
+                    self.d("DEF.UNKNOWN_SYMBOL", format!("읽기 access `{rn}.{an}`의 대상 resource 없음"), x.span);
+                } else if !reads.insert(an.clone()) {
+                    self.d("DEF.DUPLICATE", format!("capability `{rn}.{an}` 중복 선언"), x.span);
+                }
+                continue;
+            }
             if rn == "mongo" || rn == "redis" {
                 // 서버가 소유한 MongoDB·Redis 읽기 capability. 집계 입력 binding이 없어 빈 객체가 grant 표식이다.
                 if self.res.contains_key(rn.as_str()) {
@@ -2923,10 +2936,14 @@ impl<'a> Ctx<'a> {
             }
             binding.insert(format!("{rn}.{an}"), Value::Object(b));
         }
-        Some(json!({
+        let mut contract = json!({
             "kind": x.kind, "input": ij, "output": oj, "access": binding, "effect": x.effect,
             "deadlineMs": x.deadline_ms, "implementation": x.implementation,
-        }))
+        });
+        if !reads.is_empty() {
+            contract["reads"] = json!(reads);
+        }
+        Some(contract)
     }
 }
 

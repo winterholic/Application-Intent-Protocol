@@ -167,6 +167,30 @@ fn an_access_to_a_transition_that_is_not_exposed_has_its_own_code() {
     assert!(ds.iter().all(|d| d["code"] != "DEF.UNKNOWN_SYMBOL"), "{ds:?}");
 }
 
+#[test]
+fn a_job_access_to_a_transition_that_is_not_exposed_has_its_own_code() {
+    let source = r#"
+actor principal
+resource Event {
+  fields { id: Id; checked: Bool }
+  rows read when true
+  transition mark { allow true; from checked = false; to checked = true }
+}
+operation job run {
+  input { }
+  output { total: Int }
+  allow actor != null
+  access Event.mark
+  effect managed
+  deadline 2s
+  implementation "events.run"
+}
+"#;
+    let ds = failure(source, Form::A);
+    assert!(ds.iter().any(|d| d["code"] == "DEF.ACCESS_TARGET_NOT_EXPOSED"), "{ds:?}");
+    assert!(ds.iter().all(|d| d["code"] != "DEF.UNKNOWN_SYMBOL"), "{ds:?}");
+}
+
 fn only(ds: &[Value], code: &str) -> Value {
     ds.iter().find(|d| d["code"] == code).cloned().unwrap_or_else(|| panic!("{code} not in {ds:?}"))
 }
@@ -244,4 +268,31 @@ fn a_bad_literal_points_at_the_literal() {
     let ds = failure("actor Member\nresource Member {\n  fields { id: Id }\n  rows read when 5\n}\n", Form::A);
     let d = only(&ds, "DEF.TYPE_MISMATCH");
     assert_eq!((d["line"].as_u64(), d["column"].as_u64()), (Some(4), Some(18)), "{d}");
+}
+
+fn read_extension(access: &str) -> String {
+    let stats = "  extension read stats {\n    input { clubId: Club.Id }\n    output { approvedApplicants: Int }\n    access Apply.approvedCount\n";
+    assert_eq!(A.matches(stats).count(), 1, "the fixture extension changed");
+    A.replacen(stats, &format!("  extension read stats {{\n    input {{ clubId: Club.Id }}\n    output {{ approvedApplicants: Int }}\n    access Apply.approvedCount, {access}\n"), 1)
+}
+
+#[test]
+fn a_read_extension_may_declare_the_resources_it_reads() {
+    let without = load_str(A, Form::A).unwrap().execution;
+    let stats = &without["resources"]["Recruitment"]["extensions"]["stats"];
+    assert!(stats.get("reads").is_none(), "a definition that declares nothing keeps the contract it had: {stats}");
+
+    let with = load_str(&read_extension("read.Club, read.Recruitment"), Form::A).unwrap().execution;
+    let stats = &with["resources"]["Recruitment"]["extensions"]["stats"];
+    assert_eq!(stats["reads"], serde_json::json!(["Club", "Recruitment"]), "sorted, and apart from the aggregate bindings");
+    assert_eq!(stats["access"], without["resources"]["Recruitment"]["extensions"]["stats"]["access"], "`access` keeps only aggregates and grants");
+    assert_ne!(spike_v1_fixture::digest(&with), spike_v1_fixture::digest(&without), "a declared read is part of the contract");
+}
+
+#[test]
+fn a_read_declaration_is_checked_like_the_one_of_a_write_extension() {
+    let ds = failure(&read_extension("read.Nothing"), Form::A);
+    assert_eq!(ds[0]["code"], "DEF.UNKNOWN_SYMBOL", "{ds:?}");
+    let ds = failure(&read_extension("read.Club, read.Club"), Form::A);
+    assert!(ds.iter().any(|d| d["code"] == "DEF.DUPLICATE"), "{ds:?}");
 }

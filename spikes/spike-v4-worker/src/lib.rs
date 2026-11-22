@@ -161,6 +161,8 @@ struct Grant {
     /// 확장 계약의 access 목록과 각 집계 입력에 묶인 확장 입력 값.
     access: HashMap<String, Map<String, Value>>,
     capability_grants: std::collections::HashSet<String>,
+    /// `access read.<Resource>` of a read extension. None: the extension declared no read and may read any resource with `expose read`.
+    reads: Option<std::collections::HashSet<String>>,
     id_wire: IdWire,
     expires: Instant,
     active: bool,
@@ -711,6 +713,7 @@ async fn invoke_contract(
             now: caller.now.clone(),
             access,
             capability_grants,
+            reads: x["reads"].as_array().map(|names| names.iter().filter_map(|n| n.as_str().map(str::to_string)).collect()),
             id_wire: wire,
             expires,
             active: true,
@@ -900,6 +903,9 @@ async fn serve_call(host: &mut dyn WorkerHost, w: &mut Worker, facts: &Value, m:
             }
             if query.get("read").and_then(|v| v.as_str()) != Some(name) {
                 return rej("WIRE.BAD_VALUE", "query의 `read` 대상이 일치하지 않음");
+            }
+            if g.reads.as_ref().is_some_and(|declared| !declared.contains(name)) {
+                return rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `read.{name}` 접근이 없음"));
             }
             if !facts["resources"].get(name).is_some_and(Value::is_object) {
                 return rej("WIRE.NOT_EXPOSED", format!("등록되지 않은 resource `{name}`"));
