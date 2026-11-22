@@ -1,0 +1,46 @@
+// SDK 계약 의미 시험(product/tests/sdk-contract-semantics.test.mjs)의 정의. Uuid id, Decimal, nullable, input 산술, 참조 생성, compose, 쓰기 확장을 한 앱에 둔다.
+resource Member { fields { id: Id; name: Text(1..20) } rows read when id = actor }
+actor Member
+resource Account {
+  fields { id: Uuid; owner: Member; label: Text(1..20); memo: Text?; balance: Decimal(12,2); cap: Decimal(12,2)?; secret: Text? }
+  rows read when owner = actor
+  field secret read when owner = actor and label = "mine"
+  transition rename { allow owner = actor; from true; patch label, memo, cap }
+  transition deposit { input { amount: Decimal(12,2) }; allow owner = actor; from true; to balance = balance + input.amount }
+  transition withdraw { input { amount: Decimal(12,2) }; allow owner = actor; from balance >= input.amount; to balance = balance - input.amount }
+  expose read { select id, label, memo, balance, cap, secret; filter id.eq, label.eq; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+  expose apply rename { target id; bulk maxRows 3 }
+  expose apply deposit { target id; bulk maxRows 3 }
+  expose apply withdraw { target id; bulk maxRows 3 }
+  expose create { allow owner = actor; fields owner, label, memo, balance }
+  extension write adjust {
+    input { a: Account.Id; amount: Decimal(12,2); fail: Bool }
+    output { id: Account.Id; moved: Decimal(12,2); note: Text? }
+    access Account.deposit
+    effect db
+    deadline 3s
+    implementation "sdk.adjust"
+  }
+}
+resource Product {
+  fields { id: Id; owner: Member; stock: Int(0..1000); price: Decimal(10,2) }
+  rows read when owner = actor
+  transition take { input { qty: Int(1..100) }; allow owner = actor; from stock >= input.qty; to stock = stock - input.qty }
+  expose read { select id, stock, price; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+  expose apply take { target id; bulk maxRows 1 }
+}
+resource Order {
+  fields { id: Id; owner: Member; status: Text(1..12); total: Decimal(12,2) }
+  rows read when owner = actor
+  transition confirm { allow owner = actor; from status = "open"; to status = "confirmed" }
+  expose read { select id, status, total; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+  expose apply confirm { target id; bulk maxRows 3 }
+  expose create { allow owner = actor and status = "open"; fields owner, status, total }
+  expose compose { bulk maxRows 3; transitions confirm }
+}
+resource OrderLine {
+  fields { id: Id; order: Order; product: Product; qty: Int(1..100); price: Decimal(10,2); note: Text? }
+  rows read when order.owner = actor
+  expose read { select id, qty, price, note, order, product; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+  expose create { allow order.owner = actor; fields order, product, qty, price, note }
+}
