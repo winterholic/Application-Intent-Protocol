@@ -9,6 +9,8 @@
 - `SECURITY.md`, `CONTRIBUTING.md`, 이 파일.
 - 문서: [1.0 지원 범위](product/SUPPORT.md)(지원 11, 조건부 7, 제외 1, PostgreSQL 17 한정, 공개 count, 계약 헤더 오류 코드), [표현력 한계와 확장 우회](product/LIMITS.md)(E1~E9), COMPATIBILITY의 1.0 호환 약속과 정의 검사 변경.
 - `DEF.ADVISORY_PUBLIC_COUNT_INPUT` 경고(정의는 통과, 응답·계약 지문 불변): `where`가 호출자의 `input`을 쓰는 `count`는 원본 `rows read`를 적용하지 않아 input 값을 바꿔 가며 읽을 수 없는 행의 필드 값 분포를 셀 수 있다(`plan-docs/hardening-1.0/policy.md` F1). where가 행 정책을 함의하거나 sourceAccess guard가 같은 input을 받으면 나오지 않는다. 저장소 `.aip`·`.e/.h` 정의 71개에서 새로 나온 경고는 0건이다.
+- 진단 JSON 가산 필드(기존 필드는 그대로): 정의 오류에 `located`(위치 없음이면 `false`, 좌표는 기존대로 0:0), `anchor`(`line:<줄>:col:<열>`), `scopePath`(`scope`를 선언 경로 조각의 배열로), 경고에 `line`·`column`·`explain`, 정의 아닌 실패(`SOURCE_IO`, `INPUT_TOO_LARGE`)에 `reason`. 코드 레지스트리 목록(`aip diagnostics --json`)에 `severity`·`status`(`since`·`replacedBy`는 알 때만). 게시된 코드가 삭제되지 않았는지 보는 시험. 기계 필드와 설명 필드의 구분은 `plan-docs/stabilization-20261122/diagnostics-fields.md`.
+- 진단·도움말처럼 DB가 필요 없는 시험의 루프용 `AIP_TEST_NO_DB=1`: 시험 DSN이 없을 때만 `aip-test-support`의 빌드 가드를 건너뛴다. DB 시험은 여전히 컴파일되지 않는다.
 
 ### Changed
 - **호환 변경(정의 검사 강화): 숨겨진 필드(`field ... read when`)의 값이 다른 경로로 호출자에게 건너가는 정의를 `DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION`으로 거부한다.** 술어 호출 안과 `actor.*` 경로를 `from`·`to`가 읽는 것, 효과 create·update 값과 update·delete 대상 조건, compose `create ... from` 출처, `sameScope`, 그리고 호출자가 정하는 값(`input`, `expose create`의 새 행 값, `patch` 필드)을 `expose create` allow·`check`·operation allow·집계 `where`·집계 `sourceAccess` guard에서 가려진 필드와 견주는 것이다. 모두 PostgreSQL 17 serve에서 가려진 값을 복원한 반례다. 저장소의 `.aip` 정의 68개는 새로 거부되지 않는다. 근거와 판정은 [plan-docs/hardening-1.0/policy.md](plan-docs/hardening-1.0/policy.md).

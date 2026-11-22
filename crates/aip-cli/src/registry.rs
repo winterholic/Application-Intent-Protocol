@@ -38,7 +38,10 @@ pub fn all_entries() -> Vec<Value> {
 }
 
 fn definition_entry(c: &aip_service::definition_registry::Info) -> Value {
-    json!({"code": c.code, "area": "def", "kind": "definition", "title": c.title, "explain": c.explain, "fix": c.fix, "example": c.example})
+    let mut entry = c.json();
+    entry["area"] = json!("def");
+    entry["kind"] = json!("definition");
+    entry
 }
 
 fn wire_entry(c: &aip_service::wire_registry::Info) -> Value {

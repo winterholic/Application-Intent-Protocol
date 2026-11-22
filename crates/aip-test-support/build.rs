@@ -6,9 +6,14 @@ fn main() {
     {
         println!("cargo:rerun-if-env-changed={key}");
     }
-    let strict = std::env::var_os("CARGO_FEATURE_STRICT_DB").is_some();
+    println!("cargo:rerun-if-env-changed=AIP_TEST_NO_DB");
     let database_url = std::env::var("AIP_TEST_DATABASE_URL").ok();
     let admin_url = std::env::var("AIP_TEST_ADMIN_URL").ok();
+    // AIP_TEST_NO_DB=1 is for a loop on tests that never touch a database (diagnostics, help, generated bindings): the crate then
+    // builds without a database configured. It changes nothing once a test DSN is set, and a test that needs the database still
+    // cannot be compiled (`test_database_url!()` is `env!`) or run (`database_url()` panics), so nothing connects by default.
+    let no_db = std::env::var("AIP_TEST_NO_DB").is_ok_and(|v| v == "1") && database_url.is_none() && admin_url.is_none();
+    let strict = std::env::var_os("CARGO_FEATURE_STRICT_DB").is_some() && !no_db;
     if strict && database_url.is_none() {
         panic!("AIP_TEST_DATABASE_URL is required; refusing PostgreSQL defaults");
     }

@@ -172,7 +172,10 @@ fn every_code_is_registered_and_none_is_dead() {
     let missing: Vec<&String> = literals.iter().filter(|l| !registered.contains(*l)).collect();
     assert!(missing.is_empty(), "codes emitted by the sources but not in src/codes.rs: {missing:?}");
     // INVALID_DEFINITION is the envelope the service adds around the list.
-    let dead: Vec<&String> = registered.iter().filter(|r| *r != "DEF.INVALID_DEFINITION" && !literals.contains(*r)).collect();
+    // A retired code is kept in the registry on purpose (a published code is never deleted), so it need not be emitted.
+    let retired: BTreeSet<String> = codes::all().iter().filter(|c| c.status == codes::Status::Retired).map(|c| c.code.to_string()).collect();
+    let dead: Vec<&String> =
+        registered.iter().filter(|r| *r != "DEF.INVALID_DEFINITION" && !literals.contains(*r) && !retired.contains(*r)).collect();
     assert!(dead.is_empty(), "registered but nothing emits them: {dead:?}");
     for c in codes::all() {
         assert!(!c.title.is_empty() && !c.explain.is_empty() && !c.fix.is_empty(), "{} needs title, explain and fix", c.code);

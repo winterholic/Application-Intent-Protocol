@@ -11,6 +11,9 @@ pub struct Advisory {
     pub code: &'static str,
     pub anchor: String,
     pub msg: String,
+    /// The position the compiler reported, when there is one. The advisories of the development checks point at a
+    /// declaration (`predicate:x`) and have none.
+    pub span: Option<Span>,
 }
 
 /// Compiler advisories reported even when the development checks are off. The policy advisories are here because AIP
@@ -69,6 +72,7 @@ fn direct_reference_advice(execution: &Value) -> Vec<Advisory> {
             code: "DEF.ADVISORY_UNUSED_PREDICATE",
             anchor: format!("predicate:{name}"),
             msg: "실행 facts에 이 predicate의 직접 호출 참조가 없음".into(),
+            span: None,
         })
         .collect()
 }
@@ -97,6 +101,7 @@ fn unreachable_read_advice(execution: &Value) -> Vec<Advisory> {
             msg: format!(
                 "`{name}`의 expose read에 budget이 없어 루트로 읽을 수 없고 다른 resource의 traverse 대상도 아님. 루트 조회가 목적이면 budget을 추가"
             ),
+            span: None,
         })
         .collect()
 }
@@ -158,11 +163,17 @@ fn absence_policy_advice(execution: &Value) -> Vec<Advisory> {
                     code: "DEF.ADVISORY_ABSENCE_POLICY",
                     anchor: format!("transition:{res}.{tr}"),
                     msg: message(&format!("`{res}.{tr}`")),
+                    span: None,
                 });
             }
         }
         if negates_exists(&rf["exposeCreate"]["allow"], predicates, &mut BTreeSet::new()) {
-            out.push(Advisory { code: "DEF.ADVISORY_ABSENCE_POLICY", anchor: format!("create:{res}"), msg: message(&format!("`{res}` 생성")) });
+            out.push(Advisory {
+                code: "DEF.ADVISORY_ABSENCE_POLICY",
+                anchor: format!("create:{res}"),
+                msg: message(&format!("`{res}` 생성")),
+                span: None,
+            });
         }
     }
     out
@@ -172,8 +183,12 @@ pub fn load_checked(src: &str, form: Form, options: &Value) -> Result<Checked, V
     let enabled = dev_checks_enabled(options)?;
     // 개발 조언을 꺼도 실행 계약의 구조·타입 검사는 생략할 수 없다.
     let output = spike_v1_fixture::load_str(src, form)?;
-    let compiler_advisory =
-        |diag: &Diag| Advisory { code: diag.code, anchor: format!("line:{}:col:{}", diag.span.line, diag.span.col), msg: diag.msg.clone() };
+    let compiler_advisory = |diag: &Diag| Advisory {
+        code: diag.code,
+        anchor: spike_v1_fixture::diag::anchor(diag.span),
+        msg: diag.msg.clone(),
+        span: diag.located().then_some(diag.span),
+    };
     // 공개 count와 정책 작성 경고는 계약·노출 고지라서 개발 조언을 꺼도 낸다. 나머지 컴파일러 조언은 devChecks일 때만 낸다.
     let mut advisories: Vec<Advisory> =
         output.advisories.iter().filter(|diag| enabled || ALWAYS_ON.contains(&diag.code)).map(compiler_advisory).collect();

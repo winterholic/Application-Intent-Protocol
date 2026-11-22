@@ -42,8 +42,9 @@ pub fn enrich(mut diags: Vec<Diag>, src: &str, form: Form) -> Vec<Diag> {
     }
     for d in &mut diags {
         if let Some(scopes) = &scopes {
-            let scope = scope_of(scopes, src, d);
-            d.set_scope(scope);
+            if let Some(path) = scope_of(scopes, src, d) {
+                d.set_scope_path(path);
+            }
         }
         let mut parts: Vec<String> = Vec::new();
         if let Some(h) = d.help() {
@@ -260,7 +261,7 @@ fn label(header: &str) -> String {
     words.join(" ")
 }
 
-fn scope_of(scopes: &[Vec<String>], src: &str, d: &Diag) -> Option<String> {
+fn scope_of(scopes: &[Vec<String>], src: &str, d: &Diag) -> Option<Vec<String>> {
     let idx = (d.span.line as usize).checked_sub(1)?;
     let mut stack = scopes.get(idx)?.clone();
     if let Some(line) = src.lines().nth(idx) {
@@ -284,5 +285,5 @@ fn scope_of(scopes: &[Vec<String>], src: &str, d: &Diag) -> Option<String> {
         }
     }
     let path: Vec<String> = stack.into_iter().filter(|l| !l.is_empty()).collect();
-    (!path.is_empty()).then(|| path.join(" > "))
+    (!path.is_empty()).then_some(path)
 }

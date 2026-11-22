@@ -19,10 +19,60 @@ pub struct Info {
     /// A definition (`.aip` text) that is accepted and shows the repaired form; empty when the fix
     /// is not a change of the definition text.
     pub example: &'static str,
+    /// Whether the compiler still emits the code. A retired code stays in the registry for good: a published code is
+    /// never deleted and its string is never reused for another meaning.
+    pub status: Status,
+    /// The release that first emitted the code. Only set when it is known; the history before this field was not recorded.
+    pub since: Option<&'static str>,
+    /// The code that reports the same input now, for a retired code.
+    pub replaced_by: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Active,
+    Retired,
+}
+
+impl Status {
+    pub fn name(self) -> &'static str {
+        match self {
+            Status::Active => "active",
+            Status::Retired => "retired",
+        }
+    }
+}
+
+impl Info {
+    /// `warning` for the advisories (`DEF.ADVISORY_*`, the definition is accepted), `error` for every other code.
+    pub fn severity(&self) -> &'static str {
+        if self.code.starts_with("DEF.ADVISORY_") {
+            "warning"
+        } else {
+            "error"
+        }
+    }
+
+    /// One entry of `aip diagnostics --area def --json`. `since` and `replacedBy` appear only when they are known.
+    pub fn json(&self) -> serde_json::Value {
+        let mut m = serde_json::Map::new();
+        for (k, v) in [("code", self.code), ("title", self.title), ("explain", self.explain), ("fix", self.fix), ("example", self.example)] {
+            m.insert(k.into(), v.into());
+        }
+        m.insert("severity".into(), self.severity().into());
+        m.insert("status".into(), self.status.name().into());
+        if let Some(since) = self.since {
+            m.insert("since".into(), since.into());
+        }
+        if let Some(code) = self.replaced_by {
+            m.insert("replacedBy".into(), code.into());
+        }
+        m.into()
+    }
 }
 
 const fn i(code: &'static str, title: &'static str, explain: &'static str, fix: &'static str, example: &'static str) -> Info {
-    Info { code, title, explain, fix, example }
+    Info { code, title, explain, fix, example, status: Status::Active, since: None, replaced_by: None }
 }
 
 /// A minimal valid base used by examples that only need to show one construct.
@@ -57,7 +107,7 @@ pub fn render_markdown() -> String {
     let mut out = String::from(
         "# 제품 정의 진단 코드\n\n\
          > 이 문서는 `spikes/spike-v1-fixture/src/codes.rs`의 레지스트리에서 생성된다. 손으로 고치지 않는다. 다시 만들려면 `AIP_UPDATE_GOLDEN=1 cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --test diagnostics`를 실행한다.\n\n\
-         `aip service check`(와 정의를 읽는 모든 제품 명령)가 `DEF.INVALID_DEFINITION`과 함께 돌려주는 진단의 코드다. 각 진단은 `code`, `message`, `line`, `column`에 더해 `scope`(위치한 선언 경로), `help`(가까운 철자, 블록이 받는 키, 고치는 방법), `explain`(`aip explain-code <CODE>`)을 가진다. 메시지 문장은 계약이 아니고 코드가 계약이다. 한 번 공개된 코드는 의미를 바꾸지 않는다.\n\n\
+         `aip service check`(와 정의를 읽는 모든 제품 명령)가 `DEF.INVALID_DEFINITION`과 함께 돌려주는 진단의 코드다. 각 진단은 도구가 분기에 쓸 수 있는 기계 필드 `code`, `severity`, `line`, `column`과, 사람을 위한 설명 필드 `message`, `help`, `scope`, `explain`(`aip explain-code <CODE>`)을 가진다. 위치가 있으면 `located: true`와 `anchor`(`line:<줄>:col:<열>`)가, 위치가 없는 진단(정의 전체에서 나온 것)에는 `located: false`와 좌표 0:0이 붙는다. `scopePath`는 `scope`를 선언 경로의 조각 배열로 준 것이다. 메시지 문장은 계약이 아니고 코드가 계약이다. 한 번 공개된 코드는 의미를 바꾸지 않고, 삭제하지 않는다(더 내지 않는 코드는 `status: retired`로 레지스트리에 남는다). 필드별 명세는 `plan-docs/stabilization-20261122/diagnostics-fields.md`다.\n\n\
          모든 AIP 오류 코드는 `영역.이름` 형식이다. 이 문서의 영역은 `DEF`(제품 정의 검사기)이고, 제품 HTTP API의 `WIRE` 코드는 [wire-errors.md](wire-errors.md), PoC 언어와 런타임의 `POC` 코드는 [diagnostics.md](diagnostics.md)에 있다. 세 영역은 `aip explain-code`와 `aip diagnostics`로 함께 조회한다. 2026-10-13 이전에는 접두 없는 이름(`DEF.UNKNOWN_FIELD`)이었고 제품 wire 코드와 이름이 겹쳤다.\n",
     );
     for c in REGISTRY {

@@ -13,6 +13,8 @@ pub struct Span {
 #[derive(Debug, Clone, Default)]
 struct Notes {
     scope: Option<String>,
+    /// The segments `scope` is made of, for a tool that must not split a sentence.
+    scope_path: Vec<String>,
     help: Option<String>,
 }
 
@@ -25,6 +27,12 @@ pub struct Diag {
     pub msg: String,
     pub span: Span,
     notes: Option<Box<Notes>>,
+}
+
+/// The anchor of a position: `line:<n>:col:<m>`, 1-based, the column counted in Unicode code points. Advisories use the
+/// same text (`advisories[].anchor`), so a tool reads the place of an error and of a warning the same way.
+pub fn anchor(span: Span) -> String {
+    format!("line:{}:col:{}", span.line, span.col)
 }
 
 impl Diag {
@@ -45,9 +53,21 @@ impl Diag {
         self.notes.as_deref().and_then(|n| n.help.as_deref())
     }
 
-    pub(crate) fn set_scope(&mut self, scope: Option<String>) {
-        if scope.is_some() {
-            self.notes.get_or_insert_default().scope = scope;
+    pub fn scope_path(&self) -> &[String] {
+        self.notes.as_deref().map_or(&[], |n| n.scope_path.as_slice())
+    }
+
+    /// Whether the diagnostic points into the text. A few come from the whole definition (a missing `actor`, a file
+    /// without a block, a source over the size limit); they carry the coordinate 0:0.
+    pub fn located(&self) -> bool {
+        self.span.line >= 1
+    }
+
+    pub(crate) fn set_scope_path(&mut self, path: Vec<String>) {
+        if !path.is_empty() {
+            let notes = self.notes.get_or_insert_default();
+            notes.scope = Some(path.join(" > "));
+            notes.scope_path = path;
         }
     }
 
@@ -57,8 +77,12 @@ impl Diag {
         }
     }
 
-    /// The wire form of the service output. The first four fields are the historical ones; `scope`,
-    /// `help`, `explain` and `severity` are additive. Definition diagnostics are always errors.
+    /// The wire form of the service output.
+    ///
+    /// Fields a tool may branch on: `code`, `severity`, `line`, `column`, and when present `located`, `anchor`,
+    /// `scopePath`. Fields for people, whose wording may change: `message`, `help`, `scope`, `explain`. The first five
+    /// are the historical ones and keep their meaning (a diagnostic without a position is still 0:0); every other field
+    /// is additive and optional for a reader. Definition diagnostics are always errors.
     pub fn json(&self) -> Value {
         let mut m = Map::new();
         m.insert("code".into(), json!(self.code));
@@ -66,8 +90,13 @@ impl Diag {
         m.insert("message".into(), json!(self.msg));
         m.insert("line".into(), json!(self.span.line));
         m.insert("column".into(), json!(self.span.col));
+        m.insert("located".into(), json!(self.located()));
+        if self.located() {
+            m.insert("anchor".into(), json!(anchor(self.span)));
+        }
         if let Some(scope) = self.scope() {
             m.insert("scope".into(), json!(scope));
+            m.insert("scopePath".into(), json!(self.scope_path()));
         }
         if let Some(help) = self.help() {
             m.insert("help".into(), json!(help));

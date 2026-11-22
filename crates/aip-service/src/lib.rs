@@ -1,10 +1,14 @@
 //! Product assembly reuses the validated definition, authorization, SQL and SDK engines.
 mod brokers;
+mod diagnostics;
 pub mod encryption_runtime;
 mod infrastructure;
 mod rag;
 mod triggers;
 use clap::{Subcommand, ValueEnum};
+#[cfg(test)]
+use diagnostics::redact_json_reason;
+use diagnostics::{check_report, definition_rejected, error, error_with_reason, json_error, server_start_error};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use spike_v2_read::{id_wire::IdWire, sqlgen};
@@ -480,61 +484,6 @@ pub enum Language {
     Python,
 }
 
-fn error(code: &str, message: &str) -> Value {
-    json!({"ok":false,"code":code,"message":message})
-}
-
-/// The error of a listener that did not start. Only the server's own validation sentences (`InvalidInput`, `TimedOut`)
-/// are fixed text that names a setting and never a value; every other io error is described by its kind, because it can
-/// carry an address, a path or the output of a worker runtime.
-fn server_start_error(e: &std::io::Error) -> Value {
-    use std::io::ErrorKind;
-    let message = match e.kind() {
-        ErrorKind::InvalidInput | ErrorKind::TimedOut => format!("서버 시작 설정 검증 실패: {e}"),
-        ErrorKind::AddrInUse => "listen 주소가 이미 사용 중임(listen 설정의 포트를 바꾸거나 다른 프로세스를 종료)".to_owned(),
-        ErrorKind::AddrNotAvailable => "listen 주소를 이 호스트에서 쓸 수 없음(listen 설정의 주소 확인)".to_owned(),
-        ErrorKind::PermissionDenied => {
-            "권한 거부로 listener 또는 worker 런타임을 시작하지 못함(포트 권한, 런타임 실행 권한, 격리 설정 확인)".to_owned()
-        }
-        ErrorKind::NotFound => "worker 런타임 실행 파일을 찾지 못함(workers.language의 node 또는 python3가 PATH에 있어야 함)".to_owned(),
-        kind => format!(
-            "서버 시작 준비 단계 실패(io {kind}): worker 런타임 점검, rate limit·outbox·audit 저장소 설치, listener 바인딩 중 하나이며 DB 연결과 권한을 먼저 확인"
-        ),
-    };
-    error("SERVER_CONFIG", &message)
-}
-
-/// The error of a JSON document that does not parse into its type, with the reason and the position. The
-/// reason of serde names keys and types (`unknown field`, `missing field`, `invalid type`), which a person
-/// or an AI needs to repair the file; the value that was wrong is dropped, because a configuration file can
-/// hold a secret and the output of a failed start is logged.
-fn json_error(code: &str, what: &str, e: &serde_json::Error) -> Value {
-    let reason = redact_json_reason(&e.to_string());
-    error(code, &format!("{what}: {reason} (줄 {}, 열 {})", e.line(), e.column()))
-}
-
-fn redact_json_reason(full: &str) -> String {
-    // serde_json appends " at line L column C"; the position is reported on its own.
-    let msg = full.rsplit_once(" at line ").map_or(full, |(m, _)| m);
-    let structural =
-        ["unknown field", "missing field", "unknown variant", "duplicate field", "invalid length", "EOF while", "trailing characters", "expected "];
-    if let Some(rest) = msg.strip_prefix("invalid type: ").or_else(|| msg.strip_prefix("invalid value: ")) {
-        // `invalid type: string "abc", expected u64` -> `invalid type: string, expected u64`
-        let kind = rest.split([' ', ',']).next().unwrap_or("");
-        let expected = rest.split_once(", expected ").map_or("", |(_, x)| x);
-        let label = if msg.starts_with("invalid type") { "invalid type" } else { "invalid value" };
-        return format!("{label}: {kind}, expected {expected}");
-    }
-    // The value of an unknown variant is what was typed; the list of the accepted ones is what repairs it.
-    if let Some((_, accepted)) = msg.strip_prefix("unknown variant ").and_then(|rest| rest.split_once(", expected ")) {
-        return format!("unknown variant, expected {accepted}");
-    }
-    if structural.iter().any(|p| msg.starts_with(p)) {
-        return msg.to_string();
-    }
-    // A message written by a `Deserialize` implementation may quote the value: say only that it is wrong.
-    "a value is not accepted".to_string()
-}
 fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
@@ -544,16 +493,16 @@ fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> 
         // A FIFO must not block before the opened descriptor can be checked.
         options.custom_flags(libc::O_NONBLOCK);
     }
-    let file = options.open(path).map_err(|_| error(code, "파일을 열 수 없음"))?;
+    let file = options.open(path).map_err(|_| error_with_reason(code, "OPEN_FAILED", "파일을 열 수 없음"))?;
     if !file.metadata().is_ok_and(|m| m.is_file()) {
-        return Err(error(code, "일반 파일이 필요함"));
+        return Err(error_with_reason(code, "NOT_A_REGULAR_FILE", "일반 파일이 필요함"));
     }
     let mut bytes = Vec::new();
-    file.take((limit + 1) as u64).read_to_end(&mut bytes).map_err(|_| error(code, "파일을 읽을 수 없음"))?;
+    file.take((limit + 1) as u64).read_to_end(&mut bytes).map_err(|_| error_with_reason(code, "READ_FAILED", "파일을 읽을 수 없음"))?;
     if bytes.len() > limit {
-        return Err(error("INPUT_TOO_LARGE", "파일의 제품 입력 상한 초과"));
+        return Err(error_with_reason("INPUT_TOO_LARGE", "OVER_LIMIT", "파일의 제품 입력 상한 초과"));
     }
-    String::from_utf8(bytes).map_err(|_| error(code, "UTF-8 파일이 필요함"))
+    String::from_utf8(bytes).map_err(|_| error_with_reason(code, "NOT_UTF8", "UTF-8 파일이 필요함"))
 }
 /// The definition diagnostic registry of the product path, for `aip explain-code` and `aip diagnostics --area def`.
 pub use spike_v1_fixture::codes as definition_registry;
@@ -570,20 +519,15 @@ pub use spike_v6_transport::client_codes as client_registry;
 pub use spike_v6_transport::wire_codes as wire_registry;
 pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Checked, Value> {
     if let Some(diagnostics) = file.to_str().and_then(spike_v1_fixture::wrong_language) {
-        return Err(
-            json!({"ok":false,"code":"DEF.INVALID_DEFINITION","diagnostics":diagnostics.iter().map(spike_v1_fixture::diag::Diag::json).collect::<Vec<_>>()}),
-        );
+        return Err(definition_rejected(&diagnostics));
     }
     let form = file.to_str().and_then(spike_v1_fixture::form_of).ok_or_else(|| error("UNSUPPORTED_FORM", "지원하는 작성 형식이 아님"))?;
     let source = read_bounded(file, SOURCE_BYTES, "SOURCE_IO")?;
-    spike_v11_dev_checks::load_checked(&source, form, &json!({"devChecks":dev_checks})).map_err(
-        |ds| json!({"ok":false,"code":"DEF.INVALID_DEFINITION","diagnostics":ds.iter().map(spike_v1_fixture::diag::Diag::json).collect::<Vec<_>>()}),
-    )
+    spike_v11_dev_checks::load_checked(&source, form, &json!({"devChecks":dev_checks})).map_err(|ds| definition_rejected(&ds))
 }
 
 fn require_supported_runtime(facts: &Value) -> Result<(), Value> {
-    spike_v1_fixture::sema::require_supported_runtime(facts)
-        .map_err(|diagnostic| json!({"ok":false,"code":"DEF.INVALID_DEFINITION","diagnostics":[diagnostic.json()]}))
+    spike_v1_fixture::sema::require_supported_runtime(facts).map_err(|diagnostic| definition_rejected(&[diagnostic]))
 }
 fn configuration(path: &Path) -> Result<Config, Value> {
     configuration_with_mode(path, Gate::Standard)
@@ -1060,10 +1004,7 @@ pub async fn run(command: Command) -> Result<Value, Value> {
         Command::Check { file, dev_checks } => {
             let checked = load(&file, dev_checks)?;
             let worker_extensions = worker_extensions(&checked.output.execution);
-            Ok(
-                json!({"ok":true,"executionDigest":spike_v1_fixture::digest(&checked.output.execution),"advisories":checked.advisories.iter().map(|a|json!({"severity":"warning","code":a.code,"anchor":a.anchor,"message":a.msg})).collect::<Vec<_>>(),
-                    "workers":{"required":!worker_extensions.is_empty(),"extensions":worker_extensions}}),
-            )
+            Ok(check_report(&checked, worker_extensions))
         }
         Command::Gen { file, wire, out, sdk_import, lang, read_only } => {
             let facts = load(&file, false)?.output.execution;
