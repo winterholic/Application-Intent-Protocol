@@ -18,6 +18,7 @@
 | `f39b390c` | `CHANGELOG.md`, `plan-docs/stabilization-20261122/**`, `product/LIMITS.md`, `product/SUPPORT.md` | D 결과, 결정, 기준선·지원 범위 기록 |
 | `a514c941` | `spikes/spike-v2-read/src/sqlgen.rs`, `spikes/spike-v2-read/src/scalar.rs`, `spikes/spike-v2-read/tests/ddl_namespace.rs`, `spikes/spike-v4-worker/src/lib.rs`, `spikes/spike-v6-transport/client/typed.ts`, 관련 단위 시험 | C-D1 예약어 필드와 C-D2 확장 Json 입력의 소비자 수정 |
 | `75a54a7e` | `spikes/spike-v3-write/src/lib.rs` | C-D1 보완: v3 쓰기 SQL이 예약어 필드 컬럼을 인용 |
+| `4b15b9ac` | `crates/aip-service/src/lib.rs`, `crates/aip-cli/tests/service.rs` | C-D3: PostgreSQL 관리형 init 호환성을 DB 연결 없이 검사하는 `--for-postgres-init` 추가 |
 
 ## 2. D1: check 통과인데 런타임 미지원 / 실행 가능한데 정적 거부 (현재 HEAD 반례 탐색)
 
@@ -215,7 +216,7 @@ python3 -m unittest product.tests.python_sdk_contract_test
 |---|---|---|
 | C-D1 예약어 필드 | PostgreSQL DDL 및 v3 쓰기 SQL에서 C-D 발견 12개 필드 이름을 인용. 일반 이름은 기존 출력 유지. | `ddl_namespace` 및 v3 인용 회귀 시험. v3 SQL을 실제 PG17에 실행하는 검증은 미실행. |
 | C-D2 확장 Json 입력 | 서버 scalar 검사와 TS typed 검사에서 배열·객체·문자열·숫자·불리언·null JSON을 허용. JS의 비유한 수, undefined, Date, cycle 등 JSON wire에 담을 수 없는 값은 전송 전에 거부. | 서버 JSON scalar 및 worker 값 단위 검사, TS operation/WRITE 입력 테스트. 실제 PostgreSQL을 통한 storefront 여정은 미실행. |
-| C-D3 `default database` 검사 차이 | 수정하지 않음. check는 외부 저장소 채택 여부를 받지 않지만 init은 관리형 스키마 생성을 선택했을 때만 이를 거부한다. 무조건 check 오류를 추가하면 외부 채택 정의도 거부할 수 있다. | C가 남긴 check 통과/init 거부 근거를 유지. 모드 정보를 쓰는 설계가 없으므로 추후 소유자 결정 대상으로 남김. |
+| C-D3 `default database` 검사 차이 | 당시에는 수정하지 않음. plain check와 대상별 init 검사의 범위를 나누고 §14의 `--for-postgres-init`으로 처리했다. | plain check는 외부 채택 정의를 계속 허용하고, PostgreSQL managed init 전용 검사는 동일한 `EXTERNAL_DEFAULT_REQUIRED`를 반환한다. |
 
 ### 이번 실행 결과
 
@@ -231,7 +232,7 @@ python3 -m unittest product.tests.python_sdk_contract_test
 ### 남은 일 / 핵심 파일 인계
 
 - D1 todo 3건(C1 cost, C2 this-field 산술 하한, C3 공유 기본키 sort)은 `sema.rs`가 필요하다. C5 bundle 상한 정적 경고와 C6 Int 경계도 핵심 파일/공개 의미 결정을 기다린다. D-DEC-1~7은 확정하지 않았다.
-- C-D3 check/init 모드 정합은 mode-aware check 또는 소유자 결정이 필요하다.
+- C-D3 check/init 모드 정합은 §14의 명시적 `--for-postgres-init` 경로로 처리했다. plain `service check`는 여전히 정의 검사다.
 - D2·D4 PG17 재실행과 전체 `semantic-definition-matrix`, `sdk-contract-semantics`, `semantic-wire-measure` 검증은 프로젝트 GitHub Actions 또는 dedicated PG17에서 이어간다. workflow는 수정하지 않았다.
 - 소유권 인계: `spikes/spike-v1-fixture/src/sema.rs`는 E 통합까지, `spikes/spike-v6-transport/src/lib.rs`·`durable.rs`는 B의 PG17 후보 검증·통합까지 B/E가 소유한다. 사용자가 허용한 v3 write 예외는 C-D1~D3에만 검토했고, 필요한 C-D1 보완만 `75a54a7e`에서 적용했다. B가 확인 중인 v3 테스트 두 파일은 수정하지 않았다.
 
@@ -242,4 +243,13 @@ python3 -m unittest product.tests.python_sdk_contract_test
 - RED: `AIP_TEST_NO_DB=1 cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --lib write_column_quotes_postgres_reserved_field_names` → 실패, `grant` 기대값 `"grant"`, 실제값 `grant`.
 - GREEN: 같은 명령 → 1 passed, 0 failed. `cargo fmt --manifest-path spikes/spike-v3-write/Cargo.toml -- --check`와 `git diff --check`도 통과했다.
 - PG17 통합 검증은 실행하지 않았다. 이전 별도 Codex 환경에서 관측된 PostgreSQL 초기화 `shmget` 권한 거부를 반복하거나 우회하지 않는다. 읽기/DDL과 쓰기 SQL의 종단 간 동작은 CI 또는 전용 PG17에서 확인해야 한다.
-- C-D3는 `crates/aip-migrate/src/lib.rs`에서 관리형 신규 생성과 외부 채택을 구분해 초기화를 거부하는 동작이다. `service check`가 그 모드를 받지 않는 현재 호출 계약에서 이를 v3 write 수정으로 바꿀 수 없으므로 미수정 상태로 남긴다. 공개 계약을 바꾸지 않았다.
+- C-D3의 거부는 `crates/aip-migrate/src/lib.rs`에서 관리형 신규 생성과 외부 채택을 구분한다. v3 write 수정 대상은 아니어서 §13에서는 그대로 두었고, check/init 계약은 §14의 명시적 검사 옵션으로 처리했다.
+
+## 14. C-D3 check/init 계약 (2026-11-22)
+
+- plain `aip service check`는 다섯 정의 형식의 공통 문법·의미 검사다. 초기화 backend를 받지 않으므로 `default database`가 문법상 유효한 외부 채택 정의를 거부하지 않는다. `service init`은 더 좁은 PostgreSQL 관리형 스키마 경로이며 `aip_migrate::creation`이 실제 DB에 연결하기 전에 `EXTERNAL_DEFAULT_REQUIRED`로 거부한다.
+- 이 계약을 명시하는 추가 검사는 `aip service check <file> --for-postgres-init`이다. 서비스 `init`과 같은 `aip_migrate::creation("aip_check", facts)`를 호출해 DDL 생성·관리형 init 적합성을 검증한다. DB 연결은 하지 않는다. sema의 전역 거부로 바꾸지 않은 이유는 `default database`가 외부 채택과 MySQL 경로에 유효할 수 있고 sema에는 대상 backend 정보가 없기 때문이다.
+- 구현 커밋 `4b15b9ac`. TDD: 새 CLI 시험은 옵션 추가 전에 인식되지 않는 인자로 실패했고, 추가 후 plain check 성공 / PostgreSQL init check의 `EXTERNAL_DEFAULT_REQUIRED` / 기본값 없는 정의의 init check 성공을 함께 단언한다.
+- 이번 실행: `AIP_TEST_NO_DB=1 cargo test -p aip-cli --test service` → 11 passed, 0 failed. `cargo fmt --all -- --check` 및 `git diff --check` 통과. C-D1·C-D2와 기존 v6 client SDK 표적 검사는 앞선 실행 증거를 재사용해 중복 실행하지 않았다.
+- 외부 PostgreSQL `adopt-external`은 여전히 실제 catalog에서 기본값을 검사하고, MySQL 초기화는 별도 adapter 계약이다. `--for-postgres-init`은 이 두 경로의 검사가 아니다.
+- D2/D4의 남은 PG17 통합 재검증은 B의 소유 파일 `spikes/spike-v6-transport/src/lib.rs`·`spikes/spike-v6-transport/src/durable.rs` 후보 검증·통합 뒤 실행한다. 필요한 명령: `node product/tests/semantic-path-parity.test.mjs`, `node product/tests/semantic-chain.test.mjs`, `node product/tests/sdk-contract-semantics.test.mjs`, `node product/tests/semantic-wire-measure.test.mjs`. 모든 명령은 전용 PostgreSQL 17 test URL과 앞선 테스트 설정을 요구한다. v6 파일은 수정하지 않는다.

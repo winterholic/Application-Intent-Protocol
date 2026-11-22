@@ -24,7 +24,7 @@ Core의 자동 tenant 격리, search, publishable, consent, subscribe 같은 기
 
 | # | 기능 | 판정 | 조건과 한계 |
 | --- | --- | --- | --- |
-| 1 | 정의 검사(`aip service check`) | 지원 | 다섯 작성 형식(`.aip`, `.e.ts`, `.e.py`, `.h.ts`, `.h.py`). 선택적 개발 조언 `--dev-checks`는 조건부 |
+| 1 | 정의 검사(`aip service check`) | 지원 | 다섯 작성 형식(`.aip`, `.e.ts`, `.e.py`, `.h.ts`, `.h.py`). 기본 검사는 정의를 검증하고 대상 초기화는 선택하지 않는다. PostgreSQL 관리형 init 호환성은 `--for-postgres-init`으로 DB 연결 없이 검사한다. 외부 PostgreSQL 채택과 MySQL은 각 대상 경로에서 별도 확인한다. 선택적 개발 조언 `--dev-checks`는 조건부 |
 | 2 | 스키마·타입 | 지원 | Int, Text, Bool, Id/Uuid, Decimal(p,s), Time, Date, Email, Url, enum, Json. **Float 없음.** |
 | 3 | resource·relation·constraint | 조건부 | 관계 읽기만 제품 HTTP 시험이 있다. FK 거부, unique, limit, invariant의 실DB 근거는 엔진 단위 시험이다 |
 | 4 | 선언형 읽기·표준 쓰기 | 지원 | 필터 허용 목록, 정렬, cursor·offset 페이지, to-one·to-many 관계, `count`/`sum`/`min`/`max`. PostgreSQL의 `sum`은 단일 Decimal 필드를 지원한다. 결과의 scale은 원본과 같고 precision은 원본 이상이어야 한다. `avg`, 관련 필드 정렬·필터, 다중 `groupKey` 같은 표현은 선언만으로 안 된다([표현력 한계](LIMITS.md)) |

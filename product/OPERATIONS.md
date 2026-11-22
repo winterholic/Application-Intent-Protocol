@@ -64,6 +64,8 @@ cargo build -p aip-cli
 ./target/debug/aip service serve app.aip --config service.json
 ```
 
+`service check`는 정의의 문법·의미를 검사하며 초기화 대상은 선택하지 않는다. PostgreSQL 관리형 신규 스키마 초기화까지 사전 검사하려면 `aip service check app.aip --for-postgres-init`을 사용한다. DB에 연결하지 않고 `service init`과 같은 PostgreSQL DDL 생성 검사를 실행하므로, `default database` 선언은 `EXTERNAL_DEFAULT_REQUIRED`로 거절된다. 외부 PostgreSQL 스키마는 `adopt-external` 경로에서 실제 DB 기본값을 확인한다. 이 옵션은 MySQL 초기화 검사가 아니다.
+
 actor 행은 실제 앱의 사용자 데이터가 먼저 존재해야 한다. `bind`는 이미 존재하는 actor와 제공자 subject를 연결한다. 같은 subject의 actor 재배정은 거부한다. `revoke --subject user-42`는 연결을 비활성화하고 해당 시각까지 발급한 토큰을 무효화한다. 같은 actor를 다시 활성화해도 폐기 토큰은 살아나지 않는다. 폐기와 같은 초에 발급한 토큰도 제외하므로 다음 초 이후 새 토큰을 사용한다. 없는 subject의 폐기는 `PRINCIPAL_NOT_FOUND`로 실패한다. `bind --not-before <epoch seconds>`로 기준을 높일 수 있고, 기준을 낮추지는 못한다.
 
 SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다. `connect(baseUrl, accessToken, generatedBinding)`는 기존 typed transport·캐시·미확정 쓰기 복구를 사용한다. `wire` 설정과 binding 생성의 `--wire`를 맞춘다. 배포의 wire는 최초 연결 시 영속 고정하며 이후 설정만 바꿔 전환하지 않는다. 이 제한은 멱등 principal namespace가 바뀌어 이미 커밋한 쓰기가 재실행되는 것을 막는다.
