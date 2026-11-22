@@ -24,6 +24,11 @@ on:
         required: true
         type: boolean
         default: false
+      track_b_pg17:
+        description: Run Track B PostgreSQL 17 timezone regressions after the broad verification gate
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -241,6 +246,26 @@ jobs:
           df -h "$GITHUB_WORKSPACE"
           du -sh target
           bash tools/verify.sh
+      - name: Verify Track B latest projections in UTC and Asia/Seoul sessions
+        if: ${{ inputs.track_b_pg17 }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for timezone in UTC Asia/Seoul; do
+            echo "::group::PostgreSQL session TimeZone=$timezone"
+            psql -X -q "$AIP_TEST_ADMIN_URL" -v ON_ERROR_STOP=1 \
+              -c "ALTER DATABASE aip_test_ci SET timezone TO '$timezone'"
+            actual="$(psql -X -q "$AIP_TEST_DATABASE_URL" -Atc 'SHOW TimeZone')"
+            test "$actual" = "$timezone"
+            echo "session TimeZone=$actual"
+            cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --test latest_effect_values
+            cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --locked --test latest_nullable_projection
+            echo "::endgroup::"
+          done
+          psql -X -q "$AIP_TEST_ADMIN_URL" -v ON_ERROR_STOP=1 \
+            -c 'ALTER DATABASE aip_test_ci SET timezone TO UTC'
+          actual="$(psql -X -q "$AIP_TEST_DATABASE_URL" -Atc 'SHOW TimeZone')"
+          test "$actual" = UTC
       - name: Run expressiveness consumer apps on PostgreSQL
         if: ${{ !inputs.member_ui_diagnostic && !inputs.admin_metrics_diagnostic }}
         shell: bash
