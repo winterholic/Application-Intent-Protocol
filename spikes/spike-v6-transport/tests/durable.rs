@@ -740,7 +740,6 @@ operation job catchKnownChildFailure {
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
 }
 
-#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn messages_share_atomic_job_effects_and_reject_foreign_acknowledgements() {
     let _lock = SCHEMA_LOCK.lock().await;
@@ -756,7 +755,13 @@ async fn messages_share_atomic_job_effects_and_reject_foreign_acknowledgements()
     let iat: i64 = db.query_one("SELECT floor(extract(epoch from clock_timestamp()))::bigint", &[]).await.unwrap().get(0);
     let fp = spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, IdWire::DecimalString);
     for lang in [WorkerLang::Node, WorkerLang::Python] {
-        let infra = spike_v6_transport::infrastructure::Infrastructure { messaging: true, client_consume: true, ..Default::default() };
+        // The behavior under test (messages share a job's transaction, foreign leases are refused) does not depend on the worker sandbox.
+        let infra = spike_v6_transport::infrastructure::Infrastructure {
+            messaging: true,
+            client_consume: true,
+            worker_launch: spike_v4_worker::WorkerLaunchConfig { isolation: spike_v4_worker::Isolation::None, ..Default::default() },
+            ..Default::default()
+        };
         let server = spike_v6_transport::server::listen_with_infrastructure(
             facts.clone(),
             IdWire::DecimalString,

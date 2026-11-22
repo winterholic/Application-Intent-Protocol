@@ -81,6 +81,12 @@ impl Drop for Env {
 }
 
 async fn env(tag: &str, spec: &str, worker: Option<&str>, seed: &str) -> Env {
+    env_with_db(tag, spec, worker, seed, DATABASE.into()).await
+}
+
+/// `serve_url` is the database address the server under test uses (a delaying proxy in the saturation-latency probe); setup and
+/// assertions always talk to the database directly.
+async fn env_with_db(tag: &str, spec: &str, worker: Option<&str>, seed: &str, serve_url: String) -> Env {
     let unique = format!("{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
     let dir = std::env::temp_dir().join(format!("aip-conc-probe-{tag}-{unique}"));
     fs::create_dir(&dir).unwrap();
@@ -113,7 +119,7 @@ async fn env(tag: &str, spec: &str, worker: Option<&str>, seed: &str) -> Env {
         facts,
         wire,
         "127.0.0.1:0".parse().unwrap(),
-        DATABASE.into(),
+        serve_url,
         extensions,
         ServerOptions { developer_diagnostics: true, ..ServerOptions::default() },
         worker.is_some(),
@@ -818,6 +824,105 @@ async fn e5_saturated_slots_replay_status_and_inflight_duplicates() {
     let starts = fs::read_to_string(e.dir.join("started")).map(|s| s.lines().count()).unwrap_or(0);
     let stock2 = e.num("SELECT stock FROM {S}.product WHERE id=2").await;
     println!("PROBE e5 settled={settled:?} after_dup={} starts={starts} stock2={stock2}", outcome(&after_dup));
+}
+
+/// A TCP forwarder in front of the test database that holds every chunk for `one_way` in each direction, so one database round trip
+/// costs about `2 * one_way`. Returns the port to put into the server's database URL.
+async fn delay_proxy(one_way: Duration) -> u16 {
+    use tokio::net::TcpListener;
+    let (host, port) = aip_test_support::endpoint(aip_test_support::database_url()).unwrap();
+    let backend: SocketAddr = std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), port)).unwrap().next().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let Ok(server) = TcpStream::connect(backend).await else { return };
+                let (mut client_read, mut client_write) = client.into_split();
+                let (mut server_read, mut server_write) = server.into_split();
+                let up = async {
+                    let mut buf = [0u8; 16384];
+                    while let Ok(n @ 1..) = client_read.read(&mut buf).await {
+                        tokio::time::sleep(one_way).await;
+                        if server_write.write_all(&buf[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                };
+                let down = async {
+                    let mut buf = [0u8; 16384];
+                    while let Ok(n @ 1..) = server_read.read(&mut buf).await {
+                        tokio::time::sleep(one_way).await;
+                        if client_write.write_all(&buf[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                };
+                tokio::select! { _ = up => {}, _ = down => {} }
+            });
+        }
+    });
+    proxy_port
+}
+
+/// E6 (B-07): how long a completed key takes to replay while every worker slot is busy, against `SATURATED_REPLAY_BUDGET` (500ms).
+/// The replay shares that budget with the connection checkout, the deployment fence and the journal read. `PROBE_RTT_MS` adds a database
+/// round trip time (a remote database), `PROBE_N` is the number of simultaneous replays. A replay slower than the budget is answered
+/// `WIRE.WORKER_BUSY` instead (retryable); that is the cost of a database further away than the budget allows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "exploratory probe: run one at a time with --ignored --exact (sqlgen::set_schema is once per process)"]
+async fn e6_saturated_replay_latency_by_database_round_trip() {
+    let rtt_ms: u64 = std::env::var("PROBE_RTT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let n: usize = std::env::var("PROBE_N").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    let serve_url = if rtt_ms > 0 {
+        aip_test_support::database_url_via_proxy(delay_proxy(Duration::from_millis(rtt_ms) / 2).await)
+    } else {
+        DATABASE.to_string()
+    };
+    let e = env_with_db("e6", EXT_SPEC, Some(EXT_WORKER), &seed_ext(), serve_url).await;
+    let done = e.post(1, &ext_body_on("done", 1, 1)).await;
+    assert_eq!(done["ok"], true, "the first request completes before saturation: {done}");
+    fs::write(e.dir.join("slow"), "1900").unwrap();
+    let _ = fs::remove_file(e.dir.join("started"));
+    let mut inflight = vec![];
+    for i in 0..4 {
+        let (address, token, fingerprint) = (e.server.address, e.token(2 + i), e.fingerprint.clone());
+        let body = ext_body_on(&format!("busy-{i}"), 1, 2 + i);
+        inflight.push(tokio::spawn(async move { http(address, "/apply", &token, &fingerprint, &body, false).await }));
+    }
+    while !fs::read_to_string(e.dir.join("started")).map(|s| s.lines().count() >= 4).unwrap_or(false) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let (mut latencies, mut tally) = (vec![], BTreeMap::<String, usize>::new());
+    // The four slow requests hold their slots for about the extension deadline (2s); stop measuring before they finish.
+    let saturated_since = Instant::now();
+    for _ in 0..rounds() {
+        if saturated_since.elapsed() > Duration::from_millis(1200) {
+            break;
+        }
+        let calls: Vec<_> = (0..n).map(|_| (1, ext_body_on("done", 1, 1))).collect();
+        let (round_tally, _, results) = e.burst_timed(calls).await;
+        for (name, count) in round_tally {
+            *tally.entry(name).or_insert(0) += count;
+        }
+        latencies.extend(results.iter().map(|(_, took)| took.as_millis() as u64));
+    }
+    let total = latencies.len();
+    let replayed = tally.get("OK(replayed)").copied().unwrap_or(0);
+    println!(
+        "BENCH e6 rtt_ms={rtt_ms} simultaneous={n} rounds={} calls={total} replayed={replayed} busy={} other={:?} p50_ms={} p95_ms={} p99_ms={} max_ms={}",
+        rounds(),
+        tally.get("WIRE.WORKER_BUSY").copied().unwrap_or(0),
+        tally.iter().filter(|(name, _)| !["OK(replayed)", "WIRE.WORKER_BUSY"].contains(&name.as_str())).collect::<Vec<_>>(),
+        percentile(&mut latencies, 50),
+        percentile(&mut latencies, 95),
+        percentile(&mut latencies, 99),
+        latencies.last().copied().unwrap_or(0),
+    );
+    for handle in inflight {
+        let _ = handle.await;
+    }
+    fs::remove_file(e.dir.join("slow")).unwrap();
 }
 
 /// I5: SERIALIZABLE plain /apply, distinct keys racing for one room. Losers must never be WIRE.INTERNAL.

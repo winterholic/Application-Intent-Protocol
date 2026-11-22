@@ -198,7 +198,10 @@ async fn check_deployment_fence(
         Ok(Ok(Some(actual))) if actual == fence.expected_digest => {
             match tokio::time::timeout_at(deadline, spike_v2_read::external::matches(db, facts)).await {
                 Ok(Ok(true)) => Ok(()),
-                _ => Err(json!({"ok":false,"code":"WIRE.DEPLOYMENT_CHANGED","msg":"외부 업무 schema drift 또는 catalog 검사 실패"})),
+                Ok(Ok(false)) => Err(json!({"ok":false,"code":"WIRE.DEPLOYMENT_CHANGED","msg":"외부 업무 schema가 배포 뒤에 바뀜"})),
+                // The request is refused either way (fail closed), but a catalog read that failed or ran out of time says nothing about the
+                // schema: it is the retryable outage, not a change the operator has to restart the service for.
+                Ok(Err(_)) | Err(_) => Err(json!({"ok":false,"code":"WIRE.DB_UNAVAILABLE","msg":"외부 업무 schema catalog 조회 실패"})),
             }
         }
         Ok(Ok(Some(_))) => Err(json!({"ok":false,"code":"WIRE.DEPLOYMENT_CHANGED","msg":"실행 정의와 배포 정의가 다름"})),

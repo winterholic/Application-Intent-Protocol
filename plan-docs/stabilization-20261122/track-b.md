@@ -120,4 +120,53 @@ PROBE_N=<동시 요청> PROBE_ROWS=<대상 행> PROBE_ORDER=opposite|shuffle|sor
 - `the_first_failing_operation_still_decides_the_error_and_nothing_is_kept`: 선잠금 뒤에도 먼저 실패하는 연산의 코드가 보고되고 앞 연산이 롤백된다(의미 보존, 변경 전후 모두 통과).
 - `rows_the_caller_cannot_read_are_neither_locked_nor_waited_for`: 다른 트랜잭션이 잡고 있는 안 보이는 행을 기다리지 않는다. 선잠금 문장에서 `rows read` 조건을 빼면(RED) 실패함을 확인했다.
 
-(이하 B2·B3·계약 값 측정은 이어서 추가한다.)
+
+## 3. B2: durable·transport 정산 불변식
+
+여섯 불변식의 코드는 `spikes/spike-v6-transport/src/{durable,lib}.rs` 및 기존 B 책임 영역에 반영했다. PostgreSQL 실행 결과는 이 worktree에서 만들지 않았다. 아래 DB 회귀의 실행은 필수 PostgreSQL 17 CI에 남긴다.
+
+| # | 불변식 | 회귀 | 검증 |
+|---:|---|---|---|
+| 1 | 멱등 키는 principal별로 격리되고, replay도 해당 소유자 결과만 반환한다. 같은 principal의 다른 요청은 mismatch로 거부된다. | `the_same_key_from_two_principals_runs_twice_and_replays_only_to_its_owner` | 새 통합 시험, PG17 CI 실행 대상 |
+| 2 | deployment catalog 조회 오류는 drift로 오판하지 않고 `WIRE.DB_UNAVAILABLE`; 실제 drift는 `WIRE.DEPLOYMENT_CHANGED`를 유지한다. | `a_failed_catalog_read_is_unavailable_not_a_changed_deployment` | 새 fault-proxy 시험, PG17 CI 실행 대상 |
+| 3 | 쓰기 확장의 `ctx.data.read`에서 `40001`·`40P01`은 `WIRE.CONFLICT`이고 전체 요청은 롤백된다. 다른 SQL 오류 분류는 유지한다. | `a_serialization_failure_or_deadlock_in_ctx_data_read_is_a_retryable_conflict` | v2 read 오류 매핑 및 새 통합 시험, PG17 CI 실행 대상 |
+| 4 | 취소 확인 행 조회 연결 오류를 “취소 없음”으로 취급하지 않고 정산을 재시도한다. | `cancel_is_confirmed_after_the_job_row_lookup_loses_its_connection` | durable fault-proxy 시험, PG17 CI 실행 대상 |
+| 5 | 취소 UPDATE 뒤 COMMIT이 DB에 도달하지 않은 경우 정산을 재시도한다. | `cancel_is_confirmed_after_the_commit_never_reaches_postgres` | durable fault-proxy 시험, PG17 CI 실행 대상 |
+| 6 | COMMIT은 반영됐으나 ACK만 유실되면 저장 상태를 확인하고 취소 결과를 보존한다. | `cancel_stays_cancelled_when_the_commit_ack_is_lost` | durable fault-proxy 시험, PG17 CI 실행 대상 |
+
+비DB 검사 실행 결과:
+
+```
+cargo check --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --features test-db
+Finished `dev` profile [unoptimized + debuginfo]
+cargo check --manifest-path spikes/spike-v3-write/Cargo.toml --locked
+cargo check --manifest-path spikes/spike-v2-read/Cargo.toml --locked
+Finished `dev` profile [unoptimized + debuginfo]
+cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --features test-db --no-run --test durable_cancel_settlement --test apply_idem_principal_scope --test deployment_fence_catalog_error --test write_extension_read_conflict
+Executable tests/apply_idem_principal_scope.rs
+Executable tests/deployment_fence_catalog_error.rs
+Executable tests/durable_cancel_settlement.rs
+Executable tests/write_extension_read_conflict.rs
+cargo fmt --manifest-path spikes/spike-v6-transport/Cargo.toml -- --check
+cargo fmt --manifest-path spikes/spike-v3-write/Cargo.toml -- --check
+cargo fmt --manifest-path spikes/spike-v2-read/Cargo.toml -- --check
+```
+
+test-support가 `PGHOST`를 감지해 처음 실행을 거부했다. 환경 변수 값은 조회하지 않고 알려진 `PG*` 변수를 unset한 뒤 명시 loopback DSN을 주어 테스트를 **컴파일만** 했다. DB 테스트나 PG17 측정은 실행하지 않았다. 배경에 기록된 별도 Codex 샌드박스의 PG17 `initdb` shmget 거부를 반복하지 않고 CI에 맡긴다.
+
+## 4. Asia/Seoul 실패 대조
+
+대조 대상은 cron 시험이 아니라 `spikes/spike-v3-write/tests/latest_effect_values.rs`와 `latest_nullable_projection.rs`다. 두 테스트는 `timestamptz::text`의 `+00` 문자열을 비교하고 있어 서울 DB 세션에서는 값의 instant가 같아도 출력 표기 때문에 실패한다. 비교값을 UTC instant 기준 문자열로 정규화했다. v3 제품 코드는 수정하지 않았다. `.github/workflows/stabilization-b-pg17-timezone.yml`은 PostgreSQL 17에서 DB 기본 TimeZone을 각각 `UTC`와 `Asia/Seoul`로 설정하고 `SHOW TimeZone` 세션 확인 뒤 두 테스트를 모두 실행한다.
+
+## 5. B1 기준·CI 대조와 인계
+
+bundle 측정은 `cf429b31966c6ae9e481ca1d20e7f53ae4e81fe8` 기록을 재사용한다: PG17 격자에서 성공률 100%, 교착 희생자 0, p99 최대 61ms, 기한 초과 0%, 롤백 위반 0. 재측정은 하지 않았다.
+
+- `cf429b31`의 선잠금 구현과 `bundle_lock_order_opposite_targets.rs` 회귀는 최신 main에 포함된다. v3 `lib.rs` 추가 수정은 필요하지 않다. 기본 Rust 엔진 테스트 루프에서 실행되며, 이번 로컬 PG 실행은 하지 않아 CI에서 확인해야 한다.
+- 새 여섯 DB 회귀도 기본 Verify Rust 엔진 테스트 루프 대상이다. 이번에는 `--no-run` 컴파일까지만 확인했다.
+- ignored F1 탐색 시험은 기본 엔진 루프에서 제외된다. Track F1에 요청할 연결 명령(전용 PG17 DSN 사용, `PG*` unset):
+
+  `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --features test-db --test concurrency_probe_http -- --ignored --exact f1_failing_bundles_leave_nothing_behind_under_concurrency`
+
+- v3는 기준 구현·측정 근거를 인계할 준비가 됐고 PG17 CI 실행이 남았다. v6 변경은 소스 검사·cargo check·4개 테스트 파일 컴파일·fmt까지 끝났으며 여섯 DB 불변식의 PG17 CI 실행이 남았다.
+- 기존 `Verify` workflow와 `tools/verify.sh`는 수정하지 않았다. 전용 TimeZone workflow만 추가했다. v2 read 변경은 쓰기 확장 read-conflict 분류를 위한 기존 B 책임 변경이다.

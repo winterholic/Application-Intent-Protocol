@@ -105,7 +105,7 @@ async fn five_projections_preserve_one_nullable_candidate_and_fallback_only_for_
                     _ => unreachable!(),
                 }
                 let row = db
-                    .query_one(&format!("SELECT item_id,author_id,username,title,created::text FROM {schema}.summary WHERE order_id={id}"), &[])
+                    .query_one(&format!("SELECT item_id,author_id,username,title,to_char(created AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') FROM {schema}.summary WHERE order_id={id}"), &[])
                     .await
                     .unwrap();
                 let actual = (
@@ -118,7 +118,7 @@ async fn five_projections_preserve_one_nullable_candidate_and_fallback_only_for_
                 let expected = if id == 100 {
                     (Some(201), None, None, Some("selected-title".into()), None)
                 } else if fallback {
-                    (None, Some(1), Some("fallback-user".into()), Some("fallback-title".into()), Some("2025-03-01 00:00:00+00".into()))
+                    (None, Some(1), Some("fallback-user".into()), Some("fallback-title".into()), Some("2025-03-01 00:00:00".into()))
                 } else {
                     (None, None, None, None, None)
                 };

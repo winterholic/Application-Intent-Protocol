@@ -1,5 +1,5 @@
-#[cfg(target_os = "macos")]
-mod macos {
+// The fixtures run with `Isolation::None` and only read PIDs through `kill -0`, so nothing here needs a macOS sandbox (B-05).
+mod worker_lifetime {
     use serde_json::{json, Value};
     use spike_v1_fixture::{load_str, Form};
     use spike_v2_read::id_wire::IdWire;

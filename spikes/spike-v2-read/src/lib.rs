@@ -271,6 +271,11 @@ async fn rows_of(tx: &tokio_postgres::Transaction<'_>, plan: &Plan) -> Result<Ve
                 // Decimal sum이 선언한 정밀도를 넘으면 plan::measured_subquery가 22012를 낸다. 읽기 계획에는 다른 나눗셈이 없다.
                 "22012" => Reject { code: "WIRE.OUTPUT_INVALID", msg: "집계 합이 선언한 Decimal 정밀도를 넘음".into() },
                 c if c.starts_with("22") => Reject { code: "WIRE.BAD_VALUE", msg: "값 변환 실패".into() },
+                // A read inside a SERIALIZABLE write extension (`ctx.data.read`) is where PostgreSQL may report the dependency; the same
+                // SQLSTATEs are the retryable `WIRE.CONFLICT` for every write statement.
+                "40001" | "40P01" => {
+                    Reject { code: "WIRE.CONFLICT", msg: "동시 쓰기와 충돌(직렬화 실패·교착). 다시 시도 가능".into() }
+                }
                 _ => Reject { code: "WIRE.INTERNAL", msg: format!("실행 실패(sqlstate {code})") },
             });
         }

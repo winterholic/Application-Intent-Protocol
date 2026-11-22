@@ -1112,11 +1112,21 @@ async fn execute_inner(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease:
             let state = if code == "WIRE.DB_UNAVAILABLE" { "RETRY" } else { "FAILED" };
             crate::metrics::observe_job(&lease.operation, state, Some(code), started.elapsed());
             export_job_span(&rt, &lease, state, Some(code), started);
-            if let Ok(db) = connect(&rt).await {
-                let result = if code == "WIRE.DB_UNAVAILABLE" { store.retry(&*db, &lease, code).await } else { store.fail(&*db, &lease, code).await };
-                if result.is_ok() {
-                    let _ = db.release().await;
+            let recorded = match connect(&rt).await {
+                Ok(db) => {
+                    let result =
+                        if code == "WIRE.DB_UNAVAILABLE" { store.retry(&*db, &lease, code).await } else { store.fail(&*db, &lease, code).await };
+                    let recorded = result.is_ok();
+                    if recorded {
+                        let _ = db.release().await;
+                    }
+                    recorded
                 }
+                Err(_) => false,
+            };
+            if !recorded {
+                // The lease expires and the usual recovery claims the run again.
+                eprintln!("{{\"event\":\"job_outcome_not_recorded\",\"id\":\"{}\",\"code\":\"{code}\"}}", lease.run_id);
             }
             return;
         }
@@ -1129,10 +1139,18 @@ async fn execute_inner(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease:
             Err(_) => {
                 crate::metrics::observe_job(&lease.operation, "RETRY", Some("WIRE.WORKER_FAILED"), started.elapsed());
                 export_job_span(&rt, &lease, "RETRY", Some("WIRE.WORKER_FAILED"), started);
-                if let Ok(db) = connect(&rt).await {
-                    if store.retry(&*db, &lease, "WIRE.WORKER_FAILED").await.is_ok() {
-                        let _ = db.release().await;
+                let recorded = match connect(&rt).await {
+                    Ok(db) => {
+                        let recorded = store.retry(&*db, &lease, "WIRE.WORKER_FAILED").await.is_ok();
+                        if recorded {
+                            let _ = db.release().await;
+                        }
+                        recorded
                     }
+                    Err(_) => false,
+                };
+                if !recorded {
+                    eprintln!("{{\"event\":\"job_outcome_not_recorded\",\"id\":\"{}\",\"code\":\"WIRE.WORKER_FAILED\"}}", lease.run_id);
                 }
                 return;
             }
@@ -1188,59 +1206,126 @@ async fn execute_inner(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease:
         }
     };
     worker.stop().await;
-    let Ok(mut db) = connect(&rt).await else { return };
-    let Ok(tx) = db.transaction().await else { return };
+    // The worker is gone; what is left is recording how the run ended. A step that fails before the decision changed nothing, so it is
+    // tried again a few times: giving up silently would leave a cancelled run in CANCEL_REQUESTED until its lease expires, and it would
+    // then fail as CANCELLATION_UNCONFIRMED although the stop was observed.
+    let mut ack_unknown = None;
+    let mut last_failure = "";
+    let mut decided = None;
+    for attempt in 0..SETTLE_ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(SETTLE_BACKOFF * 2u32.pow(attempt as u32 - 1)).await;
+        }
+        match settle_attempt(&rt, &facts, wire, &store, &lease, &grant, &result, retry_after_ms, ack_unknown).await {
+            Settlement::Decided { state, code } => {
+                decided = Some((state, code));
+                break;
+            }
+            Settlement::Transient(step) => last_failure = step,
+            Settlement::AckUnknown { state, code } => {
+                ack_unknown = Some((state, code));
+                last_failure = "cancel commit";
+            }
+        }
+    }
+    match decided {
+        Some((state, code)) => {
+            crate::metrics::observe_job(&lease.operation, state, code, started.elapsed());
+            export_job_span(&rt, &lease, state, code, started);
+        }
+        // The lease still guards the run: it expires and the run is claimed again or failed by the usual recovery.
+        None => {
+            eprintln!("{{\"event\":\"job_settlement_abandoned\",\"id\":\"{}\",\"epoch\":{},\"step\":\"{last_failure}\"}}", lease.run_id, lease.epoch)
+        }
+    }
+}
+
+/// Settlement of one run after its worker stopped. Each attempt opens its own transaction.
+const SETTLE_ATTEMPTS: usize = 3;
+const SETTLE_BACKOFF: Duration = Duration::from_millis(100);
+
+enum Settlement {
+    /// The run's end was decided and recorded (or there was nothing left to record). `state` and `code` are what metrics and spans report.
+    Decided { state: &'static str, code: Option<&'static str> },
+    /// A step before the decision failed. Nothing was changed, so another attempt may succeed.
+    Transient(&'static str),
+    /// The cancellation was recorded but the COMMIT did not answer: it may or may not be stored. The next attempt looks before it acts.
+    AckUnknown { state: &'static str, code: Option<&'static str> },
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn settle_attempt(
+    rt: &Arc<Runtime>,
+    facts: &Arc<Value>,
+    wire: IdWire,
+    store: &Store,
+    lease: &Lease,
+    grant: &DurablePrincipal,
+    result: &Result<Value>,
+    retry_after_ms: Option<i64>,
+    ack_unknown: Option<(&'static str, Option<&'static str>)>,
+) -> Settlement {
+    let Ok(mut db) = connect(rt).await else { return Settlement::Transient("connect") };
+    let Ok(tx) = db.transaction().await else { return Settlement::Transient("begin") };
     if tx.batch_execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'").await.is_err() {
-        return;
+        return Settlement::Transient("session");
     }
-    if tx.query_one("SELECT pg_advisory_xact_lock_shared(1095323725,hashtext($1))", &[&schema(&rt).unwrap()]).await.is_err() {
-        return;
+    if tx.query_one("SELECT pg_advisory_xact_lock_shared(1095323725,hashtext($1))", &[&schema(rt).unwrap()]).await.is_err() {
+        return Settlement::Transient("deployment lock");
     }
-    // Only an observed process stop can acknowledge running cancellation.
-    let s = schema(&rt).unwrap();
-    if let Ok(Some(row)) = tx
+    let s = schema(rt).unwrap();
+    // Only an observed process stop can acknowledge running cancellation. A lookup that failed says nothing about the request,
+    // so it is not treated as "no cancellation requested".
+    let observed = match tx
         .query_opt(
             &format!("SELECT state FROM {s}.aip_jobs WHERE id=$1 AND lease_epoch=$2 AND lease_owner=$3 FOR UPDATE"),
             &[&lease.run_id, &lease.epoch, &lease.worker],
         )
         .await
     {
-        if row.get::<_, String>(0) == "CANCEL_REQUESTED" {
-            let pending = tx
-                .query_one(
-                    &format!("SELECT EXISTS(SELECT 1 FROM {s}.aip_effects WHERE run_id=$1 AND state IN ('PENDING','UNKNOWN'))"),
-                    &[&lease.run_id],
-                )
-                .await;
-            let updated = match pending {
-                Ok(row) if !row.get::<_, bool>(0) => {
-                    crate::metrics::observe_job(&lease.operation, "CANCELLED", None, started.elapsed());
-                    export_job_span(&rt, &lease, "CANCELLED", None, started);
-                    store.acknowledge_cancel(&tx, &lease).await
-                }
-                Ok(_) => {
-                    crate::metrics::observe_job(&lease.operation, "FAILED", Some("WIRE.CANCELLATION_UNCONFIRMED"), started.elapsed());
-                    export_job_span(&rt, &lease, "FAILED", Some("WIRE.CANCELLATION_UNCONFIRMED"), started);
-                    store.reject_cancel(&tx, &lease, "WIRE.CANCELLATION_UNCONFIRMED").await
-                }
-                Err(_) => return,
-            };
-            if !matches!(updated, Ok(true)) {
-                eprintln!("{{\"event\":\"job_cancel_unconfirmed\",\"id\":\"{}\"}}", lease.run_id);
+        Ok(row) => row.map(|row| row.get::<_, String>(0)),
+        Err(_) => return Settlement::Transient("cancel lookup"),
+    };
+    if observed.is_none() {
+        // The lease no longer names this run. After an unanswered COMMIT that is how an acknowledgement that did go through looks.
+        if let Some((state, code)) = ack_unknown {
+            let stored = tx.query_opt(&format!("SELECT state FROM {s}.aip_jobs WHERE id=$1"), &[&lease.run_id]).await;
+            match stored {
+                Ok(Some(row)) if row.get::<_, String>(0) == state => return Settlement::Decided { state, code },
+                Ok(_) => {}
+                Err(_) => return Settlement::Transient("cancel verification"),
             }
-
-            let _ = tx.commit().await;
-            let _ = db.release().await;
-            return;
         }
     }
+    if observed.as_deref() == Some("CANCEL_REQUESTED") {
+        let pending = tx
+            .query_one(&format!("SELECT EXISTS(SELECT 1 FROM {s}.aip_effects WHERE run_id=$1 AND state IN ('PENDING','UNKNOWN'))"), &[&lease.run_id])
+            .await;
+        let (state, code, updated) = match pending {
+            Ok(row) if !row.get::<_, bool>(0) => ("CANCELLED", None, store.acknowledge_cancel(&tx, lease).await),
+            Ok(_) => ("FAILED", Some("WIRE.CANCELLATION_UNCONFIRMED"), store.reject_cancel(&tx, lease, "WIRE.CANCELLATION_UNCONFIRMED").await),
+            Err(_) => return Settlement::Transient("cancel effects"),
+        };
+        match updated {
+            Ok(true) => {}
+            Ok(false) => eprintln!("{{\"event\":\"job_cancel_unconfirmed\",\"id\":\"{}\"}}", lease.run_id),
+            Err(_) => return Settlement::Transient("cancel update"),
+        }
+        return match tx.commit().await {
+            Ok(()) => {
+                let _ = db.release().await;
+                Settlement::Decided { state, code }
+            }
+            Err(_) => Settlement::AckUnknown { state, code },
+        };
+    }
     let checked = async {
-        guard(&tx, &rt, &grant).await?;
-        locked_lease(&tx, &rt, &lease).await?;
-        if bundle(&rt)? != lease.implementation {
+        guard(&tx, rt, grant).await?;
+        locked_lease(&tx, rt, lease).await?;
+        if bundle(rt)? != lease.implementation {
             return Err("WIRE.IMPLEMENTATION_CHANGED");
         }
-        authorize(&tx, &facts, &lease.operation, &lease.input, lease.actor, wire).await?;
+        authorize(&tx, facts, &lease.operation, &lease.input, lease.actor, wire).await?;
         Ok(())
     }
     .await;
@@ -1254,29 +1339,31 @@ async fn execute_inner(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease:
         if pending {
             return Err("WIRE.EFFECT_UNKNOWN");
         }
-        result
+        result.clone()
     }
     .await;
     let (job_state, job_code) = match &settled {
         Ok(_) => ("SUCCEEDED", None),
-        Err(code) if retryable(&rt, &lease.operation, code) => ("RETRY", Some(*code)),
+        Err(code) if retryable(rt, &lease.operation, code) => ("RETRY", Some(*code)),
         Err(code) => ("FAILED", Some(*code)),
     };
-    crate::metrics::observe_job(&lease.operation, job_state, job_code, started.elapsed());
-    export_job_span(&rt, &lease, job_state, job_code, started);
     let updated = match settled {
-        Ok(out) => store.finish(&tx, &lease, out).await,
-        Err(code) if retryable(&rt, &lease.operation, code) => store.retry_after(&tx, &lease, code, retry_after_ms).await,
-        Err(code) => store.fail(&tx, &lease, code).await,
+        Ok(out) => store.finish(&tx, lease, out).await,
+        Err(code) if retryable(rt, &lease.operation, code) => store.retry_after(&tx, lease, code, retry_after_ms).await,
+        Err(code) => store.fail(&tx, lease, code).await,
     };
-    if !matches!(updated, Ok(true)) {
-        eprintln!("{{\"event\":\"job_outcome_rejected\",\"id\":\"{}\",\"epoch\":{}}}", lease.run_id, lease.epoch);
+    match updated {
+        Ok(true) => {}
+        Ok(false) => eprintln!("{{\"event\":\"job_outcome_rejected\",\"id\":\"{}\",\"epoch\":{}}}", lease.run_id, lease.epoch),
+        // A failed statement aborted the transaction: committing it would record nothing.
+        Err(_) => return Settlement::Transient("outcome update"),
     }
     if tx.commit().await.is_err() {
         eprintln!("{{\"event\":\"job_outcome_commit_unknown\",\"id\":\"{}\"}}", lease.run_id);
     } else {
         let _ = db.release().await;
     }
+    Settlement::Decided { state: job_state, code: job_code }
 }
 
 struct Host {

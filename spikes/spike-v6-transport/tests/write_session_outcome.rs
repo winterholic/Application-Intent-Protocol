@@ -1,11 +1,10 @@
-#![cfg(target_os = "macos")]
 use serde_json::json;
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{connect_owned_with_url, id_wire::IdWire, sqlgen};
 use spike_v5_sdk::contract_module_with_all_extensions;
 use spike_v6_transport::{
     idempotency_ddl,
-    server::{listen_with_prototype_options, ReadExtensions, ServerOptions, WorkerLang},
+    server::{listen_with_prototype_launch, ReadExtensions, ServerOptions, WorkerIsolation, WorkerLang, WorkerLaunchConfig},
 };
 use std::{fs, time::Duration};
 
@@ -32,7 +31,8 @@ async fn committed_write_is_reported_even_when_its_admitting_session_expires_dur
         let sdk=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prototype/sdk/index.ts").canonicalize().unwrap();
         for lang in [WorkerLang::Node,WorkerLang::Python] {for wire in [IdWire::SafeNumber,IdWire::DecimalString] {
             db.batch_execute(&format!("UPDATE {schema}.event SET checked=false;TRUNCATE {schema}.aip_idem")).await?;
-            let server=listen_with_prototype_options(facts.clone(),wire,"127.0.0.1:0".parse().unwrap(),aip_test_support::test_database_url!().into(),Some(ReadExtensions{lang,dir:path.clone()}),ServerOptions::default(),true).await.unwrap();
+            // The session-expiry behavior under test does not depend on the worker sandbox, and the default `Auto` isolation needs bwrap on Linux.
+            let server=listen_with_prototype_launch(facts.clone(),wire,"127.0.0.1:0".parse().unwrap(),aip_test_support::test_database_url!().into(),Some(ReadExtensions{lang,dir:path.clone()}),ServerOptions::default(),true,WorkerLaunchConfig{isolation:WorkerIsolation::None,..Default::default()}).await.unwrap();
             fs::write(path.join("contract.ts"),contract_module_with_all_extensions(&facts,sdk.to_str().unwrap(),wire)).unwrap();
             let import=serde_json::to_string(sdk.to_str().unwrap()).unwrap();let id=spike_v2_read::id_wire::emit_id(11,wire).unwrap().to_string();
             fs::write(path.join("call.mts"),format!(r#"import assert from 'node:assert/strict';

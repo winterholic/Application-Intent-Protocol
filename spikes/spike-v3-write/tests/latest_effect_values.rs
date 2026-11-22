@@ -72,12 +72,18 @@ async fn latest_effect_reads_latest_row_and_uses_fallback_in_postgres() {
         assert_eq!(result.changed, [id]);
     }
 
-    let selected = db.query_one(&format!("SELECT label, created::text FROM {schema}.summary WHERE id=300"), &[]).await.unwrap();
+    let selected = db
+        .query_one(&format!("SELECT label, to_char(created AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') FROM {schema}.summary WHERE id=300"), &[])
+        .await
+        .unwrap();
     assert_eq!(selected.get::<_, String>(0), "same-time-higher-id");
-    assert_eq!(selected.get::<_, String>(1), "2025-02-01 00:00:00+00");
-    let fallback = db.query_one(&format!("SELECT label, created::text FROM {schema}.summary WHERE id=301"), &[]).await.unwrap();
+    assert_eq!(selected.get::<_, String>(1), "2025-02-01 00:00:00");
+    let fallback = db
+        .query_one(&format!("SELECT label, to_char(created AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') FROM {schema}.summary WHERE id=301"), &[])
+        .await
+        .unwrap();
     assert!(fallback.get::<_, Option<String>>(0).is_none());
-    assert_eq!(fallback.get::<_, String>(1), "2025-03-02 00:00:00+00");
+    assert_eq!(fallback.get::<_, String>(1), "2025-03-02 00:00:00");
 
     // The bundle and compose owners must honor the same compiler marker. Reset
     // only the request/target state; keep the source candidates and expectations.
@@ -98,9 +104,12 @@ async fn latest_effect_reads_latest_row_and_uses_fallback_in_postgres() {
         }
         .unwrap();
         assert_eq!(result.applied[0].changed, [100]);
-        let selected = db.query_one(&format!("SELECT label, created::text FROM {schema}.summary WHERE id=300"), &[]).await.unwrap();
+        let selected = db
+            .query_one(&format!("SELECT label, to_char(created AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') FROM {schema}.summary WHERE id=300"), &[])
+            .await
+            .unwrap();
         assert_eq!(selected.get::<_, String>(0), "same-time-higher-id");
-        assert_eq!(selected.get::<_, String>(1), "2025-02-01 00:00:00+00");
+        assert_eq!(selected.get::<_, String>(1), "2025-02-01 00:00:00");
     }
 
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
