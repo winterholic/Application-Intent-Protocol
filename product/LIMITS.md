@@ -181,6 +181,14 @@ transition setStock { allow actor != null; from true; patch stock; expect stock 
 
 지침: **`target.where` 전이처럼 대상이 실행 때 정해지는 연산과 효과가 겹치는 묶음이면 같은 행을 건드리는 연산의 순서를 모든 호출자가 같게 쓴다.** `compose` 연산은 대상 수만큼 행을 잠그므로 대상이 많은 묶음일수록 교착 가능성이 커진다. 근거는 [소비자 앱 실행 기록 8.2절과 11절](../plan-docs/expressiveness-1.0/consumer-apps.md)과 [동시성 반례 탐색](../plan-docs/hardening-1.0/concurrency.md) 5절이다. 연산 순서 자체를 서버가 바꾸는 방안은 의미가 바뀌어 채택하지 않았다([결정 기록](../plan-docs/stabilization-20261122/decisions/b.md)).
 
+## E10. 단독 집계의 시간 한도는 2초로 고정이다
+
+`expose aggregate`로 여는 단독 집계는 정의에서 시간 한도를 정할 수 없다. 서버가 질의를 2초에 끊고 `WIRE.DEADLINE_EXCEEDED`를 돌려준다. 같은 조건에서 `budget { deadline 1s }`를 쓴 `expose read`는 1초에 끊긴다(실측: 읽기 1008 ms, 단독 집계 2007 ms, `product/tests/semantic-wire-measure.test.mjs`). 원본 표가 커서 2초 안에 못 끝나는 집계는 행별 집계(`groupKey`)나 확장으로 나눠야 한다. 정의에서 한도를 정하는 방법은 소유자 결정 대기다(`plan-docs/stabilization-20261122/decisions/d.md` D-DEC-3).
+
+## E11. `Int`의 정확한 범위는 JavaScript 안전 정수까지다
+
+범위를 쓰지 않은 `Int`는 int64 값을 저장하고 서버는 정확히 돌려주지만, TypeScript SDK는 안전 정수(±(2^53-1))를 넘는 값을 `CLIENT.PROTOCOL_ERROR`로 거부하고 쓰기로도 정확히 보낼 수 없다. Python SDK는 정확하다. 앱 전체에서 큰 정수를 쓰려면 `Int(lo..hi)`로 범위를 안전 정수 안에 두거나 `Text`로 저장한다. 결정 대기: D-DEC-1.
+
 ## 구분자 규칙(자주 틀리는 점)
 
 한 정의 안에서도 블록마다 구분자가 다르다.
