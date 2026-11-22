@@ -2566,8 +2566,8 @@ mod reserved_column_tests {
         for word in words {
             assert_eq!(column(&facts, "Item", word).as_deref(), Some(&format!("\"{word}\"")[..]), "{word}");
         }
-        assert_eq!(column(&facts, "Item", "name").as_deref(), Some("\"name\""));
-        assert_eq!(column(&facts, "Item", "owner").as_deref(), Some("\"owner_id\""));
+        assert_eq!(column(&facts, "Item", "name").as_deref(), Some("name"));
+        assert_eq!(column(&facts, "Item", "owner").as_deref(), Some("owner_id"));
         assert_eq!(column(&facts, "Item", "from").as_deref(), Some("\"from\""));
         assert_eq!(column(&facts, "Item", "where").as_deref(), Some("\"where\""));
     }

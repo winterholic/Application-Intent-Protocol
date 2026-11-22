@@ -552,3 +552,14 @@ fn lease_from(row: &Row) -> Result<Lease, Error> {
         trace_id: text(row.as_ref(13)),
     })
 }
+
+#[cfg(test)]
+mod state_tests {
+    use super::STATES;
+
+    /// Same wire contract as `aip-execution`'s PostgreSQL store; `spikes/spike-v5-sdk/tests/operations.rs` pins the generated clients to it.
+    #[test]
+    fn stored_job_states_are_the_fixed_wire_values() {
+        assert_eq!(STATES, ["QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"]);
+    }
+}

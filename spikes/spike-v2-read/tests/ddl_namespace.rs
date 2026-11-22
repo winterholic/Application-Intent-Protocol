@@ -29,10 +29,13 @@ fn postgres_ddl_quotes_reserved_field_names() {
     for word in words {
         assert!(ddl.contains(&format!("\"{word}\" text NOT NULL")), "{word}: {ddl}");
     }
-    assert!(ddl.contains("\"name\" text NOT NULL"), "ordinary identifiers retain their spelling: {ddl}");
+    // Existing deployments store the digest of the DDL their release generated and every start compares it with the current
+    // generator. Identifiers that never needed quoting must therefore keep their original spelling.
+    assert!(ddl.contains("(name text NOT NULL") || ddl.contains(", name text NOT NULL"), "ordinary identifiers retain their spelling: {ddl}");
+    assert!(!ddl.contains("\"name\"") && !ddl.contains("\"owner_id\""), "only keywords are quoted: {ddl}");
     assert!(
-        ddl.contains("\"owner_id\" bigint REFERENCES") && ddl.contains("\"owner_id\" bigint REFERENCES aip_reserved_fields.member(id) NOT NULL"),
-        "relationship columns use the same quoting contract: {ddl}"
+        ddl.contains("owner_id bigint REFERENCES aip_reserved_fields.member(id) NOT NULL"),
+        "relationship columns keep their original spelling: {ddl}"
     );
     assert_eq!(spike_v2_read::sqlgen::Dialect::Postgres.ident("grant"), "\"grant\"");
 }
@@ -61,6 +64,40 @@ resource Item {
 
     assert!(plan.sql.contains("\"from\""), "reserved field in query SQL: {}", plan.sql);
     assert!(plan.sql.contains("\"where\""), "reserved field in query SQL: {}", plan.sql);
-    assert!(plan.sql.contains("\"owner_id\""), "relationship column in query SQL: {}", plan.sql);
-    assert!(plan.sql.contains(".\"name\""), "ordinary field spelling remains unchanged: {}", plan.sql);
+    assert!(plan.sql.contains(".owner_id"), "relationship column keeps its spelling in query SQL: {}", plan.sql);
+    assert!(plan.sql.contains(".name") && !plan.sql.contains("\"name\""), "ordinary field spelling remains unchanged: {}", plan.sql);
+}
+
+const DB: &str = aip_test_support::test_database_url!();
+
+/// The generator quotes exactly the words PostgreSQL rejects as a bare column name (keyword categories R and T) and leaves every
+/// other spelling alone, because stored DDL digests make unquoted names part of the deployment contract. The server's own keyword
+/// catalog is the oracle, so a PostgreSQL release that reserves another word fails here instead of in a customer's `init`.
+#[tokio::test]
+async fn postgres_identifier_quoting_matches_the_server_keyword_catalog() {
+    let db = spike_v2_read::connect_with_url(DB).await.unwrap();
+    let keywords = db.query("SELECT word, catcode::text FROM pg_get_keywords() ORDER BY word", &[]).await.unwrap();
+    assert!(keywords.len() > 400, "pg_get_keywords returned {} rows", keywords.len());
+    let mut fields = serde_json::Map::new();
+    for row in &keywords {
+        let (word, category): (String, String) = (row.get(0), row.get(1));
+        let quoted = spike_v2_read::sqlgen::Dialect::Postgres.ident(&word);
+        let must_quote = matches!(category.as_str(), "R" | "T");
+        assert_eq!(quoted == format!("\"{word}\""), must_quote, "{word} ({category}) rendered as {quoted}");
+        assert!(must_quote || quoted == word, "{word} ({category}) must keep its spelling, got {quoted}");
+        fields.insert(word, json!({"ty":"Text"}));
+    }
+    let facts = json!({"resources":{"Item":{"fields":fields,"invariants":{}}}});
+    let schema = format!("aip_kw_{}", std::process::id());
+    let ddl = spike_v2_read::sqlgen::create_ddl_in(&schema, &facts).unwrap();
+    for statement in &ddl {
+        db.batch_execute(statement).await.unwrap_or_else(|error| panic!("{statement}: {error}"));
+    }
+    let created: i64 = db
+        .query_one("SELECT count(*) FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'item'", &[&schema])
+        .await
+        .unwrap()
+        .get(0);
+    db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
+    assert_eq!(created as usize, keywords.len(), "every keyword-named field becomes a real column");
 }

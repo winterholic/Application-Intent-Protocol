@@ -253,3 +253,10 @@ python3 -m unittest product.tests.python_sdk_contract_test
 - 이번 실행: `AIP_TEST_NO_DB=1 cargo test -p aip-cli --test service` → 11 passed, 0 failed. `cargo fmt --all -- --check` 및 `git diff --check` 통과. C-D1·C-D2와 기존 v6 client SDK 표적 검사는 앞선 실행 증거를 재사용해 중복 실행하지 않았다.
 - 외부 PostgreSQL `adopt-external`은 여전히 실제 catalog에서 기본값을 검사하고, MySQL 초기화는 별도 adapter 계약이다. `--for-postgres-init`은 이 두 경로의 검사가 아니다.
 - D2/D4의 남은 PG17 통합 재검증은 B의 소유 파일 `spikes/spike-v6-transport/src/lib.rs`·`spikes/spike-v6-transport/src/durable.rs` 후보 검증·통합 뒤 실행한다. 필요한 명령: `node product/tests/semantic-path-parity.test.mjs`, `node product/tests/semantic-chain.test.mjs`, `node product/tests/sdk-contract-semantics.test.mjs`, `node product/tests/semantic-wire-measure.test.mjs`. 모든 명령은 전용 PostgreSQL 17 test URL과 앞선 테스트 설정을 요구한다. v6 파일은 수정하지 않는다.
+
+## 15. 최종 후보 `720b9b25` Verify core 회귀 교정 (2026-11-22)
+
+- 원인 1, PostgreSQL 식별자 인용: `5c831619`가 `Dialect::Postgres.ident`를 모든 이름에 큰따옴표를 붙이도록 바꿨다. 배포는 만들 때의 DDL digest를 `aip_migrate_meta.ddl_digest`에 저장하고 서버가 시작할 때마다 현재 생성기 출력과 비교한다(`verified_marker_with_gate`). 모든 이름을 인용하면 기존 배포가 `WIRE.SCHEMA_MISMATCH`("알려진 이전 형식도 아님")로 시작하지 못한다. 그래서 `reference_cycles`의 digest `1c7684a2…`는 계약이며 바꾸지 않았다.
+- 교정: PG17 `pg_get_keywords()`의 분류 R(예약)·T(함수·타입명 가능 예약) 101개만 인용하고 나머지는 이전 철자를 유지한다. 분류 C·U는 열 이름으로 쓸 수 있고 기존 배포가 인용 없이 저장했을 수 있어 건드리지 않는다. `from`·`where`처럼 예전 12단어 목록에 없던 예약어도 이제 인용된다. 목록은 `ddl_namespace.rs`가 실제 서버와 교차 검증한다.
+- 원인 2, 마이그레이션 SQL: `aip-migrate`가 `sqlgen::column`의 인용 안 한 이름을 `DROP COLUMN`, `SET NOT NULL`, `WHERE … IS NULL` 등에 그대로 넣어 예약어 필드의 migrate가 `DB_CHECK`로 실패했다. 열 키 조회는 인용 없는 이름 그대로 두고 SQL에만 `pg_ident`를 적용했다.
+- 원인 3, Python 상태 시험: `STATES`가 `JOB_STATE_QUEUED` 상수를 참조하면서 소스 문자열 파서가 이름을 읽었다. 파서를 없애고, 서버의 컴파일된 `STATES`(`aip-execution`, `mysql_jobs`)를 고정 wire 목록에 단위 시험으로 묶고, 생성된 Python `JobState` 집합도 같은 고정 목록과 비교한다. 새 공개 API나 의존은 없다.

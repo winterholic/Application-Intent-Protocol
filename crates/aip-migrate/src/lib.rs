@@ -836,6 +836,12 @@ fn reference_clause(def: &str) -> Option<String> {
     Some(def[at + 1..].strip_suffix(" NOT NULL").unwrap_or(&def[at + 1..]).to_string())
 }
 
+/// Column names come from `sqlgen::column` unquoted because they double as lookup keys into the generated `CREATE TABLE`; any SQL
+/// that interpolates one must quote it the way the generator did, or a field named after a PostgreSQL keyword breaks the migration.
+fn pg_ident(name: &str) -> String {
+    sqlgen::Dialect::Postgres.ident(name)
+}
+
 fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
@@ -950,6 +956,7 @@ async fn classify_capacity_changes(
             changes.push(json!({"class":"SecurityReview","reason":format!("{res}.{name} 정원 제약 추가 또는 변경")}));
             let per = invariant["per"].as_str().ok_or_else(|| err("BAD_FACTS", "정원 그룹 필드 누락"))?;
             let col = sqlgen::column(new_facts, res, per).ok_or_else(|| err("BAD_FACTS", "정원 그룹 열 누락"))?;
+            let col_sql = pg_ident(&col);
             let max = enforcement["max"].as_i64().filter(|max| *max >= 1).ok_or_else(|| err("BAD_FACTS", "정원 상한 오류"))?;
             let mut cx = sqlgen::Ctx::new(new_facts, None, "");
             let env = sqlgen::Env { this: Some(("t".into(), res.clone())), ..Default::default() };
@@ -960,13 +967,15 @@ async fn classify_capacity_changes(
             let mut params = cx.params.values.clone();
             for (field, descriptor) in new_fields {
                 let new_col = sqlgen::column(new_facts, res, field).ok_or_else(|| err("BAD_FACTS", "새 열 이름 오류"))?;
+                let new_col_sql = pg_ident(&new_col);
                 let new_type =
                     physical_type(new_facts, descriptor["ty"].as_str().unwrap_or("")).ok_or_else(|| err("BAD_FACTS", "정원 검사 물리 타입 오류"))?;
                 let expression = if let Some(old_descriptor) = old_fields.get(field) {
                     let old_col = sqlgen::column(old_facts, res, field).ok_or_else(|| err("BAD_FACTS", "기존 열 이름 오류"))?;
+                    let old_col_sql = pg_ident(&old_col);
                     let old_type = physical_type(old_facts, old_descriptor["ty"].as_str().unwrap_or(""))
                         .ok_or_else(|| err("BAD_FACTS", "기존 정원 검사 물리 타입 오류"))?;
-                    if old_type == new_type { format!("src.{old_col}") } else { format!("src.{old_col}::text::{new_type}") }
+                    if old_type == new_type { format!("src.{old_col_sql}") } else { format!("src.{old_col_sql}::text::{new_type}") }
                 } else if let Some(value) = directives.backfill.get(&(res.clone(), field.clone())) {
                     let typed = typed_literal(new_facts, value.clone(), descriptor["ty"].as_str().unwrap_or(""))?;
                     params.push(Some(typed));
@@ -974,11 +983,11 @@ async fn classify_capacity_changes(
                 } else {
                     format!("NULL::{new_type}")
                 };
-                projections.push(format!("{expression} AS {new_col}"));
+                projections.push(format!("{expression} AS {new_col_sql}"));
             }
             let table = format!("{schema}.{}", sqlgen::snake(res));
             let sql = format!(
-                "SELECT EXISTS (SELECT 1 FROM (SELECT {} FROM {table} src) t WHERE t.{col} IS NOT NULL AND ({condition}) IS TRUE GROUP BY t.{col} HAVING count(*) > {max})",
+                "SELECT EXISTS (SELECT 1 FROM (SELECT {} FROM {table} src) t WHERE t.{col_sql} IS NOT NULL AND ({condition}) IS TRUE GROUP BY t.{col_sql} HAVING count(*) > {max})",
                 projections.join(", ")
             );
             let query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params.iter().map(|value| value as _).collect();
@@ -1103,10 +1112,11 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
         let new_cols = new_tables.get(&name).ok_or_else(|| err("BAD_FACTS", "새 CREATE TABLE 누락"))?;
         for (field, fd) in old_fields {
             let col = sqlgen::column(&old.facts, res, field).ok_or_else(|| err("BAD_FACTS", "기존 열 이름 오류"))?;
+            let col_sql = pg_ident(&col);
             if !new_fields.contains_key(field) {
                 changes.push(json!({"class":"Destructive","reason":format!("{res}.{field} 제거")}));
                 steps.push(Step {
-                    sql: format!("ALTER TABLE {schema}.{name} DROP COLUMN {col}"),
+                    sql: format!("ALTER TABLE {schema}.{name} DROP COLUMN {col_sql}"),
                     class: "Destructive",
                     value: None,
                     reason: format!("{res}.{field} 제거"),
@@ -1114,6 +1124,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
             } else {
                 let new_fd = &new_fields[field];
                 let new_col = sqlgen::column(new_facts, res, field).ok_or_else(|| err("BAD_FACTS", "새 열 이름 오류"))?;
+                let new_col_sql = pg_ident(&new_col);
                 let old_def = old_cols.get(&col);
                 let new_def = new_cols.get(&new_col);
                 if fd != new_fd || old_def != new_def {
@@ -1129,7 +1140,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                             && fd["ty"].as_str().is_some_and(|ty| ty.trim_end_matches('?') != "Email")
                         {
                             let rows = db
-                                .query(&format!("SELECT {col} FROM {schema}.{name} WHERE {col} IS NOT NULL"), &[])
+                                .query(&format!("SELECT {col_sql} FROM {schema}.{name} WHERE {col_sql} IS NOT NULL"), &[])
                                 .await
                                 .map_err(|_| err("DB_CHECK", "Email 기존 값 검사 실패"))?;
                             let invalid = rows.iter().any(|row| {
@@ -1146,7 +1157,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                             let adding = !a.contains(" NOT NULL") && b.contains(" NOT NULL");
                             if adding {
                                 let n: i64 = db
-                                    .query_one(&format!("SELECT count(*) FROM {schema}.{name} WHERE {col} IS NULL"), &[])
+                                    .query_one(&format!("SELECT count(*) FROM {schema}.{name} WHERE {col_sql} IS NULL"), &[])
                                     .await
                                     .map_err(|_| err("DB_CHECK", "NULL 검사 실패"))?
                                     .get(0);
@@ -1156,7 +1167,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                 } else {
                                     changes.push(json!({"class":"Safe","reason":format!("{res}.{field} 필수화")}));
                                     steps.push(Step {
-                                        sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col} SET NOT NULL"),
+                                        sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col_sql} SET NOT NULL"),
                                         class: "Safe",
                                         value: None,
                                         reason: format!("{res}.{field} 필수화"),
@@ -1165,7 +1176,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                             } else {
                                 changes.push(json!({"class":"Safe","reason":format!("{res}.{field} nullable 완화")}));
                                 steps.push(Step {
-                                    sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col} DROP NOT NULL"),
+                                    sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col_sql} DROP NOT NULL"),
                                     class: "Safe",
                                     value: None,
                                     reason: format!("{res}.{field} nullable 완화"),
@@ -1199,7 +1210,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                 }
                                 if col != new_col {
                                     steps.push(Step {
-                                        sql: format!("ALTER TABLE {schema}.{name} RENAME COLUMN {col} TO {new_col}"),
+                                        sql: format!("ALTER TABLE {schema}.{name} RENAME COLUMN {col_sql} TO {new_col_sql}"),
                                         class: "Destructive",
                                         value: None,
                                         reason: reason.clone(),
@@ -1211,7 +1222,10 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                             let target_ty = new_fd["ty"].as_str().unwrap_or("");
                                             let decimal_values_fit = if decimal_type(target_ty.trim_end_matches('?')).is_some() {
                                                 let rows = db
-                                                    .query(&format!("SELECT {new_col}::text FROM {schema}.{name} WHERE {new_col} IS NOT NULL"), &[])
+                                                    .query(
+                                                        &format!("SELECT {new_col_sql}::text FROM {schema}.{name} WHERE {new_col_sql} IS NOT NULL"),
+                                                        &[],
+                                                    )
                                                     .await
                                                     .map_err(|_| err("DB_CHECK", "Decimal 기존 값 검사 실패"))?;
                                                 let invalid = rows.iter().any(|row| {
@@ -1229,7 +1243,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                             if decimal_values_fit {
                                                 steps.push(Step {
                                                     sql: format!(
-                                                        "ALTER TABLE {schema}.{name} ALTER COLUMN {new_col} TYPE {new_ty} USING ({new_col}::text::{new_ty})"
+                                                        "ALTER TABLE {schema}.{name} ALTER COLUMN {new_col_sql} TYPE {new_ty} USING ({new_col_sql}::text::{new_ty})"
                                                     ),
                                                     class: "Destructive",
                                                     value: None,
@@ -1245,7 +1259,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                 }
                                 if let Some(reference) = reference_clause(b) {
                                     steps.push(Step {
-                                        sql: format!("ALTER TABLE {schema}.{name} ADD FOREIGN KEY ({new_col}) {reference}"),
+                                        sql: format!("ALTER TABLE {schema}.{name} ADD FOREIGN KEY ({new_col_sql}) {reference}"),
                                         class: "SecurityReview",
                                         value: None,
                                         reason: reason.clone(),
@@ -1262,7 +1276,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                 if a.contains(" NOT NULL") != b.contains(" NOT NULL") {
                                     if b.contains(" NOT NULL") {
                                         let n: i64 = db
-                                            .query_one(&format!("SELECT count(*) FROM {schema}.{name} WHERE {col} IS NULL"), &[])
+                                            .query_one(&format!("SELECT count(*) FROM {schema}.{name} WHERE {col_sql} IS NULL"), &[])
                                             .await
                                             .map_err(|_| err("DB_CHECK", "NULL 검사 실패"))?
                                             .get(0);
@@ -1271,7 +1285,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                             changes.push(json!({"class":"Blocked","reason":format!("{res}.{field} NULL {n}행")}));
                                         } else {
                                             steps.push(Step {
-                                                sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {new_col} SET NOT NULL"),
+                                                sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {new_col_sql} SET NOT NULL"),
                                                 class: "Safe",
                                                 value: None,
                                                 reason: reason.clone(),
@@ -1279,7 +1293,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                         }
                                     } else {
                                         steps.push(Step {
-                                            sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {new_col} DROP NOT NULL"),
+                                            sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {new_col_sql} DROP NOT NULL"),
                                             class: "Safe",
                                             value: None,
                                             reason: reason.clone(),
@@ -1311,6 +1325,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                 continue;
             }
             let col = sqlgen::column(new_facts, res, field).ok_or_else(|| err("BAD_FACTS", "새 열 이름 오류"))?;
+            let col_sql = pg_ident(&col);
             let def = new_cols.get(&col).ok_or_else(|| err("BAD_FACTS", "새 열 생성 SQL 누락"))?;
             let required = def.contains(" NOT NULL");
             let backfill = directives.backfill.remove(&(res.clone(), field.clone()));
@@ -1335,7 +1350,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                     reason: format!("{res}.{field} 추가와 backfill"),
                 });
                 steps.push(Step {
-                    sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col} DROP DEFAULT"),
+                    sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col_sql} DROP DEFAULT"),
                     class,
                     value: None,
                     reason: format!("{res}.{field} backfill 기본값 제거"),
@@ -1351,7 +1366,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
             });
             if required {
                 steps.push(Step {
-                    sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col} SET NOT NULL"),
+                    sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col_sql} SET NOT NULL"),
                     class,
                     value: None,
                     reason: format!("{res}.{field} 필수화"),

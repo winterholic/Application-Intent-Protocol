@@ -92,7 +92,23 @@ pub fn column(facts: &Value, res: &str, field: &str) -> Option<String> {
     Some(if field != "id" && ty.starts_with("Ref<") { format!("{}_id", snake(field)) } else { snake(field) })
 }
 
-/// SQL을 만드는 대상 엔진. PostgreSQL 식별자는 큰따옴표로, MySQL 식별자는 백틱으로 감싼다.
+/// Words PostgreSQL 17 rejects as a bare column name (`pg_get_keywords()` categories R and T), sorted for `binary_search`.
+/// Other keywords (categories U and C) are valid column names and stay unquoted, so DDL for every name that never needed quoting is
+/// byte-identical to earlier releases. That matters: a deployment stores the digest of the DDL it was created with and the server
+/// compares it with the current generator at every start. `ddl_namespace.rs` checks this list against a live server.
+#[rustfmt::skip]
+const POSTGRES_QUOTED_WORDS: [&str; 101] = [
+    "all", "analyse", "analyze", "and", "any", "array", "as", "asc", "asymmetric", "authorization", "binary", "both", "case", "cast",
+    "check", "collate", "collation", "column", "concurrently", "constraint", "create", "cross", "current_catalog", "current_date",
+    "current_role", "current_schema", "current_time", "current_timestamp", "current_user", "default", "deferrable", "desc", "distinct",
+    "do", "else", "end", "except", "false", "fetch", "for", "foreign", "freeze", "from", "full", "grant", "group", "having", "ilike", "in",
+    "initially", "inner", "intersect", "into", "is", "isnull", "join", "lateral", "leading", "left", "like", "limit", "localtime",
+    "localtimestamp", "natural", "not", "notnull", "null", "offset", "on", "only", "or", "order", "outer", "overlaps", "placing", "primary",
+    "references", "returning", "right", "select", "session_user", "similar", "some", "symmetric", "system_user", "table", "tablesample",
+    "then", "to", "trailing", "true", "union", "unique", "user", "using", "variadic", "verbose", "when", "where", "window", "with",
+];
+
+/// SQL을 만드는 대상 엔진. PostgreSQL 키워드 식별자는 큰따옴표로, MySQL 식별자는 백틱으로 감싼다.
 /// MariaDB는 LATERAL을 지원하지 않아 이 방언의 대상이 아니다(어댑터가 시작 때 거부한다).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Dialect {
@@ -106,12 +122,14 @@ impl Dialect {
         self == Dialect::MySql
     }
 
-    /// PostgreSQL 식별자는 항상 큰따옴표로, MySQL 식별자는 백틱으로 감싼다.
+    /// 식별자 인용. PostgreSQL은 서버가 열 이름으로 거부하는 키워드만 큰따옴표로 감싸고 나머지는 기존 소문자 snake 이름을 그대로 쓴다.
+    /// 기존 배포가 저장한 DDL digest가 계약이라 인용이 필요 없던 이름의 출력은 바뀌면 안 된다. MySQL은 항상 백틱으로 감싼다.
     pub fn ident(self, name: &str) -> String {
         match self {
-            Dialect::Postgres => {
+            Dialect::Postgres if POSTGRES_QUOTED_WORDS.binary_search(&name).is_ok() => {
                 format!("\"{}\"", name.replace('"', "\"\""))
             }
+            Dialect::Postgres => name.to_string(),
             Dialect::MySql => format!("`{}`", name.replace('`', "``")),
         }
     }

@@ -422,6 +422,19 @@ impl Store {
 pub const JOB_STATE_QUEUED: &str = "QUEUED";
 const STATES: [&str; 6] = [JOB_STATE_QUEUED, "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"];
 
+#[cfg(test)]
+mod state_tests {
+    use super::{JOB_STATE_QUEUED, STATES};
+
+    /// The compiled state values are the public wire contract of `JobRun.state`; the generated Python and TypeScript types
+    /// (`spikes/spike-v5-sdk/tests/operations.rs`) are checked against this same list.
+    #[test]
+    fn stored_job_states_are_the_fixed_wire_values() {
+        assert_eq!(STATES, ["QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"]);
+        assert_eq!(JOB_STATE_QUEUED, "QUEUED");
+    }
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct RunSummary {
     pub id: String,

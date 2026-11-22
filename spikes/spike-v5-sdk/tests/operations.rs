@@ -22,26 +22,26 @@ fn operation_contracts_are_typed_discoverable_and_exclude_private_policy_and_imp
     }
 }
 
+/// The values a client sees in `JobRun.state`. They are fixed here on purpose: the server's compiled `STATES` arrays are pinned to this
+/// same list by unit tests in `crates/aip-execution/src/jobs.rs` and `crates/aip-migrate/src/mysql_jobs.rs`, so the generated Python
+/// type, this list and both servers cannot drift apart without one of those tests failing. Nothing here parses Rust source text.
+const WIRE_JOB_STATES: [&str; 6] = ["QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"];
+
 #[test]
-fn python_job_states_match_server_execution_states_exactly() {
-    let jobs_source = include_str!("../../../crates/aip-execution/src/jobs.rs");
-    let state_line = jobs_source.lines().find(|line| line.contains("const STATES:")).expect("crates/aip-execution/src/jobs.rs must define STATES");
-    let (_, array_part) = state_line.split_once('=').expect("should have = in STATES assignment");
-    let bracket_start = array_part.find('[').unwrap();
-    let bracket_end = array_part.rfind(']').unwrap();
-    let inner = &array_part[bracket_start + 1..bracket_end];
-    let server_states: Vec<&str> = inner.split(',').map(|s| s.trim().trim_matches('"')).filter(|s| !s.is_empty()).collect();
-
-    assert_eq!(server_states, vec!["QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"]);
-
+fn python_job_states_match_the_fixed_wire_values() {
     let facts = load_str(include_str!("../../spike-v6-transport/tests/fixtures/operations.aip"), Form::A).unwrap().execution;
     let python_code = spike_v5_sdk::contract_module_python(&facts, IdWire::DecimalString);
 
-    let expected_job_state = format!("JobState = Literal[{}]", server_states.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", "));
-    assert!(
-        python_code.contains(&expected_job_state),
-        "Generated python JobState must match server execution states exactly:\nExpected: {expected_job_state}\nFound:\n{python_code}"
-    );
+    let declaration = python_code.lines().find(|line| line.starts_with("JobState = Literal[")).expect("generated Python must declare JobState");
+    let members = declaration.strip_prefix("JobState = Literal[").and_then(|rest| rest.strip_suffix(']')).expect("JobState is a Literal[...]");
+    let generated: Vec<&str> = members.split(", ").map(|member| member.trim_matches('"')).collect();
+
+    let generated_set: std::collections::BTreeSet<&str> = generated.iter().copied().collect();
+    assert_eq!(generated_set.len(), generated.len(), "JobState must not repeat a state: {declaration}");
+    assert_eq!(generated_set, WIRE_JOB_STATES.into_iter().collect(), "generated Python JobState differs from the wire states: {declaration}");
+    assert_eq!(generated, WIRE_JOB_STATES, "state order is part of the generated text");
+    // The server stores a queued job as the plain string QUEUED; a constant name must never reach the wire.
+    assert!(generated.contains(&"QUEUED") && generated.iter().all(|state| !state.starts_with("JOB_STATE_")), "{declaration}");
 }
 
 #[test]
