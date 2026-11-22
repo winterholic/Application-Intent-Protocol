@@ -14,6 +14,7 @@
 - 진단·도움말처럼 DB가 필요 없는 시험의 루프용 `AIP_TEST_NO_DB=1`: 시험 DSN이 없을 때만 `aip-test-support`의 빌드 가드를 건너뛴다. DB 시험은 여전히 컴파일되지 않는다.
 
 ### Changed
+- bundle이 `target.ids`·compose로 이름 붙인 행이 둘 이상이면 시작할 때 `(resource, id)` 순서로 먼저 잠근다(LIMITS E9). 연산 실행·판정·오류 순서와 결과는 그대로이고, 서로 반대 순서로 같은 행들을 갱신하는 묶음의 교착이 사라진다(PostgreSQL 17, 동시 2~12건·행 2~8개에서 교착 0건, 이전에는 4건 이상이 겹치면 대부분 `WIRE.DEADLINE_EXCEEDED`). `target.where`가 고르는 행과 효과가 잠그는 행은 이 선잠금에 들지 않는다.
 - **호환 변경(정의 검사 강화): 숨겨진 필드(`field ... read when`)의 값이 다른 경로로 호출자에게 건너가는 정의를 `DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION`으로 거부한다.** 술어 호출 안과 `actor.*` 경로를 `from`·`to`가 읽는 것, 효과 create·update 값과 update·delete 대상 조건, compose `create ... from` 출처, `sameScope`, 그리고 호출자가 정하는 값(`input`, `expose create`의 새 행 값, `patch` 필드)을 `expose create` allow·`check`·operation allow·집계 `where`·집계 `sourceAccess` guard에서 가려진 필드와 견주는 것이다. 모두 PostgreSQL 17 serve에서 가려진 값을 복원한 반례다. 저장소의 `.aip` 정의 68개는 새로 거부되지 않는다. 근거와 판정은 [plan-docs/hardening-1.0/policy.md](plan-docs/hardening-1.0/policy.md).
 - `tools/verify.sh`의 엔진 clippy·test 목록에 `spike-v11-dev-checks`를 추가했다(제품 `load` 경로가 호출하는 엔진).
 - README 맨 위에 1.0 상태를 명시했다: 정식 경로는 `aip service`, `.aipoc`는 PoC, tenant 자동 격리는 1.0 제외. 시작 가이드는 저장소 checkout 없이 릴리스 묶음(`AIP_HOME`)만으로 따라 하도록 고치고, 참조 열 이름 규칙(`<필드>_id`), `Time` 출력 표기, 소스 빌드의 SDK 도구 준비, `PG*` 환경 변수와 release 빌드의 관계를 적었다.

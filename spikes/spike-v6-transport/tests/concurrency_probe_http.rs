@@ -180,8 +180,42 @@ impl Env {
         }
         (tally, elapsed, results)
     }
+    /// Like `burst`, plus the wall time of every call (same order as `calls`), for latency percentiles.
+    async fn burst_timed(&self, calls: Vec<(i64, Value)>) -> (BTreeMap<String, usize>, Duration, Vec<(Value, Duration)>) {
+        let started = Instant::now();
+        let handles: Vec<_> = calls
+            .into_iter()
+            .map(|(actor, body)| {
+                let (address, token, fingerprint) = (self.server.address, self.token(actor), self.fingerprint.clone());
+                tokio::spawn(async move {
+                    let begun = Instant::now();
+                    let result = http(address, "/apply", &token, &fingerprint, &body, false).await;
+                    (result, begun.elapsed())
+                })
+            })
+            .collect();
+        let mut results = vec![];
+        for handle in handles {
+            results.push(handle.await.unwrap());
+        }
+        let elapsed = started.elapsed();
+        let mut tally = BTreeMap::new();
+        for (result, _) in &results {
+            *tally.entry(outcome(result)).or_insert(0) += 1;
+        }
+        (tally, elapsed, results)
+    }
     async fn num(&self, sql: &str) -> i64 {
         self.db.query_one(&sql.replace("{S}", &self.schema), &[]).await.unwrap().get(0)
+    }
+    /// Stock of products 1..=rows in id order.
+    async fn stocks(&self, rows: i64) -> Vec<i64> {
+        let sql = format!("SELECT stock::bigint FROM {}.product WHERE id <= {rows} ORDER BY id", self.schema);
+        self.db.query(&sql, &[]).await.unwrap().iter().map(|r| r.get(0)).collect()
+    }
+    /// Deadlocks PostgreSQL has detected in this database so far.
+    async fn deadlocks(&self) -> i64 {
+        self.db.query_one("SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()", &[]).await.unwrap().get(0)
     }
 }
 
@@ -232,23 +266,93 @@ fn order_line(actor: i64, product: i64, first_ref: usize) -> Vec<Value> {
 // A. bundle lock order
 // ---------------------------------------------------------------------------------------------------------------------
 
-/// A1: two bundles that take the same two products in opposite orders. E9 documents "operation order is lock order".
+/// A1: bundles that take the same products in different orders. E9 documents "operation order is lock order".
+/// Defaults reproduce the original two-product probe. Knobs for the E9 comparison (plan-docs/stabilization-20261122/track-b.md):
+/// `PROBE_N` concurrent bundles, `PROBE_ROWS` products per bundle (every bundle takes all of them once),
+/// `PROBE_ORDER` = `opposite` (odd callers ascending, even descending), `shuffle` (a different permutation per caller) or
+/// `sorted` (everyone ascending: the caller-side lock order normalization, an upper bound for a server-side reorder).
+/// Ends with one `BENCH` line: success rate, deadlock victims (pg_stat_database delta, one per retried request), latency percentiles,
+/// deadline rate and the rollback check (every product lost exactly one unit per successful bundle, one journal row per success).
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "exploratory probe: run one at a time with --ignored --exact (sqlgen::set_schema is once per process)"]
 async fn a1_opposite_order_two_product_bundles() {
-    let e = env("a1", SPEC, None, &seed_basic(2)).await;
     let n: i64 = std::env::var("PROBE_N").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
+    let rows: i64 = std::env::var("PROBE_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+    let order = std::env::var("PROBE_ORDER").unwrap_or_else(|_| "opposite".into());
+    assert!(["opposite", "shuffle", "sorted"].contains(&order.as_str()), "PROBE_ORDER: opposite|shuffle|sorted");
+    let e = env("a1", SPEC, None, &seed_basic(rows)).await;
+    let deadlocks_before = e.deadlocks().await;
+    let (mut latencies, mut ok_latencies, mut total, mut ok_total, mut deadline, mut violations) = (vec![], vec![], 0usize, 0usize, 0usize, 0usize);
     for round in 0..rounds() {
+        let stock_before = e.stocks(rows).await;
         let calls: Vec<_> = (1..=n)
             .map(|i| {
-                let ops = if i % 2 == 0 { vec![take(1, 1), take(2, 1)] } else { vec![take(2, 1), take(1, 1)] };
-                (i, json!({"key": format!("a1-{round}-{i}"), "request": {"atomic": ops}}))
+                let ids: Vec<i64> = match order.as_str() {
+                    "sorted" => (1..=rows).collect(),
+                    "shuffle" => shuffled(rows, (round as u64) * 1000 + i as u64),
+                    _ if i % 2 == 0 => (1..=rows).collect(),
+                    _ => (1..=rows).rev().collect(),
+                };
+                let ops: Vec<Value> = ids.into_iter().map(|id| take(id, 1)).collect();
+                // Members 1..=12 exist; more callers than that reuse them, which does not matter for a `take`.
+                (((i - 1) % 12) + 1, json!({"key": format!("a1-{round}-{i}"), "request": {"atomic": ops}}))
             })
             .collect();
-        let (tally, elapsed, _) = e.burst(calls).await;
-        let stock = e.num("SELECT stock FROM {S}.product WHERE id IN (1,2) ORDER BY id LIMIT 1").await;
-        probe("a1-opposite-order", round, &tally, elapsed, &format!("stock1={stock}"));
+        let (tally, elapsed, results) = e.burst_timed(calls).await;
+        let ok = tally.get("OK").copied().unwrap_or(0) as i64;
+        let stock_after = e.stocks(rows).await;
+        let journal = e.num(&format!("SELECT count(*) FROM {{S}}.aip_idem WHERE key LIKE 'a1-{round}-%'")).await;
+        // Atomicity: a bundle either takes one unit from every product or from none, and leaves one journal row exactly when it took them.
+        let partial = stock_before.iter().zip(&stock_after).any(|(before, after)| before - after != ok) || journal != ok;
+        violations += usize::from(partial);
+        for (result, took) in &results {
+            latencies.push(took.as_millis() as u64);
+            if outcome(result) == "OK" {
+                ok_latencies.push(took.as_millis() as u64);
+            }
+            deadline += usize::from(outcome(result) == "WIRE.DEADLINE_EXCEEDED");
+        }
+        total += results.len();
+        ok_total += ok as usize;
+        probe("a1-opposite-order", round, &tally, elapsed, &format!("stock1={} journal={journal}", stock_after[0]));
     }
+    // Deadlock counters reach pg_stat_database when the backends go idle (about one second).
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let deadlocks = e.deadlocks().await - deadlocks_before;
+    println!(
+        "BENCH a1 n={n} rows={rows} order={order} rounds={} calls={total} ok={ok_total} success_rate={:.3} deadlock_victims={deadlocks} \
+         p50_ms={} p95_ms={} p99_ms={} ok_p50_ms={} ok_p95_ms={} ok_p99_ms={} deadline_exceeded={deadline} deadline_rate={:.3} rollback_violations={violations}",
+        rounds(),
+        ok_total as f64 / total as f64,
+        percentile(&mut latencies, 50),
+        percentile(&mut latencies, 95),
+        percentile(&mut latencies, 99),
+        percentile(&mut ok_latencies, 50),
+        percentile(&mut ok_latencies, 95),
+        percentile(&mut ok_latencies, 99),
+        deadline as f64 / total as f64,
+    );
+    assert_eq!(violations, 0, "a failed bundle must leave nothing behind");
+}
+
+/// Nearest-rank percentile; 0 when there is no sample.
+fn percentile(samples: &mut [u64], p: usize) -> u64 {
+    if samples.is_empty() {
+        return 0;
+    }
+    samples.sort_unstable();
+    samples[((samples.len() * p).div_ceil(100)).clamp(1, samples.len()) - 1]
+}
+
+/// A deterministic permutation of 1..=rows (Fisher-Yates over a small LCG) so a probe run can be repeated.
+fn shuffled(rows: i64, seed: u64) -> Vec<i64> {
+    let mut ids: Vec<i64> = (1..=rows).collect();
+    let mut state = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    for i in (1..ids.len()).rev() {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ids.swap(i, (state >> 33) as usize % (i + 1));
+    }
+    ids
 }
 
 /// A2: line (FK + policy read of the product) first, then a compose that updates the same product row.

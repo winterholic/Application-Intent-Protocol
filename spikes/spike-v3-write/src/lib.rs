@@ -2072,6 +2072,98 @@ fn bundle_reference_locks<'a>(facts: &'a Value, ops: &[Value], plan: &[OpPlan<'a
     locks
 }
 
+/// 묶음이 `target.ids`나 compose로 이름 붙인 행: (resource, id) → 그 행에 필요한 가장 강한 잠금. 앞 연산이 만든 행(`target.created`)과
+/// `target.where`가 고르는 행은 계획 단계에 알 수 없어 들어가지 않는다.
+fn bundle_target_rows<'a>(
+    facts: &'a Value,
+    ops: &[Value],
+    plan: &[OpPlan<'a>],
+    knobs: &Knobs,
+    wire: IdWire,
+) -> BTreeMap<(&'a str, EntityId), &'static str> {
+    let mut rows: BTreeMap<(&str, EntityId), &'static str> = BTreeMap::new();
+    let mut add = |key: (&'a str, EntityId), lock: &'static str| {
+        let strongest = rows.entry(key).or_insert(lock);
+        if lock == " FOR UPDATE OF t" {
+            *strongest = lock;
+        }
+    };
+    for (index, op) in ops.iter().enumerate() {
+        let Some(request) = op.as_object() else { continue };
+        if let Some(composed) = plan.get(index).and_then(|planned| planned.compose.as_ref()) {
+            let transitions: Vec<&str> =
+                composed.steps.iter().filter_map(|step| if let Step::Tr(transition, _) = step { Some(*transition) } else { None }).collect();
+            let lock = row_lock(facts, composed.res, &transitions);
+            for id in &composed.ids {
+                add((composed.res, *id), lock);
+            }
+            continue;
+        }
+        let Some(name) = request.get("apply").and_then(Value::as_str) else { continue };
+        if plan.get(index).is_some_and(|planned| planned.target_created.is_some()) {
+            continue;
+        }
+        let Ok((res, tr, expose)) = exposed(facts, name) else { continue };
+        // 요청이 잘못됐으면 그 연산이 자기 차례에 거절한다. 여기서는 잠그지 않고 넘어가 거절 순서를 바꾸지 않는다.
+        if refuse_internal(expose, knobs, request).is_err()
+            || keys(request, &["apply", "target", "values", "expect", "input"], "apply 요청").is_err()
+            || apply_input(facts, res, tr, request, wire).is_err()
+        {
+            continue;
+        }
+        if let Ok(TargetSpec::Ids(ids)) = parse_target(facts, res, expose, &op["target"], wire) {
+            let lock = row_lock(facts, res, &[tr]);
+            for id in ids {
+                add((res, id), lock);
+            }
+        }
+    }
+    rows
+}
+
+/// E9: 묶음이 이름 붙인 행이 둘 이상이면 시작할 때 `(resource, id)` 순서로 미리 잠근다. 연산은 배열 순서로 실행한다.
+/// 같은 행들을 서로 다른 순서로 건드리는 묶음이 동시에 와도 모두 같은 순서로 잠그므로 서로 기다리다 교착하지 않는다.
+/// 바뀌는 것은 잠그는 시점뿐이다. 연산 실행·판정·거절 순서와 결과는 그대로다: 행 정책(`rows read`)을 걸어 안 보이는 행은 잠그지도
+/// 기다리지도 않고(각 연산의 `judge`와 같은 규칙), 없거나 안 보이는 행은 건너뛰어 그 연산이 자기 차례에 `MISSING_TARGET`을 낸다.
+/// 잠금 모드는 연산이 나중에 요구하는 것 중 가장 강한 것이라 더 강하게 잠그지 않는다.
+async fn lock_bundle_targets(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    ops: &[Value],
+    plan: &[OpPlan<'_>],
+    caller: &Caller,
+    knobs: &Knobs,
+    wire: IdWire,
+) -> Result<(), Reject> {
+    if knobs.skip_row_lock {
+        return Ok(());
+    }
+    let rows = bundle_target_rows(facts, ops, plan, knobs, wire);
+    // 행이 하나뿐이면 순서가 없으니 기존 동작을 그대로 둔다(잠금 시점도 바꾸지 않는다).
+    if rows.len() < 2 {
+        return Ok(());
+    }
+    // 같은 resource에서 같은 잠금 모드가 이어지는 구간을 한 문장으로 잠근다. 구간 사이에서도 `(resource, id)` 순서를 지킨다.
+    let mut groups: Vec<(&str, Vec<EntityId>, &'static str)> = vec![];
+    for (&(res, id), &lock) in &rows {
+        match groups.last_mut() {
+            Some((last_res, ids, last_lock)) if *last_res == res && *last_lock == lock => ids.push(id),
+            _ => groups.push((res, vec![id], lock)),
+        }
+    }
+    drop(rows);
+    for (res, ids, lock) in groups {
+        let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+        let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+        let vis = cx.cond(&facts["resources"][res]["rowRead"], &env).map_err(internal)?;
+        let p = cx.params.bind(Some(id_array(&ids)), id_array_cast(facts, res));
+        let sql = format!("SELECT t.id FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id{lock}", table(res));
+        let params = cx.params.values.clone();
+        typed_query(tx, sql.as_str(), &params).await.map_err(|e| db_err("묶음 대상 선잠금", e))?;
+    }
+    Ok(())
+}
+
 async fn bundle_run(
     tx: &Transaction<'_>,
     facts: &Value,
@@ -2083,6 +2175,7 @@ async fn bundle_run(
 ) -> Result<BundleResult, Reject> {
     let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![], ops: vec![] };
     let reference_locks = bundle_reference_locks(facts, ops, plan, knobs, wire);
+    lock_bundle_targets(tx, facts, ops, plan, caller, knobs, wire).await?;
     // 연산 번호 → 그 연산이 만든 행의 id. create가 아니거나 id를 못 돌려준 연산은 None이다(계획 단계가 가리키지 못하게 막았다).
     let mut made: Vec<Option<EntityId>> = Vec::with_capacity(ops.len());
     for (at, op) in ops.iter().enumerate() {

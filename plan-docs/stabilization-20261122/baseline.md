@@ -109,7 +109,7 @@
 |---|---|---|---|
 | a2, a3 | 줄 생성 → compose·`target.where` 전이 교착 | **해결됨** | `78894ef4`. 회귀 `spikes/spike-v3-write/tests/bundle_lock_order_compose_where.rs`. 실행(이번) 1 passed |
 | a4 | 줄 생성 → `target.ids` 전이(대조군) | **해결됨** | `dc68e4e6`, `824cc0e1`. `spikes/spike-v3-write/tests/expr_bundle_lock_order.rs` |
-| **a1 = LIMITS E9** | 서로 다른 순서로 같은 상품들을 건드리는 bundle 교착 | **결정 필요**, 현재 동작은 **재현됨** | 실행(이번) `PROBE_N=2 PROBE_ROUNDS=3 … a1_opposite_order_two_product_bundles`: `round=0 elapsed=17ms`, `round=1 elapsed=1179ms`, `round=2 elapsed=1180ms`, 매번 `tally={"OK": 2}`. 교착 1회 + 재시도로 둘 다 성공하되 1초 이상 든다. 3건 이상은 `concurrency.md` 3.1표(기한 초과가 흔함, 이번에 재측정 안 함). 선택지 A~D와 권고(B 검토, A 먼저)는 `concurrency.md` §5. 잠금 코드는 `spikes/spike-v3-write/src/lib.rs:2011 bundle_reference_locks`, `:2284 compose_exec`, `:2392 apply_in` → B-01 |
+| **a1 = LIMITS E9** | 서로 다른 순서로 같은 상품들을 건드리는 bundle 교착 | **부분 해결**(Track B: 시작 시 `(resource,id)` 선잠금으로 `target.ids`·compose 교착 해소, 측정 `track-b.md`. `where`·효과 경로와 락 시점 변경의 계약 수용은 `decisions/b.md` B-D1) | 실행(이번) `PROBE_N=2 PROBE_ROUNDS=3 … a1_opposite_order_two_product_bundles`: `round=0 elapsed=17ms`, `round=1 elapsed=1179ms`, `round=2 elapsed=1180ms`, 매번 `tally={"OK": 2}`. 교착 1회 + 재시도로 둘 다 성공하되 1초 이상 든다. 3건 이상은 `concurrency.md` 3.1표(기한 초과가 흔함, 이번에 재측정 안 함). 선택지 A~D와 권고(B 검토, A 먼저)는 `concurrency.md` §5. 잠금 코드는 `spikes/spike-v3-write/src/lib.rs:2011 bundle_reference_locks`, `:2284 compose_exec`, `:2392 apply_in` → B-01 |
 | a5, f1 | 실패 시 부분 커밋 없음, 동시 12건 혼합 | **해결됨**(통과) | `concurrency.md` 3.2표. 이번에 재실행하지 않음 |
 | i1~i4 | 같은 key 동시 재전송, 지문 불일치, 응답 유실 후 재생, 배포 fence | **해결됨**(통과) | `concurrency.md` 3.4. 영구 시험: `spikes/spike-v6-transport/tests/audit_bd_idem_race.rs`(`06cc9c66`), `commit_unknown_wire`, `write_extension_replay_backpressure` |
 | i5 | SERIALIZABLE `/apply`에서 `WIRE.INTERNAL` 없음 | **해결됨**(통과) | `concurrency.md` 3.4, 30라운드 |
@@ -203,7 +203,7 @@
 
 | ID | 항목 | 분류 | 추정 수정 위치 | 선행 가능한 작업 / 비고 |
 |---|---|---|---|---|
-| B-01 | 반대 순서 bundle 잠금 교착(E9 남은 부분) | 결정(재현됨) | `spikes/spike-v3-write/src/lib.rs:2011 bundle_reference_locks` 계획 단계, 선택 B면 `(resource, id)` 선잠금 | 선택지 A(문서)는 즉시 가능(`product/LIMITS.md` E9에 측정값). `a1`이 그대로 회귀 시험이다. 성공률, 교착 수, p50/p95/p99, deadline 초과율을 재는 하네스는 `concurrency_probe_http.rs`의 `PROBE` 출력에 있고 p95/p99는 없다 |
+| B-01 | 반대 순서 bundle 잠금 교착(E9 남은 부분) | **부분 해결**(Track B, `target.ids`·compose 선잠금 구현·측정. `where`·효과 경로는 지침, 선택지는 `decisions/b.md` B-D1) | `spikes/spike-v3-write/src/lib.rs:2011 bundle_reference_locks` 계획 단계, 선택 B면 `(resource, id)` 선잠금 | 선택지 A(문서)는 즉시 가능(`product/LIMITS.md` E9에 측정값). `a1`이 그대로 회귀 시험이다. 성공률, 교착 수, p50/p95/p99, deadline 초과율을 재는 하네스는 `concurrency_probe_http.rs`의 `PROBE` 출력에 있고 p95/p99는 없다 |
 | B-02 | `durable.rs:1201` 취소 확인 쿼리 오류 무시 + `:1191-1192` `let Ok else return` + `:1232` `let _ = commit` | 미해결 결함(코드 근거) | `spikes/spike-v6-transport/src/durable.rs:1189-1275` | 오류 주입(예: `lock_timeout`, 40001/40P01, 연결 끊김)으로 `CANCEL_REQUESTED` job의 최종 상태를 확인하는 RED 시험부터. `apply_idem_lookup_error.rs`의 뷰 기반 주입 기법을 재사용할 수 있다 |
 | B-03 | `/status` 비연결 오류 → `DB_UNAVAILABLE` | 근거 부족 | `spikes/spike-v6-transport/src/lib.rs:556` | 의도 확인 후 문서화 또는 분류 |
 | B-04 | 확장 `ctx.data.read/apply/create`, bundle·compose, COMMIT_UNKNOWN 경로의 오류 무시·변환 전수 | 근거 부족 | `spikes/spike-v6-transport/src/write_extension.rs`, `spikes/spike-v4-worker/src/write.rs`, `spikes/spike-v3-write/src/lib.rs` | 이번 grep(`if let Ok`, `.await.ok()`, `let _ = …execute/query`)은 `durable.rs:1201` 외 쿼리 오류 무시를 찾지 못했다. 그러나 `match`로 오류를 다른 코드로 바꾸는 경로는 grep으로 못 본다 |
