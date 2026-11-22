@@ -78,9 +78,6 @@ fn a_diagnostic_without_a_position_says_so_and_keeps_the_zero_coordinates() {
         assert_eq!(d["located"], false, "{d}");
         assert!(d.get("anchor").is_none(), "an unlocated diagnostic has no anchor: {d}");
     }
-    let too_large = failure(&"x".repeat(1024 * 1024 + 1), Form::A);
-    assert_eq!(too_large[0]["code"], "DEF.SOURCE_TOO_LARGE");
-    assert_eq!(too_large[0]["located"], false, "{}", too_large[0]);
 }
 
 #[test]
@@ -155,4 +152,147 @@ fn a_published_code_is_never_removed_from_the_registry() {
         removed.is_empty(),
         "a code that was published is gone from src/codes.rs (retire it with `status: retired`, never delete it): {removed:?}"
     );
+}
+
+#[test]
+fn an_access_to_a_transition_that_is_not_exposed_has_its_own_code() {
+    let def = |expose: &str| {
+        format!(
+            "actor Member\nresource Member {{ fields {{ id: Id }} }}\nresource Event {{\n  fields {{ id: Id; member: Member; checked: Bool }}\n  rows read when member = actor\n  transition mark {{ allow member = actor; from checked = false; to checked = true }}\n  {expose}\n  extension write run {{\n    input {{ id: Event.Id }}\n    output {{ id: Event.Id; count: Int }}\n    access Event.mark\n    effect db\n    deadline 2s\n    implementation \"write.run\"\n  }}\n}}\n"
+        )
+    };
+    assert!(load_str(&def("expose apply mark { target id; bulk maxRows 2 }"), Form::A).is_ok());
+    let ds = failure(&def(""), Form::A);
+    assert!(ds.iter().any(|d| d["code"] == "DEF.ACCESS_TARGET_NOT_EXPOSED"), "{ds:?}");
+    assert!(ds.iter().all(|d| d["code"] != "DEF.UNKNOWN_SYMBOL"), "{ds:?}");
+}
+
+#[test]
+fn a_job_access_to_a_transition_that_is_not_exposed_has_its_own_code() {
+    let source = r#"
+actor principal
+resource Event {
+  fields { id: Id; checked: Bool }
+  rows read when true
+  transition mark { allow true; from checked = false; to checked = true }
+}
+operation job run {
+  input { }
+  output { total: Int }
+  allow actor != null
+  access Event.mark
+  effect managed
+  deadline 2s
+  implementation "events.run"
+}
+"#;
+    let ds = failure(source, Form::A);
+    assert!(ds.iter().any(|d| d["code"] == "DEF.ACCESS_TARGET_NOT_EXPOSED"), "{ds:?}");
+    assert!(ds.iter().all(|d| d["code"] != "DEF.UNKNOWN_SYMBOL"), "{ds:?}");
+}
+
+fn only(ds: &[Value], code: &str) -> Value {
+    ds.iter().find(|d| d["code"] == code).cloned().unwrap_or_else(|| panic!("{code} not in {ds:?}"))
+}
+
+fn at(d: &Value) -> (Option<u64>, Option<u64>, &Value) {
+    (d["line"].as_u64(), d["column"].as_u64(), &d["located"])
+}
+
+#[test]
+fn a_source_over_the_size_limit_points_at_the_byte_that_crosses_it() {
+    let limit = 1024 * 1024;
+    let ds = failure(&format!("{}\n{}", "a".repeat(limit - 10), "b".repeat(100)), Form::A);
+    let d = only(&ds, "DEF.SOURCE_TOO_LARGE");
+    // The first line holds limit-10 bytes plus the newline; the limit is crossed 10 characters into the second line.
+    assert_eq!(at(&d), (Some(2), Some(10), &Value::Bool(true)), "{d}");
+    assert_eq!(d["anchor"], "line:2:col:10");
+    // Multibyte characters are counted as characters, and the crossing character is the one that does not fit.
+    let ds = failure(&"가".repeat(limit / 3 + 2), Form::A);
+    let d = only(&ds, "DEF.SOURCE_TOO_LARGE");
+    assert_eq!(at(&d), (Some(1), Some(limit as u64 / 3 + 1), &Value::Bool(true)), "{d}");
+}
+
+#[test]
+fn a_second_block_in_an_embedded_file_points_at_the_second_block() {
+    let two = format!(
+        "{E_TS}\n{}",
+        E_TS.replacen("import { aip } from \"@aip/define\"\n", "", 1).replacen("export default aip", "export const second = aip", 1)
+    );
+    let line = (E_TS.lines().count() + 2) as u64 + 1;
+    let ds = failure(&two, Form::ETs);
+    let d = only(&ds, "DEF.MULTIPLE_BLOCKS");
+    assert_eq!(d["located"], true, "{d}");
+    assert!(d["line"].as_u64().is_some_and(|l| l >= line), "the second block starts after line {line}: {d}");
+    let none = failure("import { aip } from \"@aip/define\"\n", Form::ETs);
+    assert_eq!(only(&none, "DEF.NO_BLOCK")["located"], false, "there is nothing to point at when no block exists");
+}
+
+#[test]
+fn a_second_define_in_a_host_literal_file_points_at_the_second_define() {
+    let two = format!("{H_TS}\nexport const again = define({{}})\n");
+    let ds = failure(&two, Form::HTs);
+    let d = only(&ds, "DEF.MULTIPLE_BLOCKS");
+    assert_eq!(d["located"], true, "{d}");
+    // The fixture ends with a newline, then the blank line of the format string, then the new statement.
+    assert_eq!((d["line"].as_u64(), d["column"].as_u64()), (Some(H_TS.lines().count() as u64 + 2), Some(22)), "{d}");
+}
+
+#[test]
+fn a_block_without_its_official_import_points_at_the_first_use() {
+    let missing = E_TS.replacen("import { aip } from \"@aip/define\"\n", "", 1);
+    let ds = failure(&missing, Form::ETs);
+    let d = only(&ds, "DEF.WRONG_BINDING");
+    assert_eq!(at(&d), (Some(2), Some(16), &Value::Bool(true)), "{d}");
+}
+
+#[test]
+fn a_diagnostic_about_the_whole_definition_stays_without_a_position() {
+    // Nothing in the text is wrong: the definition lacks a part. The 0:0 is deliberate (decision D-E3 keeps it open).
+    for (src, form, code) in [("", Form::A, "DEF.MISSING_ITEM"), ("", Form::ETs, "DEF.NO_BLOCK"), ("", Form::HTs, "DEF.NO_BLOCK")] {
+        let ds = failure(src, form);
+        assert_eq!(only(&ds, code)["located"], false, "{code}");
+    }
+}
+
+#[test]
+fn a_bad_literal_points_at_the_literal() {
+    let src = "actor Member\nresource Member {\n  fields { id: Id; email: Email; n: Int }\n  rows read when email = \"not-an-email\"\n}\nresource Note {\n  fields { id: Id; owner: Member; d: Date }\n  rows read when d = \"2024-99-99\"\n}\n";
+    let ds = failure(src, Form::A);
+    let bad: Vec<&Value> = ds.iter().filter(|d| d["code"] == "DEF.BAD_VALUE").collect();
+    assert_eq!(bad.len(), 2, "{ds:?}");
+    // The literal, not the start of the definition: `  rows read when email = ` is 25 characters, `  rows read when d = ` is 21.
+    assert_eq!((bad[0]["line"].as_u64(), bad[0]["column"].as_u64(), &bad[0]["located"]), (Some(4), Some(26), &Value::Bool(true)), "{}", bad[0]);
+    assert_eq!((bad[1]["line"].as_u64(), bad[1]["column"].as_u64(), &bad[1]["located"]), (Some(8), Some(22), &Value::Bool(true)), "{}", bad[1]);
+    // A condition that is not a Bool: the literal 5 is where the error is.
+    let ds = failure("actor Member\nresource Member {\n  fields { id: Id }\n  rows read when 5\n}\n", Form::A);
+    let d = only(&ds, "DEF.TYPE_MISMATCH");
+    assert_eq!((d["line"].as_u64(), d["column"].as_u64()), (Some(4), Some(18)), "{d}");
+}
+
+fn read_extension(access: &str) -> String {
+    let stats = "  extension read stats {\n    input { clubId: Club.Id }\n    output { approvedApplicants: Int }\n    access Apply.approvedCount\n";
+    assert_eq!(A.matches(stats).count(), 1, "the fixture extension changed");
+    A.replacen(stats, &format!("  extension read stats {{\n    input {{ clubId: Club.Id }}\n    output {{ approvedApplicants: Int }}\n    access Apply.approvedCount, {access}\n"), 1)
+}
+
+#[test]
+fn a_read_extension_may_declare_the_resources_it_reads() {
+    let without = load_str(A, Form::A).unwrap().execution;
+    let stats = &without["resources"]["Recruitment"]["extensions"]["stats"];
+    assert!(stats.get("reads").is_none(), "a definition that declares nothing keeps the contract it had: {stats}");
+
+    let with = load_str(&read_extension("read.Club, read.Recruitment"), Form::A).unwrap().execution;
+    let stats = &with["resources"]["Recruitment"]["extensions"]["stats"];
+    assert_eq!(stats["reads"], serde_json::json!(["Club", "Recruitment"]), "sorted, and apart from the aggregate bindings");
+    assert_eq!(stats["access"], without["resources"]["Recruitment"]["extensions"]["stats"]["access"], "`access` keeps only aggregates and grants");
+    assert_ne!(spike_v1_fixture::digest(&with), spike_v1_fixture::digest(&without), "a declared read is part of the contract");
+}
+
+#[test]
+fn a_read_declaration_is_checked_like_the_one_of_a_write_extension() {
+    let ds = failure(&read_extension("read.Nothing"), Form::A);
+    assert_eq!(ds[0]["code"], "DEF.UNKNOWN_SYMBOL", "{ds:?}");
+    let ds = failure(&read_extension("read.Club, read.Club"), Form::A);
+    assert!(ds.iter().any(|d| d["code"] == "DEF.DUPLICATE"), "{ds:?}");
 }

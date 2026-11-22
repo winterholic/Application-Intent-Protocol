@@ -618,6 +618,13 @@ pub static REGISTRY: &[Info] = &[
         "",
     ),
     i(
+        "DEF.ACCESS_TARGET_NOT_EXPOSED",
+        "an extension or job `access` names a transition that is not exposed",
+        "A write extension or a job may call only a transition that the definition exposes with `expose apply`. A transition that is not exposed, or that does not exist, is not a grantable capability. Before this code existed the same condition was reported as DEF.UNKNOWN_SYMBOL, which also means other things.",
+        "Add `expose apply <transition> { target id; bulk maxRows N }` to the resource, or remove the `access` entry, or name a transition that is exposed.",
+        "actor Member\nresource Member { fields { id: Id } }\nresource Event {\n  fields { id: Id; member: Member; checked: Bool }\n  rows read when member = actor\n  transition mark { allow member = actor; from checked = false; to checked = true }\n  expose apply mark { target id; bulk maxRows 2 }\n  extension write run {\n    input { id: Event.Id }\n    output { id: Event.Id; count: Int }\n    access Event.mark\n    effect db\n    deadline 2s\n    implementation \"write.run\"\n  }\n}\n",
+    ),
+    i(
         "DEF.EXT_INPUT_UNBOUND",
         "an access input is not received by the extension",
         "An extension may use an access only if every input that access needs is an input of the extension with the same type.",

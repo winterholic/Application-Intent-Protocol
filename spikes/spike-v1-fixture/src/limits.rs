@@ -9,7 +9,9 @@ pub(crate) const MAX_LITERAL_DEPTH: usize = 64;
 
 pub(crate) fn check_source(src: &str) -> Result<(), Diag> {
     if src.len() > MAX_SOURCE_BYTES {
-        Err(Diag::new("DEF.SOURCE_TOO_LARGE", format!("정의가 {} byte hard ceiling을 넘음", MAX_SOURCE_BYTES), Span::default()))
+        // The first character that does not fit under the ceiling: the place where the definition has to be cut.
+        let at = src.char_indices().find(|(i, c)| i + c.len_utf8() > MAX_SOURCE_BYTES).map_or(MAX_SOURCE_BYTES, |(i, _)| i);
+        Err(Diag::new("DEF.SOURCE_TOO_LARGE", format!("정의가 {} byte hard ceiling을 넘음", MAX_SOURCE_BYTES), crate::host::span_at(src, at)))
     } else {
         Ok(())
     }

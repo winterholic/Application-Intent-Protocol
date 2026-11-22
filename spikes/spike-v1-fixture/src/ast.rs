@@ -271,11 +271,12 @@ pub enum Expr {
     Cmp(&'static str, Box<Expr>, Box<Expr>),
     In(Box<Expr>, Vec<Expr>),
     Path(Vec<String>, Span),
-    Null,
-    Now,
-    Int(i64),
-    Bool(bool),
-    Str(String),
+    /// The literals carry their position so that a diagnostic about one points at it.
+    Null(Span),
+    Now(Span),
+    Int(i64, Span),
+    Bool(bool, Span),
+    Str(String, Span),
     Call(String, Vec<Expr>, Span),
     Exists(String, Box<Expr>, Span),
     /// Server-side scalar selection from the latest matching row. Only valid in update effect values and target matches.

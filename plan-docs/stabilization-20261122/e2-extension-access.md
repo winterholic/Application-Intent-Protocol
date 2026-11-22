@@ -1,8 +1,8 @@
 # 확장의 권한 선언과 실제 `ctx.data.*` 접근 (Track E2)
 
-- 기준: `stab/e-20261122`(origin/main `b818613d` 위), 측정일 2026-11-22. 근거 문서: `plan-docs/hardening-1.0/policy.md`의 R1(커밋 `f0b1b31b`, 프로브 C7·C8), baseline E-02·E-03.
+- 기준: `stab/e-20261122`, 최종 통합 때 `origin/main` `0e3f0c80` 위로 rebase; 측정일 2026-11-22. 근거 문서: `plan-docs/hardening-1.0/policy.md`의 R1(커밋 `f0b1b31b`, 프로브 C7·C8), baseline E-02·E-03.
 - **이 문서는 확장 ABI(ctx 호출 형태, `access` 키 규칙, 응답 모양)를 1.0 안정 계약으로 정하지 않는다.** 현재 구현이 무엇을 강제하는지의 기록이고, 확장 ABI는 확정 전이다(OI-X2).
-- 결과 요약: 쓰기 확장과 job은 `ctx` 호출을 선언한 grant로 강제한다. **읽기 확장의 `ctx.data.read`만 선언 없이 `expose read`가 있는 어느 resource든 읽는다.** 이는 우회가 아니다(호출자 정책이 그대로 적용된다, R1·C7). 이번에는 코드를 바꾸지 않았다. 이유는 3절.
+- 결과 요약: 쓰기 확장과 job은 `ctx` 호출을 선언한 grant로 강제한다. 읽기 확장의 `ctx.data.read`는 선언 문법이 없어 `expose read`가 있는 어느 resource든 읽었다(우회는 아니다, 호출자 정책이 그대로 적용된다, R1·C7). **호환을 유지하는 opt-in 선언 `access read.<Resource>`를 구현했다**(3절): 선언하지 않은 확장은 그대로 동작하고, 하나라도 선언한 확장만 목록 밖 읽기가 거부된다. 필수로 만들지는 않았다.
 
 ## 1. 종류별로 무엇을 선언하고 어디서 강제하는가
 
@@ -11,7 +11,7 @@
 | 종류 | `ctx` 호출 | 선언 | 강제하는 곳 | 선언이 없으면 |
 |---|---|---|---|---|
 | 읽기 확장, 읽기 operation | `ctx.data.aggregate(R, name, input)` | `access R.name`(공개한 집계, 그 입력을 확장 입력에서 같은 타입으로 받아야 함 `DEF.EXT_INPUT_UNBOUND`) | `lib.rs` `serve_call`의 `"aggregate"` | `WIRE.ACCESS_NOT_DECLARED`. 입력이 묶인 값과 다르면 `WIRE.INPUT_BINDING` |
-| 같은 종류 | `ctx.data.read(query)` | **선언 문법이 없다**(`access read.R`는 `DEF.UNKNOWN_SYMBOL`) | `serve_call`의 `"read"`: `expose read`가 있는 resource인지(`WIRE.NOT_EXPOSED`), 질의가 공개 읽기 계약 안인지, 호출자 행·필드 정책(`plan_read_in`) | **거부되지 않는다.** 정책이 허용하는 만큼 읽힌다 |
+| 같은 종류 | `ctx.data.read(query)` | **선택**: `access read.R`(opt-in, 3절). 선언하지 않아도 된다 | `serve_call`의 `"read"`: 선언이 있으면 목록(`Grant.reads`), 그리고 `expose read`가 있는 resource인지(`WIRE.NOT_EXPOSED`), 질의가 공개 읽기 계약 안인지, 호출자 행·필드 정책(`plan_read_in`) | 선언이 하나도 없으면 **거부되지 않는다**(정책이 허용하는 만큼 읽힌다). 선언이 있고 목록 밖이면 `WIRE.ACCESS_NOT_DECLARED` |
 | 같은 종류 | `ctx.data.apply`, `create` | 없음(읽기 확장은 쓸 수 없다) | `serve_call` | `apply`는 `WIRE.ACCESS_DENIED`, 그 밖은 `WIRE.UNSUPPORTED` |
 | 같은 종류 | `ctx.mongo.*`, `ctx.redis.*` | `access mongo.<컬렉션>`, `access redis.<키 또는 접두*>` | `capability.rs`의 grant 검사 | `WIRE.ACCESS_NOT_DECLARED` |
 | 읽기 확장, operation(읽기) | 호출 횟수 | — | `lib.rs` `MAX_READ_CTX_CALLS` 64 | `WIRE.CALL_LIMIT` |
@@ -22,7 +22,7 @@
 | 쓰기 확장 | 호출 횟수 | — | `write.rs` `MAX_CTX_CALLS` 20 | `WIRE.CALL_LIMIT` |
 | job(`operation` 종류 job) | `read`, `aggregate`, `apply`, mongo, redis | `access read.R`, `apply.R.t`, `mongo.*`, `redis.*`(값 `true`) | `lib.rs` `job_capability_granted` | `WIRE.ACCESS_NOT_DECLARED` |
 
-읽기 확장의 `read`만 비대칭이다. 쓰기 확장의 `read.R`가 선언 대상인 것과 다르다.
+읽기 확장의 `read`만 선언이 선택이다. 쓰기 확장의 `read.R`는 선언 대상(필수)이다.
 
 ## 2. 실제 코드와의 비교 (텍스트 스캔)
 
@@ -43,24 +43,26 @@
 
 `policy-probes.mjs`의 C7·C8(PostgreSQL 17)이 가려진 필드, 다른 테넌트 행, `expose read` 없는 resource, 루트 없는 resource, 계약 밖 질의, 선언 안 한 집계, 쓰기 연산을 모두 공개 `/read`와 같이 거부하거나 가리는 것을 보였다. 위험은 우회가 아니라 계약에 적히지 않는 의존이다. MySQL 방언은 코드 읽기로만 같은 경로(`plan_read_in`)라고 확인했다(`policy.md` 한계 항목).
 
-### 3.2 이번에 구현하지 않은 이유
+### 3.2 구현한 것 (옵트인, 호환 유지)
 
-호환을 유지하는 개선은 R1의 (a) opt-in이다. 읽기 확장에서도 `access read.<Resource>`를 받아들이고, 하나라도 선언한 확장에서만 목록 밖 읽기를 거부한다. 이 변경은 세 군데를 함께 바꿔야 의미가 있다.
+`policy.md` R1의 (a)를 구현했다. 확장 ABI를 안정 계약으로 정하는 것이 아니다. 현재 동작의 기록이다.
 
-1. `sema.rs`의 `extension` 읽기 분기: `read.<Resource>`를 받아 facts의 `access`에 싣는다. **`sema.rs`는 Track A 병합 완료 메시지 전에는 건드리지 않는 규칙이라 지금 수정할 수 없다.**
-2. `spike-v4-worker`의 `serve_call` `"read"`: 선언이 하나라도 있으면 목록으로 거른다. 선언은 facts에 생겨야 하므로 1 없이는 실행 경로가 없다. 런타임만 먼저 넣으면 정의로는 켤 수 없는 코드가 된다.
-3. SDK 타입·문서·`--dev-checks` 경고: 선언이 없는 읽기 확장에 "읽는 resource를 선언하라"는 경고는 선언 문법이 생긴 뒤에야 조치 가능하다. 문법 없이 경고만 내면 고칠 방법이 없는 소음이다(R1의 (c)가 어렵다고 적은 이유와 같다).
+- 문법: 읽기 확장의 `access`에 `read.<Resource>`를 쓴다(쓰기 확장과 같은 형태, 쉼표로 이어 씀). 예: `access Apply.approvedCount, read.Recruitment`.
+- 검사(`sema.rs`의 `extension` 읽기 분기): 대상 resource가 없으면 `DEF.UNKNOWN_SYMBOL`, 같은 선언을 두 번 쓰면 `DEF.DUPLICATE`, resource가 `read`라는 이름이면 `DEF.AMBIGUOUS`.
+- 계약: 선언이 있을 때만 확장 계약에 `reads`(정렬된 resource 이름 배열)가 생긴다. `access`(집계 binding과 mongo/redis grant)에는 섞지 않았다. 선언이 없는 정의의 facts는 바뀌지 않는다(저장소 정의 195개 `service check` 출력 비교, 차이 0).
+- 실행(`spike-v4-worker`의 `serve_call` `"read"`): `reads`가 있으면 목록 밖 resource의 읽기를 DB 계획 전에 `WIRE.ACCESS_NOT_DECLARED`로 거부한다. 없으면 이전과 같다.
+- SDK: 생성기는 `access` 키만 쓰므로 생성물이 달라지지 않는다(recruitment 정의로 Python·TS 생성물 비교, 지문 마스킹 후 차이 0. `reads`는 `executionDigest`에는 들어간다).
+- `--dev-checks` 경고는 넣지 않았다. 정의만 봐서는 어느 읽기 확장이 `ctx.data.read`를 부르는지 알 수 없어, 선언 없는 읽기 확장 전부(저장소에 26개)에 경고를 내게 되고 집계·mongo만 쓰는 확장에는 거짓 양성이다.
 
-### 3.3 sema.rs 해제 뒤의 구현 순서 (옵트인, 호환 유지)
+시험: `spikes/spike-v1-fixture/tests/diagnostic_fields.rs`의 `a_read_extension_may_declare_the_resources_it_reads`, `a_read_declaration_is_checked_like_the_one_of_a_write_extension`(DB 불필요), `spikes/spike-v4-worker/tests/read_extension_declared_reads.rs`(Node·Python 실제 IPC, DB 없는 호스트).
 
-1. `sema.rs:2896`의 읽기 분기 루프(`for (rn, an) in &x.access`)에서 `rn == "read"`를 쓰기 분기와 같은 방식으로 받는다(대상이 `expose read`가 있는 resource인지 확인, 중복은 `DEF.DUPLICATE`). facts에는 별도 키(예: `reads`)로 싣고 `access`(집계 binding 맵)와 섞지 않는다. 섞으면 `Grant.access: HashMap<String, Map<..>>`의 값 타입과 어긋난다.
-2. `serve_call`의 `"read"`: `reads`가 비어 있지 않으면 `name`이 목록에 없을 때 `WIRE.ACCESS_NOT_DECLARED`.
-3. 시험: (가) 선언 없는 기존 읽기 확장은 동작 불변(`spike-v4-worker/tests/read_wire.rs`, FaceReview `homeSearch`), (나) 선언한 확장이 목록 밖 resource를 읽으면 거부, (다) 선언한 resource는 공개 `/read`와 같은 결과(C7과 같은 질의).
-4. 계약 지문은 `reads`를 선언한 정의에서만 바뀐다(기존 정의는 불변). 확인 필요: 이 값이 `executionDigest`에 들어가는 경로.
-5. `--dev-checks`에 "읽기 확장이 `read.*`를 선언하지 않음" 경고를 더한다(A 소유 v11의 좁은 영역, 같은 시점).
-6. `ctx.d.ts`와 SDK 문서에 "읽기 확장의 `read.<R>` 선언은 선택, 하나라도 선언하면 강제"를 적는다. 확장 ABI를 확정하는 문구는 쓰지 않는다.
+### 3.3 아직 하지 않은 것
 
-선택지 비교와 추천은 `decisions/e.md` D-E7.
+- 선언을 필수로 만드는 일((b), FaceReview 4건이 깨진다)과 FaceReview 정의가 `read.Video` 등을 선언하게 고치는 일. 후자는 `product/tests/fixtures/facereview-mysql/`(다른 Track과 겹칠 수 있는 고정물)라 하지 않았다. 선언을 더한 FaceReview 정의가 통과하는 것은 임시 파일로 확인했다(`service check` ok).
+- `spec/definition-syntax.md`(문법 카드)에 `read.<R>`/`create.<R>`를 적는 일. 카드는 쓰기 확장의 두 형태도 아직 적지 않았고, 카드를 바꾸면 생성 문서 골든이 다시 바뀐다.
+- 공용 SDK 문서·`product/` 문서의 설명. 이번에는 `ctx.d.ts` 주석만 고쳤다.
+
+선택지 비교와 추천은 `decisions/e.md` D-E7이다. D-E7은 소유자 결정으로 남아 있고, 위 구현은 그 결정이 (a)일 때의 변경이다.
 
 ## 4. 쓰기 확장의 미사용 선언 경고 (E-03)
 

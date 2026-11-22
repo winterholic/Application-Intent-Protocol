@@ -66,7 +66,9 @@ pub fn uses(src: &str, toks: &[T], host: Host, name: &str) -> Result<Vec<usize>,
             Host::Ts => format!("import {{ {name} }} from \"{TS_MODULE}\""),
             Host::Py => format!("from aip.define import {name}"),
         };
-        return Err(Diag::new("DEF.WRONG_BINDING", format!("`{what}`가 정확히 한 번 있어야 함"), Span::default()));
+        // A second import is the one to remove; with none, the first use is the place that needs it.
+        let at = imp.get(1).map_or(toks[v[0]].start, |(s, _)| toks[*s].start);
+        return Err(Diag::new("DEF.WRONG_BINDING", format!("`{what}`가 정확히 한 번 있어야 함"), span_at(src, at)));
     }
     Ok(v)
 }
@@ -76,7 +78,9 @@ pub fn extract(src: &str, host: Host) -> Result<Block, Diag> {
     let src = normalized.as_ref();
     let toks = tokenize(src, host)?;
     let mut blocks = vec![];
-    for i in uses(src, &toks, host, "aip")? {
+    let found = uses(src, &toks, host, "aip")?;
+    let second = found.get(1).map(|&i| span_at(src, toks[i].start));
+    for i in found {
         let at = span_at(src, toks[i].start);
         let (body, next) = match host {
             Host::Ts => match toks.get(i + 1).map(|t| &t.k) {
@@ -118,6 +122,6 @@ pub fn extract(src: &str, host: Host) -> Result<Block, Diag> {
     match blocks.len() {
         1 => Ok(blocks.pop().unwrap()),
         0 => Err(Diag::new("DEF.NO_BLOCK", "AIP 블록 없음", Span::default())),
-        _ => Err(Diag::new("DEF.MULTIPLE_BLOCKS", "파일당 블록 하나만 지원", Span::default())),
+        _ => Err(Diag::new("DEF.MULTIPLE_BLOCKS", "파일당 블록 하나만 지원", second.unwrap_or_default())),
     }
 }

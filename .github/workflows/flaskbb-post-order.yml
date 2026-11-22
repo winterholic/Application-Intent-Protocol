@@ -180,7 +180,7 @@ jobs:
           set -e
           printf 'TOPIC_MOVE_COMPILER_NEGATIVE source_revision=%s exit=%s output=%s\n' "$GITHUB_SHA" "$status" "$negative"
           test "$status" -eq 1
-          printf '%s' "$negative" | python3 -c 'import json,sys; result=json.load(sys.stdin); assert result["ok"] is False; assert any(d["code"] == "DEF.UNKNOWN_SYMBOL" and "expose apply" in d["message"] for d in result["diagnostics"]); print("TOPIC_MOVE_COMPILER_BOUNDARY_OK code=DEF.UNKNOWN_SYMBOL")'
+          printf '%s' "$negative" | python3 -c 'import json,sys; result=json.load(sys.stdin); assert result["ok"] is False; assert any(d["code"] == "DEF.ACCESS_TARGET_NOT_EXPOSED" for d in result["diagnostics"]); print("TOPIC_MOVE_COMPILER_BOUNDARY_OK code=DEF.ACCESS_TARGET_NOT_EXPOSED")'
           target/debug/aip service check porting/flaskbb/tests/fixtures/topic-move-internal-grant-repro.aip
       - name: Verify import approval and SQL emission
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s porting/flaskbb/tests -p test_post_order_import.py -v

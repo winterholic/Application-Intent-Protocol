@@ -77,7 +77,11 @@ export interface Data {
     expect?: Readonly<Record<string, unknown>>,
     input?: Readonly<Record<string, unknown>>,
   ): Promise<ApplyResult>;
-  /** A public read of the caller's rows (access `read.<Resource>`); inside a write extension it sees the transaction's own writes. */
+  /**
+   * A public read of the caller's rows (access `read.<Resource>`); inside a write extension it sees the transaction's own writes.
+   * A read extension may list the resources it reads with `access read.<Resource>`: when it lists any, a read of another resource ends in
+   * `access_not_declared`; when it lists none, it may read any resource with `expose read` (the caller's policies apply either way).
+   */
   read(query: ReadQuery): Promise<ReadResult>;
   /**
    * One row of the resource's `expose create` as the caller (access `create.<Resource>`): the create's field list, `allow`

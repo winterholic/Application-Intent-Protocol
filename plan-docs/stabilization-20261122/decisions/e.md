@@ -6,11 +6,11 @@
 |---|---|---|---|
 | D-E1 | 진단 JSON 장기 호환성 약속의 범위 | 약속 없음. 기계 필드는 시험으로 고정 | A(최소 계약) |
 | D-E2 | `schema` 버전 필드(G4) | 넣지 않음 | 약속 범위(D-E1)가 정해지면 같이 결정. A면 1.0 전에 추가 |
-| D-E3 | 위치 없는 진단의 표현(G1) | 0:0 유지 + `located:false` 추가 | 현행 유지, 좌표 채우기는 별도 |
-| D-E4 | 문구로 갈리는 코드의 분리(G9) | 하지 않음(sema.rs 대기) | 새 코드 추가 방식으로 한 번에 |
+| D-E3 | 위치 없는 진단의 표현(G1) | 0:0 유지 + `located:false` 추가. 위치를 알 수 있는 사용처는 실제 좌표로 채움(결정 불필요 범위) | 현행 유지 |
+| D-E4 | 문구로 갈리는 코드의 분리(G9) | `DEF.ACCESS_TARGET_NOT_EXPOSED` 적용됨(2라운드). flaskbb workflow 전환은 F1 | (a) 새 코드 추가(적용된 방식) |
 | D-E5 | 정의 오류가 아닌 실패 코드 62종(G5) | `reason`만 추가 | (나) 잠정 유지 + 후속 (가) |
 | D-E6 | `BrokenPipe`를 종료 0으로 처리(G10) | 그대로 | 문서화만 |
-| D-E7 | 읽기 확장 무선언 읽기(R1) | 그대로 | (a) opt-in |
+| D-E7 | 읽기 확장 무선언 읽기(R1) | (a) opt-in `access read.<Resource>` 구현됨(선언 안 한 확장은 불변) | (a) opt-in |
 | D-E8 | 쓰기 확장의 미사용 grant 경고 | 하지 않음 | 실행 중 관측으로, 우선순위 낮음 |
 
 ## D-E1 진단 JSON 장기 호환성 약속
@@ -59,11 +59,11 @@
 
 - (a) 0:0을 유지하고 `located:false`를 더한다. **구현했다.** 장점은 기존 필드 값이 하나도 바뀌지 않는다(before/after 비교에서 기존 필드 125개 차이 0, `track-e.md`). 단점은 `line`을 그대로 쓰는 소비자는 여전히 0을 본다.
 - (b) 1:1로 바꾸고 `located:false`를 더한다. 장점은 `line`·`column`이 항상 1 이상. 단점은 기존 값이 바뀌어 0:0을 "위치 없음"으로 읽던 소비자가 있으면 깨지고, 실제 1:1 진단과 `line`만으로는 구분되지 않는다.
-- (c) 가능한 진단에 실제 좌표를 채운다(빈 정의의 "actor 선언 필요"는 파일 시작, 블록 없음은 그 형식의 의미 있는 위치 등). 장점은 가장 정확하다. 단점은 `sema.rs`와 `extract.rs`·`hlit.rs`를 건드린다.
+- (c) 가능한 진단에 실제 좌표를 채운다. 장점은 가장 정확하다. **위치를 알 수 있는 곳은 채웠다**(아래). 위치가 정의되지 않는 곳(`actor` 선언 없음, 블록 없음, 암호화 런타임 게이트)은 채울 좌표가 없어 0:0과 `located:false`로 남는다.
 
-**추천.** (a)를 유지한다. (c)는 위치가 정말 정의 가능한 진단(`DEF.NO_BLOCK`처럼 파일의 어느 곳을 가리킬 수 있는 것)만 따로 한다. (b)는 권하지 않는다.
+**추천.** (a)를 유지한다. (b)는 권하지 않는다.
 
-**코드 변경 범위.** (a)는 끝났다. (c)는 `limits.rs:12`, `extract.rs:69,120-121`, `hlit.rs:217-218`, `sema.rs:182,283`과 `span_of` 대체값. `sema.rs` 해제 뒤.
+**코드 변경 범위.** (a)는 끝났다. (c)의 소유자 결정이 필요 없는 부분도 끝났다(2라운드): 리터럴이 span을 가져 잘못된 리터럴(`email = "x"`, `d = "2024-99-99"`, 조건이 숫자 `5`)이 0:0 대신 리터럴을 가리킨다. `DEF.SOURCE_TOO_LARGE`는 상한을 넘기는 첫 문자, `DEF.MULTIPLE_BLOCKS`는 두 번째 `aip`/`define`, `DEF.WRONG_BINDING`은 남는 import 또는 첫 사용을 가리킨다. 남은 0:0: `DEF.MISSING_ITEM`(actor 선언 없음), `DEF.NO_BLOCK`, `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`. 이 셋이 "표현 자체를 바꿀지"(1:1 등)의 대상이다.
 
 **기존 소비자 영향.** (a) 없음. (b)는 위 단점. (c)는 위치 없음이 줄어드는 방향이라 `located`를 읽는 소비자에게 유리하고, 0:0만 읽던 소비자는 값이 바뀐다.
 
@@ -71,17 +71,17 @@
 
 **문제.** 저장소 안 소비자가 `message` 부분 문자열로 오류 종류를 가른다. `DEF.UNKNOWN_SYMBOL`은 서로 다른 조치를 요구하는 여러 상황을 덮는다.
 
-**재현 근거.** `.github/workflows/flaskbb-post-order.yml:213`의 `"expose apply" in d["message"]`. 발생지는 `sema.rs` `extension`의 `self.d("DEF.UNKNOWN_SYMBOL", format!("쓰기 access `{rn}.{tn}`는 공개된 전이(expose apply)여야 함"), x.span)`(`sema.rs`의 쓰기 확장 분기). 같은 코드가 actor 대상(`sema.rs:281`), enum 값(`sema.rs:520`) 등에서도 난다(G9). 남은 코드별 발생지 수는 `diagnostics-fields.md` 7절.
+**재현 근거.** `.github/workflows/flaskbb-post-order.yml:183`에서 `DEF.UNKNOWN_SYMBOL`과 `"expose apply" in d["message"]`를 함께 검사한다. 발생지는 `sema.rs`의 쓰기 extension/job access이며 현재 둘 다 `DEF.ACCESS_TARGET_NOT_EXPOSED`를 낸다. 같은 코드 `DEF.UNKNOWN_SYMBOL`은 actor 대상(`sema.rs:281`), enum 값(`sema.rs:520`) 등에서 계속 사용된다(G9). 남은 코드별 발생지 수는 `diagnostics-fields.md` 7절.
 
 **선택지.**
 
-- (a) 새 코드를 추가하되(예: `DEF.ACCESS_TARGET_NOT_EXPOSED`) 그 자리의 출력 코드를 새 코드로 바꾸고 flaskbb CI를 코드 비교로 옮긴다. 장점은 문구 의존이 사라진다. 단점은 그 자리에서 `DEF.UNKNOWN_SYMBOL`을 매칭하던 소비자가 깨진다(저장소 안에는 이 CI 하나).
+- (a) 새 코드를 추가하되(`DEF.ACCESS_TARGET_NOT_EXPOSED`) 그 자리의 출력 코드를 새 코드로 바꾸고 flaskbb CI를 코드 비교로 옮긴다. **적용했다**(2라운드). 장점은 문구 의존이 사라진다. 단점은 그 자리에서 `DEF.UNKNOWN_SYMBOL`을 매칭하던 소비자가 깨진다(저장소 안에는 이 CI 하나).
 - (b) 기존 진단은 그대로 두고 새 선택 필드 `reason`(`ACCESS_TARGET_NOT_EXPOSED`)을 더해 CI가 그 필드를 본다. 장점은 코드 값이 안 바뀐다. 단점은 코드가 두 겹(코드와 reason)이고 `explain-code`가 reason을 설명하지 못한다.
 - (c) 하지 않는다.
 
 **추천.** (a). `diagnostics-contract.md` 5.1절 8번이 이 방식(새 코드 추가 후 소비자 전환, 한 번만)을 정하고 있다. (b)는 `reason`이 이미 비정의 실패에서 같은 역할을 하는 것과 일관되지만, 정의 오류는 코드 레지스트리가 설명의 중심이라 코드가 맞다.
 
-**코드 변경 범위.** `sema.rs`(출력 코드 한 줄), `codes.rs`(항목 추가, 시험이 "발생지 없는 코드"를 막으므로 같은 커밋), `flaskbb-post-order.yml:213`(F1 소유, 연결 요청). 같은 시점에 `sema.rs` 해제가 필요하다. 준비한 변경: `decisions/e-g9-ready.patch`(아래 참고).
+**코드 변경 범위.** `sema.rs`의 두 자리(쓰기 확장 access, job access), `codes.rs`(항목 추가), 생성 문서 골든 1회. 적용 결과: 저장소 정의 195개를 `--dev-checks` 유무로 이전·이후 바이너리에 먹인 390회 호출에서 달라진 것은 `porting/flaskbb/tests/fixtures/topic-move-private-grant-repro.aip`의 `code`, `explain`, `help`뿐이다(`message`는 그대로). `.github/workflows/flaskbb-post-order.yml`은 F1 소유라 바꾸지 않았다. 필요한 diff는 `track-e.md` 7절.
 
 **기존 소비자 영향.** (a)는 위 단점. 다른 소비자는 코드가 `DEF.UNKNOWN_SYMBOL`일 때 그 자리를 구분하지 않고 쓰는 경우뿐이며 저장소에서는 찾지 못했다(`grep` 기준).
 
@@ -123,7 +123,7 @@
 
 **추천.** (a). (b)는 FaceReview 4건이 `WIRE.ACCESS_NOT_DECLARED`로 깨져 호환이 깨진다(이전 시도 브랜치가 퇴보로 판정된 이유). (c)는 선언 문법 없이는 조치할 수 없는 경고다. 확장 ABI를 안정 계약으로 확정하는 결정이 아니다(OI-X2는 그대로).
 
-**코드 변경 범위.** `sema.rs`의 읽기 확장 분기(`:2896`), `spike-v4-worker/src/lib.rs`의 `serve_call` `"read"`, `ctx.d.ts`·SDK 문서, v11 `--dev-checks` 경고. 순서와 시험은 `e2-extension-access.md` 3.3절. `sema.rs` 해제 뒤.
+**코드 변경 범위.** 구현했다(2라운드): `sema.rs`의 읽기 확장 분기, `spike-v4-worker/src/lib.rs`의 `Grant.reads`와 `serve_call` `"read"`, `ctx.d.ts` 주석. 시험과 회귀는 `e2-extension-access.md` 3.2절. `--dev-checks` 경고와 문법 카드는 하지 않았다(같은 문서 3.2·3.3절).
 
 **기존 소비자 영향.** (a)는 선언하지 않은 확장에 변화가 없다. 선언한 확장만 목록 밖 읽기가 거부된다.
 
@@ -140,7 +140,3 @@
 **코드 변경 범위.** (b)는 worker 호스트의 grant 사용 기록과 보고 경로. 저장 위치·보존 범위 결정이 필요하다.
 
 **기존 소비자 영향.** 없음(관측만).
-
-## 준비한 변경 파일
-
-- `decisions/e-g9-ready.patch`: D-E4(a)의 `sema.rs`·`codes.rs` 변경. 현재 `origin/main` 위에서 `git apply --check`와 `diagnostics`·`diagnostic_fields` 시험 통과를 확인했다(`track-e.md`). `sema.rs`가 열리기 전에는 적용하지 않는다. flaskbb workflow의 전환은 F1에게 요청한다.

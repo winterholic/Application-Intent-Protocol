@@ -1,6 +1,6 @@
 # Track E 결과: 진단·확장·구조 (2026-11-22)
 
-브랜치 `stab/e-20261122`, 기준 `origin/main` `4f44ca87` 위에서 시작해 `b818613d`로 rebase. 환경: `CARGO_TARGET_DIR=/tmp/aip-stab-e-target`, PG17 포트 55425(`/tmp/aip-stab-e-pg17`), 모든 DB 시험 앞에서 `unset PGHOST PGPORT`.
+브랜치 `stab/e-20261122`. 최종 통합 기준은 fetch한 `origin/main` `0e3f0c80`; G9·G1 커밋을 이 기준 위로 재적용(rebase)하고 미커밋 R1 변경을 복원했다. 통합 SHA와 D 인계 시점은 7절. 환경: `CARGO_TARGET_DIR=/tmp/aip-stab-e-target`, 이번 Run에서는 PostgreSQL을 초기화하거나 DB 테스트를 시도하지 않았다. 이전 작업 카드가 기록한 별도 Codex 검증 샌드박스의 PG17 `shmget` 권한 거부는 재시도·우회하지 않았다.
 
 ## 한눈에
 
@@ -8,8 +8,8 @@
 |---|---|
 | E1 기계 필드와 설명 필드 구분 명세, 가산 변경(G2·G3·G6, G1은 선택 필드로 표현) | 완료. 명세는 [`diagnostics-fields.md`](diagnostics-fields.md) |
 | E1 G4 `schema` 필드, 장기 호환성 약속, G5, G10 | 구현하지 않음. 소유자 결정으로 분리 → [`decisions/e.md`](decisions/e.md) D-E1, D-E2, D-E5, D-E6 |
-| E1 G9와 문구로만 갈리는 코드 | 파일 읽기 실패 4종은 `reason`으로 해결. G9(`DEF.UNKNOWN_SYMBOL`의 `expose apply` 경우)는 `sema.rs` 대기 + 소유자 결정(D-E4), 적용 가능한 패치 준비 |
-| E2 권한 선언과 `ctx.data.*` 비교표, R1 | 비교표 완료([`e2-extension-access.md`](e2-extension-access.md), [`e2/scan-result.md`](e2/scan-result.md)). 옵트인 구현은 `sema.rs` 대기로 미룸 |
+| E1 G9와 문구로만 갈리는 코드 | 완료: 쓰기 확장·job의 비공개 전이 접근을 `DEF.ACCESS_TARGET_NOT_EXPOSED`로 분리. FlaskBB workflow 전환은 F1에 요청(7절) |
+| E2 권한 선언과 `ctx.data.*` 비교표, R1 | 비교표 완료. 읽기 확장 `access read.<Resource>` 옵트인과 v4 worker 제한 구현. 무선언 확장은 기존 계약·동작 유지 |
 | E3 큰 모듈 4개 분석, 진단 출력 분리 | 분석은 아래 3절. 분리는 `crates/aip-service/src/diagnostics.rs`만. 나머지는 후보로만 |
 | E-08 진단 시험이 PG 없이 | 완료(`AIP_TEST_NO_DB=1`) |
 
@@ -26,6 +26,9 @@
 | 〃 | `spikes/spike-v1-fixture/tests/diagnostic_fields.rs`, `published_codes.txt`, `diagnostics.rs` | PG 없는 시험 9개, 게시된 코드 삭제 방지, 폐기 코드는 "발생지 없음" 검사에서 제외 |
 | 〃 | `spec/definition-diagnostics.md` | **골든 갱신 1회**(`AIP_UPDATE_GOLDEN=1 … --test diagnostics`). 머리글 한 문단뿐이고 코드 표는 불변 |
 | `6b1e05a3` | `crates/aip-service/src/diagnostics.rs`, `lib.rs` | `report`, `output_error`, 종료 코드 결정(`finish`)을 같은 모듈로. 동작 불변 |
+| `4fbe131b` (원본 `c649603f`, rebase 후) | `spec/definition-diagnostics.md`, `spikes/spike-v1-fixture/src/{codes,sema}.rs`, `diagnostic_fields.rs` | G9 전용 코드. 쓰기 확장과 job 경로에 적용 |
+| `06e5f2d8` (원본 `7e4684e8`, rebase 후) | `spikes/spike-v1-fixture/src/{ast,extract,hlit,limits,parser,sema}.rs`, 진단 시험 | G1에서 위치를 알 수 있는 정의 진단의 실제 좌표 채움. 0:0 + `located:false`는 위치를 모르는 경우 유지 |
+| `753be26f` | `sema.rs`, v4 worker, 진단·worker 시험, `ctx.d.ts`와 E 결정·명세 문서 | R1 opt-in `reads` 계약과 실행 시 목록 제한. 미선언 확장의 동작은 그대로 |
 | 이 커밋 | `plan-docs/stabilization-20261122/**`, `CHANGELOG.md` | 명세, 결정, E2 표와 스캔 스크립트, 이 문서, baseline 행 갱신 |
 
 ## 2. RED → GREEN
@@ -36,7 +39,9 @@
 | `service.rs`의 경고 위치·`reason` | 고친 코드를 잠깐 되돌려(`advisory.span.filter(\|_\| false)`, `reason` 제거) → `a_failure_that_is_not_a_rejected_definition_names_its_reason ... FAILED`, `service_check_json_keeps_success_and_failure_diagnostic_contracts ... FAILED` | 원복 후 `AIP_TEST_NO_DB=1 cargo test --locked -p aip-cli --test service` → `10 passed` |
 | 레지스트리 목록 `severity`·`status` | `registry.rs` 되돌림 → `the_registry_listing_carries_severity_and_status_for_every_definition_code ... FAILED`(`severity: {"area":"def",..` 키 없음) | 적용 후 `1 passed` |
 | E-08 | `PGHOST=127.0.0.1 PGPORT=55031 cargo test --locked -p aip-cli --test service`(옵트아웃 없이) → `failed to run custom build command for aip-test-support … build.rs:18` | `PGHOST … AIP_TEST_NO_DB=1 …` → 같은 시험 `10 passed`(컴파일 포함 약 24초). DB 시험은 여전히 `error: AIP_TEST_DATABASE_URL is required` 로 컴파일 실패 |
-| G9 준비 패치 | 임시 worktree에서 `sema.rs` 변경만 뒤로 돌리면 `an_access_to_a_transition_that_is_not_exposed_has_its_own_code ... FAILED` | 적용하면 `10 passed`(diagnostic_fields), `29 passed`(diagnostics). 이 브랜치에는 적용하지 않음 |
+| G9 전용 코드 | 새 진단 시험에서 쓰기 확장·job 경로 모두 `DEF.ACCESS_TARGET_NOT_EXPOSED`; 이전 코드로 되돌린 job 경로는 새 시험이 실패(RED) | 원복 후 `AIP_TEST_NO_DB=1 cargo test --locked --manifest-path spikes/spike-v1-fixture/Cargo.toml --test diagnostic_fields` → `19 passed` |
+| R1 선언 호환 | 무선언 facts에 `reads` 없음, `access` 동일; Node·Python이 선언 없는 확장에서 공개 resource를 읽음 | 선언한 읽기는 정상, 목록 밖 읽기는 DB 계획 전 `WIRE.ACCESS_NOT_DECLARED`; `read_extension_declared_reads` → `2 passed` |
+| G1 좌표 | literal, source-size, multiple-block, wrong-binding의 표적 좌표와 이전 필드 전용 reader를 `diagnostic_fields`에서 고정 | `diagnostic_fields` 전체 `19 passed`; `cargo fmt --all -- --check` 통과 |
 
 ## 3. 측정
 
@@ -47,6 +52,8 @@
 | 파일 크기 | `crates/aip-service/src/lib.rs` 2790 → 2710줄, 새 `diagnostics.rs` 137줄 |
 | PG 없이 도는 진단 시험 | `diagnostic_fields` 9개 0.02초, `diagnostics` 29개 0.01초(엔진 크레이트는 처음부터 PG 의존이 없었다) |
 | E2 스캔 | 정의 35개, 확장·operation 99개(읽기 26, 쓰기 28, job 45) |
+| 이번 통합의 PostgreSQL 비사용 검사·빌드 | 전체 `spike-v1-fixture` 시험 통과(AIP_TEST_NO_DB=1); 진단 표적 19개, v4 실제 Node/Python IPC 2개 통과. v1·v4 `cargo build --locked` 통과 |
+| DB 전체 시험 제한 | v4 전체 시험은 DB 통합 시험의 `test_database_url!()`가 `AIP_TEST_DATABASE_URL is required`로 컴파일을 막음. 반복·PG 초기화 시도 안 함. 프로젝트 CI는 `.github/workflows/verify.yml`의 `core` job에서 PostgreSQL 17 서비스와 `bash tools/verify.sh`로 전체 엔진 시험을 수행 |
 
 ## 4. E3 구조 분석 (큰 모듈 4개)
 
@@ -81,18 +88,25 @@ E 소유라 다음에 할 수 있는 것: 설정 구조체와 검증(`lib.rs:30-
 
 | 항목 | 이유 |
 |---|---|
-| G9 전용 코드, G1의 위치 채우기, R1 옵트인, 읽기 확장 정적 경고 | 모두 `sema.rs` 수정이 필요하다. lead의 "Track A 병합 완료" 메시지를 받기 전이라 열지 않았다. G9는 `decisions/e-g9-ready.patch`로 준비해 두었고 `git apply --check`가 통과한다 |
+| 읽기 확장 정적 경고·문법 카드·공용 SDK/product 문서 | R1 선언을 코드만으로는 실제 `ctx.data.read` 호출과 대조할 수 없어 전 확장 경고는 거짓 양성이 된다. 문법 카드와 공용 설명은 별도 골든·문서 변경이며 이번 범위에서 하지 않았다(`e2-extension-access.md` 3.3절) |
 | 장기 호환성 약속, `schema` 필드, 비정의 코드 62종, BrokenPipe | 소유자 결정(`decisions/e.md`) |
 | `--dev-checks` 경고(`predicate:`, `resource:`)의 `line`·`column` | 실행 facts에 위치가 없다. 위치를 싣는 일은 `sema.rs`의 facts 생성과 `spec`·digest에 닿으므로 하지 않았다 |
 | `DEF.NON_LITERAL`, `DEF.H_SHAPE` 등 소비자 없는 포괄 코드 분리 | 소비자가 없는 코드 공간 확대는 의미 고정 비용만 늘린다(`diagnostics-fields.md` 7절) |
 | `COMPATIBILITY.md` 진단 JSON 표(G7) | 소유자 승인 필요. 이번에 고치지 않았다 |
 | E-05, E-06, E-07 | 범위 밖 또는 근거 부족(baseline 그대로) |
 
-## 6. F1에 연결 요청할 시험
+## 6. CI 경로
 
-workflow는 고치지 않았다.
+게시용 workflow는 수정하지 않았다.
 
-- `cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --test diagnostic_fields`는 `tools/verify.sh`의 엔진 루프가 자동으로 돈다(PG 불필요).
-- `crates/aip-cli/tests/service.rs`의 새 시험은 `cargo test --workspace`가 돈다. DB 없이 돌리는 빠른 job을 만들 때는 `AIP_TEST_NO_DB=1 cargo test --locked -p aip-cli --test service`(CI의 필수 검증에는 쓰지 말 것: 그 경우 DB 시험이 컴파일되지 않는다).
-- G9가 적용되면 `.github/workflows/flaskbb-post-order.yml:213`의 `"expose apply" in d["message"]`를 `d["code"] == "DEF.ACCESS_TARGET_NOT_EXPOSED"`로 바꿔야 한다(`decisions/e.md` D-E4).
+- `cargo test --locked --manifest-path spikes/spike-v1-fixture/Cargo.toml`은 PostgreSQL 없이 전체 컴파일러 시험을 돈다. `tools/verify.sh`의 엔진 루프는 정상 CI에서 같은 크레이트를 실행한다.
+- v4 표적 `read_extension_declared_reads`는 PG 없이 실제 Node·Python worker IPC와 DB 계획 전 거부를 확인한다. v4 전체 DB 시험은 아래 7절에 기록한 CI 경로에서 확인한다.
+- F1은 `.github/workflows/flaskbb-post-order.yml:183`의 `d["code"] == "DEF.UNKNOWN_SYMBOL" and "expose apply" in d["message"]` 검사를 `d["code"] == "DEF.ACCESS_TARGET_NOT_EXPOSED"`로 바꾸고, 출력 sentinel도 새 코드를 반영해야 한다. workflow 소유자는 F1이므로 이 브랜치에서는 수정하지 않았다(D-E4).
 - `plan-docs/stabilization-20261122/e2/scan_extensions.py`는 선택 도구다(필수 아님).
+
+## 7. 통합 SHA와 소유권 인계
+
+- 최종 main 기준: fetch 결과 `origin/main` = `0e3f0c80bc3b24a3b35b31e0655048fc13c30365`. 원래 G9 `c649603f`와 G1 `7e4684e8`을 이 기준 위로 자기 변경만 rebase해 각각 `4fbe131b`, `06e5f2d8`이 됐다.
+- R1·표적 시험·E 결정·명세 변경을 포함한 **통합 SHA: `753be26fbc9e8f576169e7fce3ffbdfe5e3cb417`**. 이 브랜치가 원격에 push된 시점부터 `sema.rs`의 G9·G1·읽기 확장 구역은 D가 이어서 수정할 수 있다. 본 문서는 이 SHA를 기록한 별도 후속 문서 커밋이다.
+- F1 연동 요청은 6절과 같다. `.github/workflows/flaskbb-post-order.yml`은 현재 line 183에서 메시지 부분 문자열과 `DEF.UNKNOWN_SYMBOL`을 함께 비교한다. G9 적용 후 해당 fixture의 기대 코드는 `DEF.ACCESS_TARGET_NOT_EXPOSED`; workflow 파일은 F1 소유라 건드리지 않았다.
+- 로컬에서 확인한 DB 비사용 검사·빌드: `AIP_TEST_NO_DB=1 cargo test --locked --manifest-path spikes/spike-v1-fixture/Cargo.toml` 통과; v4 표적 시험 2개 통과; 양 크레이트 `cargo build --locked` 통과. v4 전체 시험은 DB URL compile-time 요구로 미실행. `.github/workflows/verify.yml` `core` job은 disposable PostgreSQL 17을 제공하고 `bash tools/verify.sh`에서 v1/v4 전체 엔진 시험을 실행한다. CI 결과는 이 문서 작성 시점에 미확인이다.
