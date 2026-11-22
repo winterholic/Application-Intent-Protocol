@@ -1,0 +1,80 @@
+// 주문·결제 직전부터 취소까지의 상태 머신. 외부 결제 서비스는 부르지 않고 GATEWAY 역할의 test double 주체가 결제 확정 콜백을 대신한다.
+// 선언만으로 되는 것: 재고 차감(input 산술), 결제 확정(금액 일치 from), 상태 전이와 역할, 결제 원장 유일성, 결제 원장+상태 전이의 원자성.
+// 확장이 필요한 것: 여러 상품 주문의 서버 계산 합계(곱셈 없음, 확장 입력에 배열도 Json도 못 씀: 줄 3개 고정 슬롯으로 받는다)와, 취소 시 주문 줄 수량만큼 재고 반환(효과 값에 가변 수량·산술 없음).
+enum Role { CUSTOMER, STAFF, GATEWAY }
+enum OrderState { PLACED, PAID, SHIPPED, CANCELLED }
+
+resource Member {
+  fields { id: Id; name: Text(1..50); role: Role }
+  rows read when id = actor or isStaff(actor)
+  expose read { select id, name, role; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } }
+}
+actor Member
+
+predicate isStaff(m: Member) = m.role = STAFF
+predicate isGateway(m: Member) = m.role = GATEWAY
+
+resource Product {
+  fields { id: Id; sku: Text(1..40); stock: Int(0..1000000); price: Int(0..1000000); cost: Int(0..1000000) }
+  rows read when actor != null
+  field cost read when isStaff(actor)
+  transition take { input { qty: Int(1..1000) }; allow actor != null; from stock >= input.qty; to stock = stock - input.qty }
+  transition giveBack { input { qty: Int(1..1000) }; allow actor != null; from stock >= 0; to stock = stock + input.qty }
+  transition receive { input { qty: Int(1..100000) }; allow isStaff(actor); from stock >= 0; to stock = stock + input.qty }
+  expose read { select id, sku, stock, price, cost; filter id.eq, id.in, sku.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
+  expose apply take { target id; bulk maxRows 1; internal }
+  expose apply giveBack { target id; bulk maxRows 1; internal }
+  expose apply receive { target id; bulk maxRows 1 }
+}
+
+resource Order {
+  fields { id: Id; owner: Member; total: Int(0..1000000000); paid: Int(0..1000000000); state: OrderState }
+  rows read when owner = actor or isStaff(actor) or isGateway(actor)
+  transition setTotal { allow owner = actor; from state = PLACED and total = 0; patch total }
+  transition pay { input { amount: Int(1..1000000000) }; allow isGateway(actor); from state = PLACED and total = input.amount; to state = PAID, paid = paid + input.amount }
+  transition ship { allow isStaff(actor); from state = PAID; to state = SHIPPED }
+  transition cancel { allow owner = actor or isStaff(actor); from state = PLACED or state = PAID; to state = CANCELLED }
+  expose read {
+    select id, owner, total, paid, state
+    filter id.eq, state.eq, owner.eq
+    sort id
+    traverse OrderLine via OrderLine.order { select id, qty, unitPrice, product; sort id; limit 50 }
+    budget { rows 50; depth 2; deadline 1s; cost 600 }
+  }
+  expose create { allow owner = actor and total = 0 and paid = 0 and state = PLACED; fields owner, total, paid, state }
+  expose apply setTotal { target id; bulk maxRows 1; internal }
+  expose apply pay { target id; bulk maxRows 1 }
+  expose apply ship { target id; bulk maxRows 1 }
+  expose apply cancel { target id; bulk maxRows 1; internal }
+  extension write checkout {
+    input { owner: Member.Id; product1: Product.Id; qty1: Int(1..1000); product2: Product.Id?; qty2: Int(1..1000)?; product3: Product.Id?; qty3: Int(1..1000)? }
+    output { id: Order.Id; total: Int; lines: Int }
+    access read.Product, create.Order, create.OrderLine, Product.take, Order.setTotal
+    effect db
+    deadline 4s
+    implementation "storefront.checkout"
+  }
+  extension write cancelAndRestock {
+    input { order: Order.Id }
+    output { id: Order.Id; restored: Int }
+    access read.OrderLine, Order.cancel, Product.giveBack
+    effect db
+    deadline 4s
+    implementation "storefront.cancelAndRestock"
+  }
+}
+
+resource OrderLine {
+  fields { id: Id; order: Order; product: Product; qty: Int(1..1000); unitPrice: Int(0..1000000) }
+  rows read when order.owner = actor or isStaff(actor)
+  expose read { select id, order, product, qty, unitPrice; filter order.eq; sort id; budget { rows 100; depth 1; deadline 1s; cost 200 } }
+  expose create { allow order.owner = actor and order.state = PLACED and order.total = 0 and unitPrice = product.price; fields order, product, qty, unitPrice }
+}
+
+resource Payment {
+  fields { id: Id; order: Order; amount: Int(1..1000000000); providerRef: Text(1..60) }
+  rows read when isGateway(actor) or isStaff(actor) or order.owner = actor
+  unique providerRef
+  expose read { select id, order, amount, providerRef; filter order.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
+  expose create { allow isGateway(actor) and amount = order.total; fields order, amount, providerRef }
+}
