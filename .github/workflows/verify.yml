@@ -3,6 +3,12 @@ name: Verify
 on:
   # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
   workflow_call:
+    inputs:
+      provenance_unit_runs_in_independent_consumers:
+        description: The release candidate's required independent-consumer job runs the same DB-free provenance suite.
+        type: boolean
+        required: false
+        default: false
   push:
     branches: [main]
   pull_request:
@@ -50,7 +56,14 @@ jobs:
           rustup default stable
           rustup component add rustfmt
       - name: Reproduce the fast verification of this SHA
-        run: bash scripts/verify-head.sh --stage fast --out "$RUNNER_TEMP/verify-head"
+        env:
+          PROVENANCE_UNIT_RUNS_IN_INDEPENDENT_CONSUMERS: ${{ inputs.provenance_unit_runs_in_independent_consumers }}
+        run: |
+          if [[ "$PROVENANCE_UNIT_RUNS_IN_INDEPENDENT_CONSUMERS" == "true" ]]; then
+            bash scripts/verify-head.sh --stage fast --skip-provenance-unit --out "$RUNNER_TEMP/verify-head"
+          else
+            bash scripts/verify-head.sh --stage fast --out "$RUNNER_TEMP/verify-head"
+          fi
       - name: Preserve the verification record
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

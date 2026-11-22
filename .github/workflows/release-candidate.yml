@@ -20,6 +20,9 @@ concurrency:
 jobs:
   verify:
     uses: ./.github/workflows/verify.yml
+    with:
+      # The required independent-consumer job below runs this same pure provenance suite on the candidate SHA.
+      provenance_unit_runs_in_independent_consumers: true
   release-gate:
     uses: ./.github/workflows/aip-release-gate.yml
   database-contracts:

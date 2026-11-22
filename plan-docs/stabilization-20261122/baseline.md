@@ -207,8 +207,8 @@
 | B-02 | `durable.rs:1201` 취소 확인 쿼리 오류 무시 + `:1191-1192` `let Ok else return` + `:1232` `let _ = commit` | 미해결 결함(코드 근거) | `spikes/spike-v6-transport/src/durable.rs:1189-1275` | 오류 주입(예: `lock_timeout`, 40001/40P01, 연결 끊김)으로 `CANCEL_REQUESTED` job의 최종 상태를 확인하는 RED 시험부터. `apply_idem_lookup_error.rs`의 뷰 기반 주입 기법을 재사용할 수 있다 |
 | B-03 | `/status` 비연결 오류 → `DB_UNAVAILABLE` | 근거 부족 | `spikes/spike-v6-transport/src/lib.rs:556` | 의도 확인 후 문서화 또는 분류 |
 | B-04 | 확장 `ctx.data.read/apply/create`, bundle·compose, COMMIT_UNKNOWN 경로의 오류 무시·변환 전수 | 근거 부족 | `spikes/spike-v6-transport/src/write_extension.rs`, `spikes/spike-v4-worker/src/write.rs`, `spikes/spike-v3-write/src/lib.rs` | 이번 grep(`if let Ok`, `.await.ok()`, `let _ = …execute/query`)은 `durable.rs:1201` 외 쿼리 오류 무시를 찾지 못했다. 그러나 `match`로 오류를 다른 코드로 바꾸는 경로는 grep으로 못 본다 |
-| B-05 | macOS 전용 테스트가 어떤 workflow에서도 실행되지 않음 | 미해결(CI 공백) | 파일은 6절. Linux에서 가능하면 `#![cfg(target_os = "macos")]` 제거(`Isolation::None`), 불가능하면 `.github/workflows/macos-platform-tests.yml` 추가 | `macos-platform-tests.yml`은 3개 명령만 돈다(`isolation::tests`, `v4_1`, `service_flow` 한 시험). `cb37868b` 이전 목록(`concurrency.md` 8.1)에는 이 5곳이 없다 |
-| B-06 | `concurrency_probe_http.rs` 18개가 CI에 없음 | 미해결(CI 공백) | 안정 결과가 확인된 것(`f1`, `i1`~`i5`, `n1`, `e1`~`e5`)만 필수 경로 후보. `sqlgen::set_schema`가 프로세스 전역이라 시험마다 별도 프로세스 필요 | 비싼 탐색(`a1` 반복, `PROBE_ROUNDS` 큰 값)은 별도 경로로 분리 |
+| B-05 | macOS 전용 테스트가 어떤 workflow에서도 실행되지 않음 | **F1이 연결**(`macos-platform-tests.yml`) | 5곳 실행(로컬 macOS) 통과, `track-f1.md` 6절 | 구조 시험이 macOS 전용 파일이 macOS workflow에서 빠지면 실패시킨다 |
+| B-06 | `concurrency_probe_http.rs` 17개가 CI에 없음 | **F1이 연결**: 안정 12개는 `concurrency-contracts.yml`(필수), 탐색 5개는 `concurrency-exploration.yml`(수동·주간) | `scripts/run-concurrency-probes.sh` | 시험 함수는 17개다(기준선의 18은 오기) |
 | B-07 | `SATURATED_REPLAY_BUDGET = 500ms` | 결정 | `spikes/spike-v6-transport/src/lib.rs:136` | 작업이 정한 값. DB가 500ms보다 느리면 포화 요청은 재생 대신 `WORKER_BUSY` |
 | B-08 | 격리 모드 worker, 외부 저장소 위 확장, MySQL 경로에서 동시성 | 근거 부족 / MySQL은 범위 밖 | — | `concurrency.md` §6 "미검증" |
 
@@ -249,14 +249,17 @@
 
 | ID | 항목 | 분류 | 추정 수정 위치 | 비고 |
 |---|---|---|---|---|
-| F-01 | 독립 소비자 workflow를 RC에 연결 + 최신 SHA 사용 | **해결됨**(Track C가 두 파일의 해당 부분만 수정: `release-candidate.yml`의 `independent-consumers` job과 `required.needs`, `independent-consumer-rc.yml`의 `workflow_call`. 실제 Actions 실행은 미확인) | `release-candidate.yml`(`jobs`와 `required.needs`), `independent-consumer-rc.yml`(`workflow_call` 추가, `ref` 제거) | C-01과 같이 |
-| F-02 | 최신 HEAD 필수 검증 재현 단일 진입점 | 미해결 | 새 `scripts/` 스크립트(가칭), `tools/verify.sh` 재사용 | 릴리스 검증은 dry-run/수동 |
-| F-03 | main push에서 경로 필터로 미실행되는 workflow | 미해결 결함(구조) | 각 workflow의 `on.push.paths`, `sdk-semantic-e2e.yml`·`semantic-conformance.yml`에 push 트리거 없음 | HEAD에서 7개 미실행(1절). PR 필수 체크화는 저장소 설정(F-07) |
-| F-04 | RC 안의 `tools/verify.sh` 이중 실행 | 근거 부족 | `scripts/release-gate.sh:94`, `verify.yml` | 의도된 격리(깨끗한 clone)인지 확인 후 판단 |
-| F-05 | 어떤 workflow에서도 안 도는 테스트 파일 | 미해결 | 6절 | 이름 검색 기준. 글롭 호출은 확인 못함 |
-| F-06 | Verify 간헐 실패 원인 | 근거 부족 | `isolation.rs:1296`(probe), `verify.yml:295-311`(step 17) | `cb37868b` Run `44904438206`, 감사 P0-4 |
-| F-07 | main 브랜치 보호·필수 체크 | 환경/소유자 | 저장소 설정 | `gh api` 404. 이 세션은 설정 변경 안 함 |
-| F-08 | `flaskbb-post-order.yml`의 `continue-on-error` 14개가 최종 성공을 가리는지 | 근거 부족 | `flaskbb-post-order.yml:84-262`, 마지막 집계 step `:285-288` | 감사 §10.3은 "마지막에 비영 종료로 모은다"고 기록. 이번에 재검증 안 함 |
+| F-01 | 독립 소비자 workflow를 RC에 연결 + 최신 SHA 사용 | **해결됨**(Track C `b818613d`·`d627c4d7`), F1이 집계 게이트와 구조 시험으로 검증 | `release-candidate.yml`, `independent-consumer-rc.yml` | main push 트리거는 Track C 소유 파일이라 F1이 못 고침(`track-f1.md` 9절) |
+| F-02 | 최신 HEAD 필수 검증 재현 단일 진입점 | **해결됨**(`track-f1.md`) | `scripts/verify-head.sh`(fast/heavy, SHA 기록, dry-run), Verify의 `head-fast` job | 시험 `product/tests/test_release_candidate_required.py::EntryPointTest` |
+| F-03 | main push에서 경로 필터로 미실행되는 workflow | **해결됨**(독립 소비자 제외) | 8개 workflow의 `push.paths` 제거, `sdk-semantic-e2e`·`semantic-conformance`에 `push: main` 추가, push·dispatch·call의 concurrency를 SHA 단위로 | workflow별 표와 RED→GREEN은 `track-f1.md` 3절 |
+| F-04 | RC 안의 `tools/verify.sh` 이중 실행 | **의도된 중복, 유지**(근거 `track-f1.md` 7절) | `scripts/release-gate.sh:94`, `verify.yml` | 릴리스 게이트가 깨끗한 clone의 `--ref` 커밋만 증명하고 `release.yml` 게시 조건이 그 성공만 본다 |
+| F-05 | 어떤 workflow에서도 안 도는 테스트 파일 | **부분 해결** | `track-f1.md` 6절 | 연결: `client/uuid`·`extension-rejection`, `tools/test_*.py`, `scripts/test_*.py`. 제외: `prototype/tests` 2곳(현재 실패), `spikes/spike-0-ts/test`(현재 실패) |
+| F-06 | Verify 간헐 실패 원인 | **원인 확정**(기록된 3건), 감사 P0-4는 근거 부족 | `track-f1.md` 7절 | `cb37868b` 등 3건은 clippy `manual_range_contains`(`concurrency_probe_http.rs:616`), `596ab5dd`가 고침. `isolation.rs:1296` panic은 mutation control의 의도된 출력이다 |
+| F-07 | main 브랜치 보호·필수 체크 | 환경/소유자(권고만 `track-f1.md` 9절) | 저장소 설정 | 설정은 바꾸지 않았다 |
+| F-08 | `flaskbb-post-order.yml`의 `continue-on-error` 14개가 최종 성공을 가리는지 | **가림 없음 확인** | `flaskbb-post-order.yml` 마지막 집계 step | 14개 전부 최종 step이 비영 종료로 모으고, 구조 시험이 새 `continue-on-error`가 빠지면 실패시킨다 |
+
+> F1 갱신(2026-11-22): 위 표의 `main push 트리거` 열은 `track-f1.md` 3절 기준으로 모든 필수 workflow가 main push에서 경로 필터 없이 돈다(독립 소비자 제외). 신규 `concurrency-contracts.yml`(필수), `concurrency-exploration.yml`(수동·주간)이 있다.
+> F1 후속(2026-11-22): `verification/1.0-consumers/test_provenance.py`는 로컬 fast 진입점에 연결한다. Release Candidate에서는 같은 SHA의 필수 독립 소비자 job이 이미 실행하므로 Verify fast의 중복만 입력으로 생략한다. 보장된 거부 계약 두 건은 `tools/verify.sh`에 연결하고, 같은 파일의 Track A 잔여 상태 probe는 연결하지 않는다. 세부·증거는 `track-f1.md` 10절.
 
 ## 4. 파일 소유권과 충돌 순서
 
@@ -373,21 +376,21 @@ CI와 같은 컨테이너 방식은 `postgres:17`(`verify.yml` services: `POSTGR
 | workflow 파일 | main push 트리거 | 그 밖의 트리거 | 주요 명령 | RC |
 |---|---|---|---|---|
 | `verify.yml` | 모든 push | PR, dispatch(진단 입력 2개), call | `bash tools/verify.sh`; `node product/tests/fixtures/expr-apps/run.mjs`; `scripts/verify-mysql-worker-e2e.sh run-ci`; probe·isolation 단계(`AIP_TEST_BWRAP=1`) | O |
-| `aip-release-gate.yml` | 경로 필터(`crates/**`, `product/**`, `spikes/**`, `tools/**`, `scripts/**`, `docs/**`, `.github/workflows/**` 등) | dispatch, call | `scripts/release-gate.sh --baseline 4c27040c… --ref $GITHUB_SHA`(verify.sh, release 빌드, package, artifact-smoke, upgrade-drill) | O |
+| `aip-release-gate.yml` | 모든 push(F-03, `track-f1.md`) | dispatch, call | `scripts/release-gate.sh --baseline 4c27040c… --ref $GITHUB_SHA`(verify.sh, release 빌드, package, artifact-smoke, upgrade-drill) | O |
 | `app-packages.yml` | 모든 push | PR, dispatch | `node scripts/check-versions.mjs`; `node --test product/tests/{version-check,release-manifest,sdk-package,…}`; `app-package-e2e`; `app-deploy-live` | O |
 | `brokers.yml` | 모든 push | PR, dispatch | `cargo test -p aip-execution --features external-brokers --test brokers_live -- --ignored`; `cargo test -p aip-service --features external-brokers broker_worker_recovers -- --ignored` | O |
 | `cgroup.yml` | 모든 push | PR, dispatch | `isolation::startup_experiment::run_isolated_node_version_once -- --ignored`, `isolation::tests`, `spikes/spike-v4-worker/tests/cgroup-v2-ci.sh` | O |
 | `object-storage.yml` | 모든 push | PR, dispatch | `cargo test -p aip-execution --lib --test cloud_storage`; `scripts/test-minio-object-storage.sh`; `object_ledger`; storage provider 단위 시험 | O |
-| `worker-jobs-linux.yml` | 경로 필터(`crates/**`, `product/**`, `porting/**`, `spikes/spike-v1/v3/v4/v6/**`) | dispatch(`crypto_repair_only`), call | `cargo test … isolation::tests`(`AIP_TEST_BWRAP=1`), spike-v6 job 시험들, `node --test product/tests/service-smoke.test.mjs`, aip-migrate `explicit_parent_job_schema_upgrade…`, FlaskBB mail·sticky 시험, 암호화 시험 | O |
-| `macos-platform-tests.yml` | 경로 필터(`crates/aip-cli`, `crates/aip-service`, `spikes/spike-v4-worker`, `spikes/spike-v6-transport`) | dispatch, call | `isolation::tests`; `--test v4_1`; `service_flow … operation_only_service_preserves_principal_contract_revocation_and_deployment_fences` | O |
-| `database-contracts.yml` | 경로 필터(`crates/aip-test-support`·`aip-cli`·`aip-service`·`aip-migrate`, v2·v3·v6 `src`) | dispatch, call | `cargo test -p aip-test-support`, `-p aip-cli --test least_privilege`, MySQL·MariaDB 계약(범위 밖) | O |
-| `deploy-checks.yml` | 경로 필터(`product/tools/proxy-check.mjs`, v6 `src`, `aip-service`, `aip-auth`, `conformance/**`) | dispatch, call | `cargo test -p aip-auth`; `node product/tools/proxy-check.mjs`; `scripts/smoke-idp-proxy.sh`; `scripts/smoke-keycloak.sh` | O |
-| `dependencies.yml` | 경로 필터(Cargo·lock, `deny.toml` 등) | PR(경로), 월요일 schedule, dispatch, call | `bash tools/dependency-check.sh`(cargo audit/deny, npm audit, pip-audit) | O |
-| `flaskbb-parity.yml` | 경로 필터 | dispatch, call | FlaskBB upgrade·settings 시험, `cargo test … foreign_key_refusal commit_classification`, `wire_codes` | O |
-| `flaskbb-post-order.yml` | 경로 필터(+ 개별 브랜치) | dispatch, call | 원본 oracle 비교(`continue-on-error` 14개), `latest_effect_match`, `diagnostics`, post-order·topic-move·post-unhide 시험 | O |
-| `sdk-semantic-e2e.yml` | **push 트리거 없음** | PR(경로 필터), dispatch, call | `cargo fmt --all -- --check`; clippy(`aip-cli`, `aip-service`, `aip-execution`); `node --test --test-concurrency=1 product/tests/sdk-semantic-e2e.test.mjs` | O |
-| `semantic-conformance.yml` | **push 트리거 없음** | PR(경로 필터), dispatch, call | `cargo test -p aip-sema --test shared_semantic_fixture`; `-p aip-cli --features poc-runtime --test core_semantic_fixture`; `-p aip-cli --test service_flow` | O |
-| `independent-consumer-rc.yml` | `workflow_call`(RC)·dispatch(Track C 이후) | `core_sha` 입력, 기본 `github.sha` | 대상 SHA 빌드, `python3 verification/1.0-consumers/run.py --core-sha …` | **O**(Track C. 실제 Actions 실행은 미확인) |
+| `worker-jobs-linux.yml` | 모든 push(F-03, `track-f1.md`) | dispatch(`crypto_repair_only`), call | `cargo test … isolation::tests`(`AIP_TEST_BWRAP=1`), spike-v6 job 시험들, `node --test product/tests/service-smoke.test.mjs`, aip-migrate `explicit_parent_job_schema_upgrade…`, FlaskBB mail·sticky 시험, 암호화 시험 | O |
+| `macos-platform-tests.yml` | 모든 push(F-03, `track-f1.md`) | dispatch, call | `isolation::tests`; `--test v4_1`; `service_flow … operation_only_service_preserves_principal_contract_revocation_and_deployment_fences` | O |
+| `database-contracts.yml` | 모든 push(F-03, `track-f1.md`) | dispatch, call | `cargo test -p aip-test-support`, `-p aip-cli --test least_privilege`, MySQL·MariaDB 계약(범위 밖) | O |
+| `deploy-checks.yml` | 모든 push(F-03, `track-f1.md`) | dispatch, call | `cargo test -p aip-auth`; `node product/tools/proxy-check.mjs`; `scripts/smoke-idp-proxy.sh`; `scripts/smoke-keycloak.sh` | O |
+| `dependencies.yml` | 모든 push(F-03, `track-f1.md`) | PR(경로), 월요일 schedule, dispatch, call | `bash tools/dependency-check.sh`(cargo audit/deny, npm audit, pip-audit) | O |
+| `flaskbb-parity.yml` | 모든 push(F-03, `track-f1.md`) | dispatch, call | FlaskBB upgrade·settings 시험, `cargo test … foreign_key_refusal commit_classification`, `wire_codes` | O |
+| `flaskbb-post-order.yml` | 모든 push(F-03, `track-f1.md`) | dispatch, call | 원본 oracle 비교(`continue-on-error` 14개), `latest_effect_match`, `diagnostics`, post-order·topic-move·post-unhide 시험 | O |
+| `sdk-semantic-e2e.yml` | 모든 push(F-03, `track-f1.md`) | PR(경로 필터), dispatch, call | `cargo fmt --all -- --check`; clippy(`aip-cli`, `aip-service`, `aip-execution`); `node --test --test-concurrency=1 product/tests/sdk-semantic-e2e.test.mjs` | O |
+| `semantic-conformance.yml` | 모든 push(F-03, `track-f1.md`) | PR(경로 필터), dispatch, call | `cargo test -p aip-sema --test shared_semantic_fixture`; `-p aip-cli --features poc-runtime --test core_semantic_fixture`; `-p aip-cli --test service_flow` | O |
+| `independent-consumer-rc.yml` | 브랜치 `verify/1.0-independent-consumer-20261121` push만 | dispatch | Core `4e132564` 빌드, `python3 verification/1.0-consumers/run.py` | **X**(F-01) |
 | `release-candidate.yml` | — | dispatch, `release/**` push, `v*` 태그 push | 위 15개를 `workflow_call`로 호출, `required` job이 전부 `success`인지 확인 | — |
 | `release.yml` | — | `v*` 태그 push(게시), PR 경로·dispatch는 dry-run | 버전 검사, CLI·SDK 빌드, `assemble`, `publish-*`(태그 push + `release` environment 승인 시) | — (게시 금지) |
 

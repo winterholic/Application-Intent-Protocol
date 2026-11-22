@@ -153,4 +153,7 @@ python3 spikes/spike-v4-worker/tests/python_frame_limit.py -v
 
 # Test feature combinations can replace target/debug/aip; rebuild the product last.
 cargo build -p aip-cli --locked
+# Run only the guaranteed-refusal regression contracts. The same file also contains owner-decision residual probes,
+# which are intentionally outside this required verification path.
+AIP_BIN=target/debug/aip node --test --test-name-pattern='^(a transition the caller may not make|a create the caller may not make)' product/tests/policy-residual-paths.test.mjs
 printf 'AIP core verification passed.\n'

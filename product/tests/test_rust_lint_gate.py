@@ -177,11 +177,13 @@ with open(os.environ["SDK_RECEIPT"], "a") as receipt:
         result, calls, _ = self.run_gate(runtime_stop=False, through_sdk=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         node_calls = [call for call in calls if call[0] == "node"]
-        self.assertEqual(len(node_calls), 1, node_calls)
+        self.assertEqual(len(node_calls), 2, node_calls)
         self.assertIn("product/tests/sdk-package.test.mjs", node_calls[0])
         self.assertIn("prototype/tests/sdk-package.test.mjs", node_calls[0])
         # 문서 ```aip 예제 검사는 위에서 빌드한 target/debug/aip로 도는 Verify의 node 단계에 있어야 한다. 빠지면 예제가 낡아도 CI가 모른다.
         self.assertIn("product/tests/doc-aip-examples.test.mjs", node_calls[0])
+        self.assertEqual(node_calls[1], ["node", "--test", "--test-name-pattern=^(a transition the caller may not make|a create the caller may not make)",
+                                         "product/tests/policy-residual-paths.test.mjs"])
         self.assertIn(["prototype-binary", "target/debug/aip-prototype"], calls)
         self.assertTrue(any(call[0] == "test" and "prototype/Cargo.toml" in call
                             and call[call.index("--target-dir") + 1] == "target" for call in calls))
@@ -192,7 +194,7 @@ with open(os.environ["SDK_RECEIPT"], "a") as receipt:
         result, calls, _ = self.run_gate(runtime_stop=False, through_sdk=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         node_calls = [call for call in calls if call[0] == "node"]
-        self.assertEqual(len(node_calls), 1, node_calls)
+        self.assertEqual(len(node_calls), 2, node_calls)
         self.assertIn("product/tests/external-create-order.test.mjs", node_calls[0])
 
     def test_node_step_runs_the_upgrade_drill_unit_tests(self):
@@ -201,7 +203,7 @@ with open(os.environ["SDK_RECEIPT"], "a") as receipt:
         result, calls, _ = self.run_gate(runtime_stop=False, through_sdk=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         node_calls = [call for call in calls if call[0] == "node"]
-        self.assertEqual(len(node_calls), 1, node_calls)
+        self.assertEqual(len(node_calls), 2, node_calls)
         self.assertIn("product/tests/upgrade-drill.test.mjs", node_calls[0])
 
 

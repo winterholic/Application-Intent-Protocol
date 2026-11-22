@@ -393,10 +393,31 @@ class EntryPointTest(unittest.TestCase):
         for pattern in PUBLISH_PATTERNS[:-1]:
             self.assertIsNone(re.search(pattern, self.SCRIPT.read_text()), pattern)
 
+    def test_provenance_contract_runs_once_in_the_fast_path(self):
+        plan = subprocess.run(["bash", str(self.SCRIPT), "--list"], capture_output=True, text=True, check=True).stdout
+        test_path = "verification/1.0-consumers/test_provenance.py"
+        self.assertIn(test_path, plan)
+        skipped_env = {**os.environ, "GITHUB_ACTIONS": "true", "PROVENANCE_UNIT_RUNS_IN_INDEPENDENT_CONSUMERS": "true"}
+        skipped_plan = subprocess.run(["bash", str(self.SCRIPT), "--list", "--skip-provenance-unit"],
+                                      capture_output=True, text=True, env=skipped_env, check=True).stdout
+        self.assertNotIn(test_path, skipped_plan)
+        rejected_env = {**os.environ, "GITHUB_ACTIONS": "false", "PROVENANCE_UNIT_RUNS_IN_INDEPENDENT_CONSUMERS": "false"}
+        rejected = subprocess.run(["bash", str(self.SCRIPT), "--list", "--skip-provenance-unit"],
+                                  capture_output=True, text=True, env=rejected_env)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("reserved for the Release Candidate Verify call", rejected.stderr)
+        verify = read("verify.yml")
+        candidate = read("release-candidate.yml")
+        consumer = read("independent-consumer-rc.yml")
+        self.assertIn("--skip-provenance-unit", verify)
+        self.assertIn("provenance_unit_runs_in_independent_consumers: true", candidate)
+        self.assertEqual(consumer.count(test_path), 1, "the RC caller skips the fast copy; the required consumer job runs this suite once")
+
     def test_verify_sh_runs_the_tests_that_no_gate_ran_before(self):
         text = (ROOT / "tools/verify.sh").read_text()
         for needle in ("spikes/spike-v6-transport/client/uuid.test.ts", "spikes/spike-v6-transport/client/extension-rejection.test.ts",
-                       "discover -s tools -p 'test_*.py'", "discover -s scripts -p 'test_*.py'", "product.tests.test_release_candidate_required"):
+                       "discover -s tools -p 'test_*.py'", "discover -s scripts -p 'test_*.py'", "product.tests.test_release_candidate_required",
+                       "AIP_BIN=target/debug/aip node --test --test-name-pattern='^(a transition the caller may not make|a create the caller may not make)' product/tests/policy-residual-paths.test.mjs"):
             self.assertIn(needle, text)
 
 

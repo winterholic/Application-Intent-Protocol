@@ -2,6 +2,7 @@
 # One entry point that reproduces the required verification of the latest HEAD, locally and in CI, and records which SHA it proved.
 #
 #   scripts/verify-head.sh [--stage fast|heavy|all] [--dry-run] [--only <step>] [--out <fresh dir>] [--allow-dirty]
+#                          [--skip-provenance-unit]
 #                          [--pg-port <port>] [--with-release-gate] [--list]
 #
 #   fast   no PostgreSQL: script syntax, workflow structure and the release-candidate gate tests, tooling unit tests, version
@@ -22,7 +23,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-stage="all"; dry_run=0; only=""; out=""; allow_dirty=0; pg_port="${AIP_VERIFY_HEAD_PG_PORT:-55432}"; with_release_gate=0; list=0
+stage="all"; dry_run=0; only=""; out=""; allow_dirty=0; pg_port="${AIP_VERIFY_HEAD_PG_PORT:-55432}"; with_release_gate=0; skip_provenance_unit=0; list=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --stage) stage="${2:?--stage needs fast, heavy or all}"; shift 2 ;;
@@ -32,12 +33,17 @@ while [[ $# -gt 0 ]]; do
     --allow-dirty) allow_dirty=1; shift ;;
     --pg-port) pg_port="${2:?--pg-port needs a port}"; shift 2 ;;
     --with-release-gate) with_release_gate=1; shift ;;
+    --skip-provenance-unit) skip_provenance_unit=1; shift ;;
     --list) list=1; shift ;;
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
 case "$stage" in fast|heavy|all) ;; *) echo "--stage must be fast, heavy or all" >&2; exit 2 ;; esac
+if (( skip_provenance_unit )) && { [[ "${GITHUB_ACTIONS:-}" != "true" ]] || [[ "${PROVENANCE_UNIT_RUNS_IN_INDEPENDENT_CONSUMERS:-}" != "true" ]]; }; then
+  echo "--skip-provenance-unit is reserved for the Release Candidate Verify call whose required independent-consumer job runs that suite" >&2
+  exit 2
+fi
 
 is_linux=0; [[ "$(uname -s)" == "Linux" ]] && is_linux=1
 
@@ -51,6 +57,9 @@ add fast workflow-structure "python3 -W error::ResourceWarning -m unittest produ
 add fast tooling-tests "python3 -W error::ResourceWarning -m unittest discover -s tools -p 'test_*.py' && python3 -W error::ResourceWarning -m unittest discover -s scripts -p 'test_*.py'"
 add fast versions "node scripts/check-versions.mjs"
 add fast rust-format "cargo fmt --all --check"
+if (( ! skip_provenance_unit )); then
+  add fast provenance-unit "python3 verification/1.0-consumers/test_provenance.py"
+fi
 # The test build needs an explicit non-default test DSN (crates/aip-test-support/build.rs) but these suites never connect.
 add fast sema-quick "cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --test policy_hardening --test advisories"
 
