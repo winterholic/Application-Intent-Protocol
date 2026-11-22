@@ -1,8 +1,9 @@
 # AIP 안정화 최종 보고서 (원 요청 10절 형식)
 
 - 작성일: 2026-11-22. 상태: **최종 보고**.
-- 대상: Core `origin/main` 기준 SHA `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6`. 이 SHA는 이전 통합 후보 `720b9b25`에 두 교정을 반영한 최종 기준이다.
-- 근거: `plan-docs/stabilization-20261122/`의 Track A~F 기록·결정 문서, 해당 커밋 이력, 리드가 확인한 최종 CI·Portal·Starter 결과. 이 보고서 작업에서는 제품 코드 테스트를 실행하지 않았고 문서 검사를 수행했다.
+- 안정화 코드 기준: Core `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6`(이전 통합 후보 `720b9b25`에 두 교정을 반영). 이 SHA의 K4 개별 PG17 검증과 Verify 결과는 아래 CI 기록에 연결한다.
+- RC 출시 후보: 문서 커밋 `f7b0c225bb0405c77d174e621c3a6753049a07a6`에서 의존성 감사가 실패했고, Cargo.lock만 교정한 `1eda239c28a8399d62f88360ebd654dbbeee6f53`에서 전체 RC가 성공했다. 문서 커밋은 RC 검증 SHA가 아니다.
+- 근거: `plan-docs/stabilization-20261122/`의 Track A~F 기록·결정 문서, 해당 커밋 이력, 리드가 확인한 CI·Portal·Starter 결과. 이 문서 편집에서는 제품 테스트나 전체 RC를 실행하지 않고 문서 검사만 수행한다.
 - 이 문서는 1.0 출시 승인이 아니다. 태그, GitHub Release, npm, PyPI 게시는 하지 않았다.
 
 ## 한눈에
@@ -10,13 +11,13 @@
 | 항목 | 상태 |
 |---|---|
 | 해결 가능한 결함의 수정과 회귀 시험 | Track A~E에서 수행. 1절 |
-| 최종 Core 필수 CI | 리드 확인: Verify 45014410289, SDK semantic 45014412421 성공. 기준 SHA 모두 `d3acc393…` |
-| 최신 Core SHA 독립 소비자 job | 리드 확인: 45014414753 `consumers` 성공, 기준 SHA `d3acc393…` |
+| 안정화 Core SHA 필수 CI | 리드 확인: Verify 45014410289, SDK semantic 45014412421 성공. 기준 SHA 모두 `d3acc393…` |
+| 안정화 Core SHA 독립 소비자 job | 리드 확인: 45014414753 `consumers` 성공, 기준 SHA `d3acc393…` |
 | Portal·Starter Core 호환 확인 | Portal `fd69229a`, Starter `0d292333`; 양쪽 결과 및 Starter CI 성공 확인 |
 | 소유자 결정 | 5개 영역의 결정은 확정되지 않음. 선택지와 권고는 5절 |
 | sema.rs 대기 todo 3건 | 남음(C1 budget, C2 산술 범위, C3 id 정렬) |
 
-CI 이력과 최종 결과(최종 3건은 리드 확인):
+CI 이력과 리드 확인 결과:
 
 | Run | SHA | 결과 | 설명 |
 |---|---|---|---|
@@ -25,17 +26,20 @@ CI 이력과 최종 결과(최종 3건은 리드 확인):
 | SDK 45003272337 | `eba0ac35` | failure | SQL 식별자 인용으로 migration column lookup이 어긋남. 후속 수정 `720b9b25` |
 | Verify 45002432400 | `eba0ac35` | failure | `durable.rs` bare `QUEUED` 리터럴. 후속 수정 `720b9b25` |
 | Verify 45006760676 | `720b9b25` | failure | 전체 식별자 인용으로 DDL digest가 바뀌고 Python JobState 확인 실패. `5c19468e`에서 예약어 101개만 인용하고 SQL 경계를 교정 |
-| Verify 45014410289 | `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6` | success | 리드 확인: `core`와 `head-fast` |
-| SDK semantic 45014412421 | `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6` | success | 리드 확인: `sdk-postgres-17` |
-| independent-consumer-rc 45014414753 | `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6` | success | 리드 확인: `consumers` |
+| Verify [45014410289](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45014410289) | `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6` | success | 리드 확인: `core`와 `head-fast` |
+| SDK semantic [45014412421](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45014412421) | `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6` | success | 리드 확인: `sdk-postgres-17` |
+| independent-consumer-rc [45014414753](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45014414753) | `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6` | success | 리드 확인: `consumers` |
+| Verify [45019169141](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45019169141) | `f7b0c225bb0405c77d174e621c3a6753049a07a6` | success | `head-fast`, `core` 성공 |
+| Release candidate [45019286972](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45019286972) | `f7b0c225bb0405c77d174e621c3a6753049a07a6` | failure | `dependencies / audit`: `RUSTSEC-2026-0592` (`url 2.5.8`) |
+| Release candidate [45024949144](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45024949144) | `1eda239c28a8399d62f88360ebd654dbbeee6f53` | success | 24 jobs 성공, workflow가 허용한 `crypto-compile-repair` skip 1개 |
 
-최종 세 결과는 리드가 같은 SHA에서 확인한 실행이며, 이 문서 편집 세션에서 Run 로그를 재조회하지 않았다. 이전 실패는 교정 커밋의 이력을 보이는 것이며 실패를 성공으로 바꿔 적지 않았다.
+위 세 안정화 SHA 결과는 리드가 같은 SHA에서 확인한 실행이며, 이 문서 편집 세션에서 해당 Run 로그를 재조회하지 않았다. 이후 문서 SHA와 의존성 교정 SHA의 Verify·RC 결과는 별도 행에 구분했다. 이전 실패는 교정 커밋의 이력을 보이는 것이며 실패를 성공으로 바꿔 적지 않았다.
 
 ---
 
 ## 1. 실제로 개선된 것
 
-완료한 일만 적는다. 제안은 6절이다. 기준 SHA는 최종 Core main `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6`이다. Track에서 리드가 통합한 관련 커밋을 기준으로 요약했다.
+완료한 일만 적는다. 제안은 6절이다. 안정화 코드의 기준 SHA는 `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6`이다. Track에서 리드가 통합한 관련 커밋을 기준으로 요약했다.
 
 ### Track A: 권한·보안·테넌트
 
@@ -135,14 +139,16 @@ RED를 확인한 변이와 확인하지 못한 것은 각 Track 문서에 있다
 위 "한눈에"의 CI 표가 전부다. 요약하면 다음과 같다.
 
 - 통과: macOS Run 44985825145(`c86d6902`), SDK Run 45002420780(`b6af9d44`).
-- 이전 후보 실패: SDK 45003272337(마이그레이션 열 조회 키), Verify 45002432400(`QUEUED` wire code), Verify 45006760676(전 식별자 인용으로 DDL digest와 Python JobState 검사 실패). 첫 두 원인은 `720b9b25`에서, 세 번째는 `5c19468e`의 예약어 101개 한정 인용·SQL 경계 교정에서 처리됐다. 최종 `d3acc393`의 세 CI 성공은 위 표에 별도로 적었다.
-- 최종 main SHA `d3acc393…`의 Verify 45014410289, SDK semantic 45014412421, independent-consumer-rc 45014414753는 리드 확인 결과 모두 success다. 상세는 상단 CI 표와 Track F1 §8 참조.
+- 이전 후보 실패: SDK 45003272337(마이그레이션 열 조회 키), Verify 45002432400(`QUEUED` wire code), Verify 45006760676(전 식별자 인용으로 DDL digest와 Python JobState 검사 실패). 첫 두 원인은 `720b9b25`에서, 세 번째는 `5c19468e`의 예약어 101개 한정 인용·SQL 경계 교정에서 처리됐다. 안정화 SHA `d3acc393`의 세 CI 성공은 위 표에 별도로 적었다.
+- 안정화 코드 SHA `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6`의 Verify 45014410289, SDK semantic 45014412421, independent-consumer-rc 45014414753는 리드 확인 결과 모두 success다. Verify는 [45014410289](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45014410289)이다. 상세는 상단 CI 표와 Track F1 §8 참조.
+- 문서 SHA `f7b0c225bb0405c77d174e621c3a6753049a07a6`의 Verify [45019169141](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45019169141)은 `head-fast`, `core`가 성공했지만, 같은 SHA의 RC [45019286972](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45019286972)는 `RUSTSEC-2026-0592`로 의존성 감사가 실패했다.
+- `1eda239c28a8399d62f88360ebd654dbbeee6f53`은 `f7b0c225`의 직계 자식이며 Cargo.lock 9개만 바꿔 `url 2.5.9`와 resolver 동반 `form_urlencoded 1.2.3`을 반영했다. 전체 RC [45024949144](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45024949144)는 이 정확한 SHA에서 completed/success, 24 jobs 성공과 허용된 조건부 skip 1개를 리드가 확인했다.
 
 SDK Run 45002420780이 실행하는 시험에는 D의 PG17 시험 5개(`sdk-semantic-e2e.yml`, `50571faf`)가 들어 있다. 따라서 이 success는 로컬에서 재실행하지 않은 D 의미 시험의 CI 근거가 된다. 단 그 기준은 `b6af9d44`이고 이후 B·마이그레이션 수정은 포함하지 않는다. 이 추론은 워크플로 파일 diff를 읽은 것이며 Run 로그는 확인하지 않았다.
 
 ### 2.3 미실행
 
-- 이 보고서 작업에서는 제품 코드 테스트, `verify-head.sh --stage heavy`, release-candidate 전체 dispatch를 실행하지 않았다. 최종 SHA의 Verify·SDK·consumer 결과는 리드가 확인해 전달했다.
+- 이 문서 편집 세션에서는 제품 코드 테스트와 `verify-head.sh --stage heavy`를 실행하지 않았다. 전체 RC도 이 세션이 직접 dispatch하지 않았지만, 위에 기록한 RC Run 45024949144는 리드가 `1eda239c…`에서 성공을 확인해 전달했다.
 - Portal: main `fd69229a`; 기준 Core `d3acc393`; drift baseline 일치 `75/75`, `pnpm verify`의 docs `92`, `check_plan_docs` 오류 `0`(리드 확인).
 - Starter: main `0d292333`, core pin `d3acc393`; `verify-core --core main`과 pinned 모두 ALL PASS, `pnpm test` 16 pass(리드 확인). CI Run `45018181264`도 `0d292333`에서 success. 이번 세션에서 `gh -R winterholic/Application-Intent-Protocol-Starter run view 45018181264 --json databaseId,headSha,status,conclusion,workflowName,url`로 1회 조회해 completed/success와 head SHA를 확인했다.
 - B의 정산 회귀 중 정산 파일 외 3개 DB 회귀는 이 세션에서 실행하지 않았고, 최종 CI 전달 내용에는 파일별 실행 결과가 없다.
@@ -169,7 +175,7 @@ SDK Run 45002420780이 실행하는 시험에는 D의 PG17 시험 5개(`sdk-sema
 
 주의: "확장에 여러 줄 입력"(C-D2)은 이후 `a514c941`에서 Json 입력을 열었지만, storefront의 여러 줄 입력 PG17 여정 결과는 이 보고서 근거에서 확인하지 못했다. 최종 consumer job 성공을 그 개별 시나리오 결과로 확대하지 않는다.
 
-소비자 앱 E2E에는 로컬 `659e5844` 결과와 최종 Core SHA에서 리드가 확인한 `independent-consumer-rc` Run 45014414753 성공이 있다. 이 Run은 해당 workflow의 `consumers` job 결과이며 release-candidate 전체 실행이나 모든 실사용 분류의 재검증으로 해석하지 않는다.
+소비자 앱 E2E에는 로컬 `659e5844` 결과와 안정화 Core SHA에서 리드가 확인한 `independent-consumer-rc` Run 45014414753 성공이 있다. 이 Run은 해당 workflow의 `consumers` job 결과이며 release-candidate 전체 실행이나 모든 실사용 분류의 재검증으로 해석하지 않는다.
 
 ---
 
@@ -177,14 +183,17 @@ SDK Run 45002420780이 실행하는 시험에는 D의 PG17 시험 5개(`sdk-sema
 
 1. **공개 count의 정보 노출은 설계 결정 대기다.** PG17 반례에서 호출자가 읽을 수 있는 행은 2개지만 공개 count는 4를 반환했고, `where`에서 `input`을 쓰면 다른 테넌트 값 900을 단계적으로 복원할 수 있었다. 현재 조치는 경고이며 공개 의미는 바뀌지 않았다. 소유자 결정 5.1.
 2. **Track D의 `sema.rs` todo 세 건이 남았다.** C1은 `budget cost`가 읽기 비용보다 낮아 런타임에서 항상 `WIRE.COST_EXCEEDED`가 나도 `check`가 통과한다. C2는 `to f = f + this.g`에서 항 필드 하한이 0 이하를 허용해 런타임 `WIRE.BAD_VALUE`가 날 수 있다. C3은 실행 가능한 공유 기본키 `id: Member`의 `sort id`를 `DEF.OP_TYPE_MISMATCH`로 거부하며 의도 확인이 필요하다. 재현은 `semantic-definition-matrix.test.mjs`의 `todo`; 이번 작업에서는 실행하지 않았다. C5(bundle 상한 경고)와 C6(Int 안전 정수 경계)도 결정·수정 대기다.
-3. **Track A K4의 PG17 개별 결과는 확인되지 않았다.** 코드와 회귀 시험 변경은 main에 포함됐지만, 이 보고서 자료에는 최종 SHA `d3acc393`에서 해당 개별 시험의 출력이 없다. 전체 Verify success만으로 개별 PG17 결과를 단정하지 않는다.
-4. **`server_start_error`의 `NotFound` 문구가 원인을 오도한다.** bwrap이 없는 상황을 node/python3 실행 파일이 없는 것처럼 안내한 사례가 보고됐다. 오류 문구·원인 분류는 수정되지 않았다.
-5. **독립 검증에는 비차단 확인 한계가 남는다.** worker `a552c924`는 두 교정 커밋에 단언 완화나 skip이 없고, 예약어 목록이 PG17 kwlist의 R·T 101개와 일치하며, digest `1c7684a2` 유지와 변이 RED 4종을 확인했다고 보고했다. 다만 전체 HTTP 경로와 서버 예약어 목록 대조를 이 보고서 작업에서 로컬로 다시 실행하지 않았다. 검증자는 구현자와 같은 Claude 계열이어서 모델 계열 독립성도 없다. 이를 최종 성공 CI와 혼동하지 않는다.
-6. **release-candidate 전체는 최종 SHA에서 실행하지 않았다.** 최종 SHA의 `independent-consumer-rc` `consumers` job은 성공했지만, 전체 required workflow 집계와 게시 없는 RC dry-run은 이번 증거에 포함되지 않는다. 태그나 게시도 하지 않았다.
-7. **남은 정보 추론·계약 결정이 있다.** K1 숨은 unique 값, K2 숨은 범위 필드 증감, K3 숨은 자식으로 인한 참조 오류, K4 잔여 경로는 각 Track에 기재된 현행 결과와 소유자 선택이 남았다. 개별 세부사항과 권고는 5.2절.
-8. **낮은 우선순위의 검증·DX 공백이 남았다.** 전체 식별자 인용 변경의 DDL 재독자 전수 확인은 기록되지 않았다. `prototype/tests/read-decoder.test.mjs`, `cache-completion.test.mjs`, `spikes/spike-0-ts/test/*`는 현재 실패해 필수 경로에 연결하지 않은 상태이며 결함 여부는 별도 판단이 필요하다. 확장 안쪽 전이의 거절 사유는 `WIRE.EXTENSION_ERROR`로 뭉쳐 보이고, 단독 집계 기한은 고정 2초다.
-9. **Track B-D2의 500ms budget은 근거 미확인이다.** 상수와 E6 측정 하네스는 있지만, 500ms를 선정한 측정값·결정 근거를 찾지 못했다. Track B §5와 결정 문서에 표시했다.
-10. **추적 기록의 옛 SHA 표기는 일부 최종 저장소에서 찾을 수 없다.** 초안이 짝지은 후보는 커밋 메시지 기반 추정이므로, 최종 코드의 근거 SHA처럼 인용하지 않는다. 이번 보고 기준은 최종 main `d3acc393`이다.
+3. **`server_start_error`의 `NotFound` 문구가 원인을 오도한다.** bwrap이 없는 상황을 node/python3 실행 파일이 없는 것처럼 안내한 사례가 보고됐다. 오류 문구·원인 분류는 수정되지 않았다.
+4. **독립 검증에는 비차단 확인 한계가 남는다.** worker `a552c924`는 두 교정 커밋에 단언 완화나 skip이 없고, 예약어 목록이 PG17 kwlist의 R·T 101개와 일치하며, digest `1c7684a2` 유지와 변이 RED 4종을 확인했다고 보고했다. 다만 전체 HTTP 경로와 서버 예약어 목록 대조를 이 보고서 작업에서 로컬로 다시 실행하지 않았다. 검증자는 구현자와 같은 Claude 계열이어서 모델 계열 독립성도 없다. 이를 최종 성공 CI와 혼동하지 않는다.
+5. **남은 정보 추론·계약 결정이 있다.** K1 숨은 unique 값, K2 숨은 범위 필드 증감, K3 숨은 자식으로 인한 참조 오류, K4 잔여 경로는 각 Track에 기재된 현행 결과와 소유자 선택이 남았다. 개별 세부사항과 권고는 5.2절.
+6. **낮은 우선순위의 검증·DX 공백이 남았다.** 전체 식별자 인용 변경의 DDL 재독자 전수 확인은 기록되지 않았다. `prototype/tests/read-decoder.test.mjs`, `cache-completion.test.mjs`, `spikes/spike-0-ts/test/*`는 현재 실패해 필수 경로에 연결하지 않은 상태이며 결함 여부는 별도 판단이 필요하다. 확장 안쪽 전이의 거절 사유는 `WIRE.EXTENSION_ERROR`로 뭉쳐 보이고, 단독 집계 기한은 고정 2초다.
+7. **Track B-D2의 500ms budget은 근거 미확인이다.** 상수와 E6 측정 하네스는 있지만, 500ms를 선정한 측정값·결정 근거를 찾지 못했다. Track B §5와 결정 문서에 표시했다.
+8. **추적 기록의 옛 SHA 표기는 일부 최종 저장소에서 찾을 수 없다.** 초안이 짝지은 후보는 커밋 메시지 기반 추정이므로, 최종 코드의 근거 SHA처럼 인용하지 않는다. 안정화 코드 기준은 `d3acc393`; 출시 후보와 전체 RC 검증 기준은 의존성 교정 후 `1eda239c`다.
+
+### 확인 완료 (2026-11-22)
+
+- K4 개별 PG17 검증: [Verify 45014410289](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45014410289), SHA `d3acc39376cdd5277df8a7ea241cb3bfb23f05f6`의 `core` 로그 8433–8435에서 외부 create의 `FORBIDDEN` 두 건과 잔여 경로 현행 계약 고정 한 건이 모두 통과했다. 이 개별 회귀 통과는 K4 잔여 지원 여부를 결정하지 않으며, 그 선택지는 §5.2에 남긴다.
+- 출시 후보 전체 검증: 문서 SHA `f7b0c225bb0405c77d174e621c3a6753049a07a6`에서는 Verify [45019169141](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45019169141)의 `head-fast`·`core`가 성공했으나 RC [45019286972](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45019286972)는 `RUSTSEC-2026-0592` (`url 2.5.8`)로 실패했다. 직계 자식 `1eda239c28a8399d62f88360ebd654dbbeee6f53`에서 Cargo.lock 9개만 교정한 뒤 전체 RC [45024949144](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/45024949144)가 성공했다(24 jobs 성공, workflow 허용 조건부 skip 1개). 새 문서 커밋은 이 RC 검증 SHA가 아니다.
 
 ---
 
@@ -271,23 +280,22 @@ D-DEC-1(`Int` 범위): 문서화하고 무범위 `Int`에 advisory를 검토, �
 
 ### 6.1 완료한 작업
 
-1절의 항목 전부(A~F). 결정 문서와 반례 시험은 함께 들어갔다. 최종 Core CI 세 결과(Verify, SDK semantic, independent consumers), Portal·Starter Core 호환 확인, Track B/F1 기록 보완, 본 최종 보고서 추가도 완료했다.
+1절의 항목 전부(A~F). 결정 문서와 반례 시험은 함께 들어갔다. 안정화 SHA의 Core CI 세 결과(Verify, SDK semantic, independent consumers), Portal·Starter Core 호환 확인, `1eda239c`의 전체 RC 성공, Track B/F1 기록 보완, 본 최종 보고서 추가도 완료했다.
 
 ### 6.2 제안 작업 (아직 하지 않음)
 
 | 순서 | 작업 | 비용 | 기대 효과 |
 |---|---|---|---|
-| 1 | release-candidate 전체를 최종 SHA로 dispatch(게시 없는 dry-run) | Actions 시간(필수 workflow 16개, macOS 포함) | 전체 required 집계와 독립 소비자 검증을 같은 SHA에서 확인. 아직 미실행 |
-| 2 | `sema.rs` 대기 3건 구현: C1 budget cost 검사, C2 this-field 산술 하한 검사, C3 id 정렬 | 중. 재현 시험이 이미 있음(`todo`). `COMPATIBILITY.md` 항목 필요(기존 정의가 새로 거부될 수 있음). C3는 의도 확인 선행 | check 통과인데 런타임이 항상 또는 값에 따라 거부되는 정의 2건 제거 |
-| 3 | 서버 시작 오류 메시지가 bwrap 부재를 구분하게 수정 | 소(추정) | 이번처럼 CI 원인 진단이 오도되는 것을 방지 |
-| 4 | 인용 변경 회귀 범위 점검: DDL 문자열을 다시 읽는 코드 전수 확인 | 소~중 | 같은 종류의 숨은 회귀 사전 차단 |
-| 5 | 소유자 결정 5.1~5.5 확정 | 소유자 시간 | 이후 구현의 방향 고정 |
-| 6 | 5.1 확정 후 count `visible` 표기 구현(3안) | 대. `sema.rs`, `plan.rs`, 문법 카드, SDK 생성, 문서 | 공개 총계와 호출자 가시 집계의 명시적 구분. 기존 정의 영향 0 |
-| 7 | 5.4 확정 후 `schema` 필드 추가와 `COMPATIBILITY.md` 진단 JSON 절 수정 | 소(코드 약 10줄 + 문서) | 저장된 진단 JSON의 버전 식별, 호환 약속 명문화 |
-| 8 | K1 경고 추가, K4 잔여 정의 거부 | 소(K1: `policy_advice.rs` 한 항), 중(K4: 호환 영향 기록 포함) | 권한 있는 호출자가 보는 숨은 값 존재 노출 감소 |
-| 9 | 읽기 확장 `read.<R>`를 문법 카드와 공용 문서에 반영, FaceReview 정의에 선언 추가 | 소~중(문법 카드를 바꾸면 생성 문서 골든 갱신) | 읽기 확장이 무엇을 읽는지 정의에 드러남 |
-| 10 | `aip --version --verbose`에 빌드 커밋 노출 | 소(Core 가산 변경) | 소비자 E2E의 "엔진 SHA" 확인이 간접 추정에서 직접 확인으로 |
-| 11 | 줄 합계 롤업, 줄 단위 효과 등 반복 패턴 후보 설계 | 대(공개 의미 추가, 소유자 결정 선행) | 표현력 C 등급 항목을 확장 없이 선언으로 처리 |
-| 12 | 큰 모듈 점진 분리(`sema.rs` 숨은 필드 검사, 정책 확장 한도, bundle·compose 실행, `serve_request` 라우팅) | 대 | 유지보수 비용 감소. 결함 수정과 겹칠 때만 진행하는 것을 권함 |
+| 1 | `sema.rs` 대기 3건 구현: C1 budget cost 검사, C2 this-field 산술 하한 검사, C3 id 정렬 | 중. 재현 시험이 이미 있음(`todo`). `COMPATIBILITY.md` 항목 필요(기존 정의가 새로 거부될 수 있음). C3는 의도 확인 선행 | check 통과인데 런타임이 항상 또는 값에 따라 거부되는 정의 2건 제거 |
+| 2 | 서버 시작 오류 메시지가 bwrap 부재를 구분하게 수정 | 소(추정) | 이번처럼 CI 원인 진단이 오도되는 것을 방지 |
+| 3 | 인용 변경 회귀 범위 점검: DDL 문자열을 다시 읽는 코드 전수 확인 | 소~중 | 같은 종류의 숨은 회귀 사전 차단 |
+| 4 | 소유자 결정 5.1~5.5 확정 | 소유자 시간 | 이후 구현의 방향 고정 |
+| 5 | 5.1 확정 후 count `visible` 표기 구현(3안) | 대. `sema.rs`, `plan.rs`, 문법 카드, SDK 생성, 문서 | 공개 총계와 호출자 가시 집계의 명시적 구분. 기존 정의 영향 0 |
+| 6 | 5.4 확정 후 `schema` 필드 추가와 `COMPATIBILITY.md` 진단 JSON 절 수정 | 소(코드 약 10줄 + 문서) | 저장된 진단 JSON의 버전 식별, 호환 약속 명문화 |
+| 7 | K1 경고 추가, K4 잔여 정의 거부 | 소(K1: `policy_advice.rs` 한 항), 중(K4: 호환 영향 기록 포함) | 권한 있는 호출자가 보는 숨은 값 존재 노출 감소 |
+| 8 | 읽기 확장 `read.<R>`를 문법 카드와 공용 문서에 반영, FaceReview 정의에 선언 추가 | 소~중(문법 카드를 바꾸면 생성 문서 골든 갱신) | 읽기 확장이 무엇을 읽는지 정의에 드러남 |
+| 9 | `aip --version --verbose`에 빌드 커밋 노출 | 소(Core 가산 변경) | 소비자 E2E의 "엔진 SHA" 확인이 간접 추정에서 직접 확인으로 |
+| 10 | 줄 합계 롤업, 줄 단위 효과 등 반복 패턴 후보 설계 | 대(공개 의미 추가, 소유자 결정 선행) | 표현력 C 등급 항목을 확장 없이 선언으로 처리 |
+| 11 | 큰 모듈 점진 분리(`sema.rs` 숨은 필드 검사, 정책 확장 한도, bundle·compose 실행, `serve_request` 라우팅) | 대 | 유지보수 비용 감소. 결함 수정과 겹칠 때만 진행하는 것을 권함 |
 
-우선순위는 남은 C1·C2 및 K4 개별 PG17 결과 확인, `server_start_error` 문구 수정, 전체 RC dry-run 순이다. 공개 의미·호환성 선택이 필요한 항목은 5절의 소유자 결정을 먼저 확정한다.
+우선순위는 남은 C1·C2와 `server_start_error` 문구 수정 순이다. K4 개별 PG17 결과와 전체 RC 검증은 완료됐으며, K4 잔여 지원 여부 및 공개 의미·호환성 선택은 §5의 소유자 결정으로 남긴다.
