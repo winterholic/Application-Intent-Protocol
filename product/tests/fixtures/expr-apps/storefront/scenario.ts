@@ -52,7 +52,7 @@ const s: { o1?: string; o2?: string; o3?: string } = {};
 
 // C-D2: PostgreSQL 진입점에서 HTTP와 생성 TS SDK가 Json의 배열·객체·스칼라를 그대로 전달하는지 확인한다.
 await scenario("S0-json-extension-input-round-trip", async () => {
-  const shapes: Array<[string, unknown]> = [["array", [1, 2]], ["object", { a: 1 }], ["string", "x"], ["number", 7], ["bool", true]];
+  const shapes: Array<[string, unknown]> = [["array", [1, 2]], ["object", { a: 1 }], ["string", "x"], ["number", 7], ["bool", true], ["null", null]];
   for (const [name, payload] of shapes) {
     const r = await rawApply("olga", { extension: "Order.probeJson", input: { payload } }, `sf-json-${name}`);
     assert.equal(r.ok, true, `HTTP ${name}: ${JSON.stringify(r)}`);
@@ -63,6 +63,9 @@ await scenario("S0-json-extension-input-round-trip", async () => {
     assert.equal(r.ok, true, `TypeScript SDK ${name}: ${JSON.stringify(r)}`);
     assert.deepEqual(r.output.payload, payload, `TypeScript SDK ${name} 응답이 입력 Json을 보존`);
   }
+  const omitted = await rawApply("olga", { extension: "Order.probeJson", input: {} }, "sf-json-omitted");
+  assert.equal(omitted.ok, false, `payload 생략은 거부돼야 함: ${JSON.stringify(omitted)}`);
+  assert.equal(code(omitted), "WIRE.BAD_VALUE", "payload 생략은 유효한 Json null과 구분돼야 함");
 });
 
 await scenario("S1-checkout-multi-line-server-total-and-exact-stock", async () => {
