@@ -138,23 +138,6 @@ pub fn parse(facts: &Value, ty: &str, value: &Value) -> Result<(String, &'static
     }
 }
 
-#[cfg(test)]
-mod json_input_tests {
-    use super::{parse, supported};
-    use serde_json::json;
-
-    #[test]
-    fn json_scalar_accepts_arrays_objects_and_primitive_values() {
-        let facts = json!({"enums":{}});
-        for value in [json!([]), json!({"a":[1,2.5,null]}), json!("text"), json!(7), json!(true)] {
-            let (encoded, cast) = parse(&facts, "Json", &value).expect("Json input");
-            assert_eq!(serde_json::from_str::<serde_json::Value>(&encoded).unwrap(), value);
-            assert_eq!(cast, "jsonb");
-        }
-        assert!(supported("Json"));
-    }
-}
-
 pub fn valid_email(s: &str) -> bool {
     if s.contains('\0') || s.chars().any(char::is_whitespace) {
         return false;
@@ -190,4 +173,21 @@ fn valid_date(s: &str) -> bool {
         _ => 31,
     };
     (1..=days).contains(&day)
+}
+
+#[cfg(test)]
+mod json_input_tests {
+    use super::{parse, supported};
+    use serde_json::json;
+
+    #[test]
+    fn json_scalar_accepts_arrays_objects_and_primitive_values() {
+        let facts = json!({"enums":{}});
+        for value in [json!([]), json!({"a":[1,2.5,null]}), json!("text"), json!(7), json!(true)] {
+            let (encoded, cast) = parse(&facts, "Json", &value).expect("Json input");
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&encoded).unwrap(), value);
+            assert_eq!(cast, "jsonb");
+        }
+        assert!(supported("Json"));
+    }
 }
