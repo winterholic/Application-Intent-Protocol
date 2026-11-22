@@ -75,6 +75,43 @@ resource Vote {
   expose read { select id, record, owner, amount; filter amount.eq; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000; offset 100; cursor } }
 }
 "#;
+const SERVICE_COUNT_MATRIX_APP: &str = r#"
+resource Member {
+  fields { id: Id; org: Text }
+  rows read when org = actor.org
+}
+actor Member
+access open(a: Member) = true
+access ofOrg(a: Member, org: Text) = a.org = org
+access never(a: Member) = false
+resource Doc {
+  fields { id: Id; org: Text; owner: Member; amount: Int; kind: Text; secret: Int }
+  rows read when owner = actor
+  field secret read when owner = actor
+  expose read { select id, org, owner, amount, kind, secret; filter kind.eq; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+  aggregate allCount: Int { source Doc; sourceAccess open(actor); callerFilter none; rowOutput none; release count }
+  aggregate allSum: Int { source Doc; sourceAccess open(actor); callerFilter none; rowOutput none; release sum(amount) }
+  aggregate probeCount: Int { input { n: Int }; source Doc; sourceAccess open(actor); where amount >= input.n; callerFilter none; rowOutput none; release count }
+  aggregate probeSum: Int { input { n: Int }; source Doc; sourceAccess open(actor); where amount >= input.n; callerFilter none; rowOutput none; release sum(amount) }
+  aggregate kindCount: Int { input { k: Text }; source Doc; sourceAccess open(actor); where kind = input.k; callerFilter none; rowOutput none; release count }
+  aggregate orgCount: Int { input { o: Text }; source Doc; sourceAccess ofOrg(actor, input.o); where org = input.o; callerFilter none; rowOutput none; release count }
+  aggregate neverCount: Int { source Doc; sourceAccess never(actor); callerFilter none; rowOutput none; release count }
+  aggregate ownCount: Int { source Doc; sourceAccess open(actor); where owner = actor; callerFilter read; rowOutput none; release count }
+  aggregate ownSum: Int { source Doc; sourceAccess open(actor); where owner = actor; callerFilter read; rowOutput none; release sum(amount) }
+  expose aggregate allCount
+  expose aggregate allSum
+  expose aggregate probeCount
+  expose aggregate probeSum
+  expose aggregate kindCount
+  expose aggregate orgCount
+  expose aggregate neverCount
+  expose aggregate ownCount
+  expose aggregate ownSum
+}
+"#;
+const SERVICE_COUNT_MATRIX_SEED: &str = "INSERT INTO {schema}.member(id,org) VALUES (42,'red'),(99,'red'),(100,'blue'); \
+     INSERT INTO {schema}.doc(id,org,owner_id,amount,kind,secret) VALUES \
+     (1,'red',42,10,'a',1),(2,'red',42,20,'b',2),(3,'red',99,500,'secretkind',3),(4,'blue',100,900,'otherkind',4)";
 const SEMANTIC_DATA_APP: &str = r#"
 enum Phase { READY, DONE }
 resource Member {
@@ -240,11 +277,24 @@ async fn policy_standalone_vote_values(fixture: &PolicyHttpFixture) -> Vec<Value
 }
 
 async fn service_policy_http_fixture() -> PolicyHttpFixture {
+    service_policy_http_fixture_with(
+        SERVICE_AGGREGATE_APP,
+        "INSERT INTO {schema}.member(id,org,email) VALUES (42,'red','owner@example.com'),(99,'red','peer@example.com'),(100,'blue','other@example.com'),(101,'blue','hidden@example.com'); \
+         INSERT INTO {schema}.record(id,org,owner_id,title,secret,checked) VALUES \
+         (1,'red',42,'mine','owner-secret',false),(2,'blue',100,'hidden-middle','hidden-middle-secret',false),(3,'red',99,'peer-record','peer-secret','false'),(4,'red',101,'hidden-owner','hidden-owner-secret',false),(5,'blue',99,'foreign','hidden-secret',false); \
+         INSERT INTO {schema}.vote(id,record_id,owner_id,amount) VALUES \
+         (1,1,42,10),(2,1,42,20),(3,1,99,-900),(4,3,99,7),(5,5,99,-700)",
+    )
+    .await
+}
+
+/// `seed`의 `{schema}`는 서비스 스키마 이름으로 바뀐다. 토큰은 `policy-user`(actor 42)와 `policy-peer`(actor 99)다.
+async fn service_policy_http_fixture_with(app: &str, seed: &str) -> PolicyHttpFixture {
     let dir = tempfile::tempdir().unwrap();
     let schema = format!("aip_policyagg_{}", uuid::Uuid::new_v4().simple());
     let config = dir.path().join("service.json");
     let file = dir.path().join("policy.aip");
-    std::fs::write(&file, SERVICE_AGGREGATE_APP).unwrap();
+    std::fs::write(&file, app).unwrap();
     let private = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
     let public = private.to_public_key();
     std::fs::write(
@@ -259,13 +309,7 @@ async fn service_policy_http_fixture() -> PolicyHttpFixture {
     .unwrap();
     command(&config, &["init", file.to_str().unwrap()]).await;
     let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
-    db.batch_execute(&format!(
-        "INSERT INTO {schema}.member(id,org,email) VALUES (42,'red','owner@example.com'),(99,'red','peer@example.com'),(100,'blue','other@example.com'),(101,'blue','hidden@example.com'); \
-         INSERT INTO {schema}.record(id,org,owner_id,title,secret,checked) VALUES \
-         (1,'red',42,'mine','owner-secret',false),(2,'blue',100,'hidden-middle','hidden-middle-secret',false),(3,'red',99,'peer-record','peer-secret','false'),(4,'red',101,'hidden-owner','hidden-owner-secret',false),(5,'blue',99,'foreign','hidden-secret',false); \
-         INSERT INTO {schema}.vote(id,record_id,owner_id,amount) VALUES \
-         (1,1,42,10),(2,1,42,20),(3,1,99,-900),(4,3,99,7),(5,5,99,-700)"
-    )).await.unwrap();
+    db.batch_execute(&seed.replace("{schema}", &schema)).await.unwrap();
     command(&config, &["principal", "bind", "--subject", "policy-user", "--actor", "42"]).await;
     command(&config, &["principal", "bind", "--subject", "policy-peer", "--actor", "99"]).await;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -830,6 +874,203 @@ async fn service_policy_aggregate_noninterference_http_postgres() {
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+}
+
+async fn aggregate_value(fixture: &PolicyHttpFixture, token: &str, name: &str, input: Value) -> Value {
+    post(&fixture.address, "/read", token, &fixture.fingerprint, json!({"query":{"aggregate":format!("Doc.{name}"),"input":input}})).await
+}
+
+async fn service_check_source(name: &str, source: &str) -> (bool, Value) {
+    let dir = std::env::temp_dir().join(format!("aip-count-matrix-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(name);
+    std::fs::write(&file, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_aip")).args(["service", "check", file.to_str().unwrap()]).output().await.unwrap();
+    let body = if output.status.success() { &output.stdout } else { &output.stderr };
+    (output.status.success(), serde_json::from_slice::<Value>(body).unwrap())
+}
+
+/// A1 반례 매트릭스(감사 2026-11-21 §6, hardening policy.md F1, decisions.md O1~O5). **공개 count 계약의 현재 값을 고정한다**: 이 시험의 "누출" 단언은
+/// 결함 수정을 확인하는 것이 아니라 소유자가 기본 의미를 정할 때의 근거(어떤 정의가 무엇을 얼마나 알려주는가)다. 의미를 바꾸면 이 시험의 해당 줄이 바뀐다.
+/// 데이터: Doc 1·2는 호출자(42)의 행, 3은 같은 org(red)의 다른 사람 행(amount 500, kind secretkind), 4는 다른 테넌트(blue)의 행(amount 900).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn service_policy_public_count_counterexample_matrix_http_postgres() {
+    let fixture = service_policy_http_fixture_with(SERVICE_COUNT_MATRIX_APP, SERVICE_COUNT_MATRIX_SEED).await;
+    let outcome = AssertUnwindSafe(async {
+        let (token, fp) = (&fixture.token, &fixture.fingerprint);
+        let value = |response: &Value| response["rows"][0].clone();
+
+        // 0. 호출자가 읽을 수 있는 행은 1·2뿐이다. 3(같은 org, 남의 행)과 4(다른 테넌트)는 읽기로 보이지 않는다.
+        let read = post(
+            &fixture.address,
+            "/read",
+            token,
+            fp,
+            json!({"query":{"read":"Doc","select":["id","amount","secret"],"sort":[{"field":"id","dir":"asc"}]}}),
+        )
+        .await;
+        assert_eq!(read["rows"], json!([{"id":"1","amount":10,"secret":1},{"id":"2","amount":20,"secret":2}]), "{read}");
+
+        // 1. 읽을 수 없는 행 추론 + 같은 정의의 count와 sum 범위 차이 + 다른 테넌트 포함.
+        // where 없는 공개 count는 sourceAccess가 허용한 모든 행을 센다(4개). 같은 정의의 sum은 원본 행 정책을 다시 걸어 읽을 수 있는 행만 더한다(30).
+        assert_eq!(
+            value(&aggregate_value(&fixture, token, "allCount", json!({})).await),
+            json!(4),
+            "count는 읽을 수 없는 행과 다른 테넌트 행을 모두 센다"
+        );
+        assert_eq!(value(&aggregate_value(&fixture, token, "allSum", json!({})).await), json!(30), "sum은 읽을 수 있는 행(10+20)만");
+        // 숨은 행이 늘면 count만 변하고 sum은 변하지 않는다: 호출자는 count의 변화로 자기에게 안 보이는 행의 존재를 안다.
+        policy_db_execute(&fixture.schema, "INSERT INTO doc(id,org,owner_id,amount,kind,secret) VALUES (5,'red',99,7,'late',5)").await;
+        assert_eq!(value(&aggregate_value(&fixture, token, "allCount", json!({})).await), json!(5), "숨은 행 추가가 count에 드러남");
+        assert_eq!(value(&aggregate_value(&fixture, token, "allSum", json!({})).await), json!(30), "sum은 변하지 않음");
+        policy_db_execute(&fixture.schema, "DELETE FROM doc WHERE id=5").await;
+        assert_eq!(value(&aggregate_value(&fixture, token, "allCount", json!({})).await), json!(4));
+
+        // 2. input + where로 숨은 값 탐색(A-01, F1). 호출자가 n을 바꿔 가며 count를 읽어 읽을 수 없는 행의 amount 최댓값을 이분 탐색으로 복원한다.
+        // 다른 테넌트의 행(900)까지 포함된다. 같은 where의 sum은 원본 행 정책 때문에 정보가 없다.
+        let (mut low, mut high) = (0i64, 100_000i64);
+        while low < high {
+            let mid = (low + high + 1) / 2;
+            let count = value(&aggregate_value(&fixture, token, "probeCount", json!({"n": mid})).await);
+            if count.as_i64().unwrap() >= 1 {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        assert_eq!(
+            low, 900,
+            "probeCount의 이분 탐색이 다른 테넌트 행의 amount 900을 복원한다(공개 count 계약, 경고 DEF.ADVISORY_PUBLIC_COUNT_INPUT 대상)"
+        );
+        assert_eq!(
+            value(&aggregate_value(&fixture, token, "probeCount", json!({"n": 501})).await),
+            json!(1),
+            "500짜리 숨은 행은 n=501에서 빠지고 900만 남음"
+        );
+        let (mut low, mut high) = (0i64, 100_000i64);
+        while low < high {
+            let mid = (low + high + 1) / 2;
+            let sum = value(&aggregate_value(&fixture, token, "probeSum", json!({"n": mid})).await);
+            if sum.as_i64().unwrap() >= 1 {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        assert_eq!(low, 20, "같은 where의 sum은 읽을 수 있는 행(최대 20)만 드러내 숨은 500·900을 찾지 못한다");
+        // 값 존재 확인: 숨은 행의 kind 값을 한 값씩 센다. sum 쪽에는 이 통로가 없다(sum은 amount를 더할 뿐 kind별 존재를 안 알린다).
+        for (kind, expected) in [("a", 1), ("secretkind", 1), ("otherkind", 1), ("nothing", 0)] {
+            assert_eq!(value(&aggregate_value(&fixture, token, "kindCount", json!({"k": kind})).await), json!(expected), "kindCount {kind}");
+        }
+
+        // 3. sourceAccess 유무. 선언이 없으면 정의가 거부되고(아래 정의 매트릭스), guard가 있으면 guard가 거짓일 때 ACCESS_DENIED다.
+        let denied = aggregate_value(&fixture, token, "neverCount", json!({})).await;
+        assert_eq!(denied["code"], "WIRE.ACCESS_DENIED", "{denied}");
+        // guard가 input을 받으면 호출자가 고를 수 있는 값을 정한다: 자기 org(red)는 숨은 행까지 3개를 세고, 남의 org(blue)는 거부된다.
+        assert_eq!(
+            value(&aggregate_value(&fixture, token, "orgCount", json!({"o": "red"})).await),
+            json!(3),
+            "guard 안에서는 공개 count 의미가 그대로: 같은 org의 읽을 수 없는 행 3 포함"
+        );
+        let other_org = aggregate_value(&fixture, token, "orgCount", json!({"o": "blue"})).await;
+        assert_eq!(other_org["code"], "WIRE.ACCESS_DENIED", "guard가 다른 테넌트를 세지 못하게 한다: {other_org}");
+
+        // 4. callerFilter read: where가 행 정책(owner = actor)을 함의하면 센 행은 모두 읽을 수 있는 행이고, 호출자 filter로도 숨은 값을 셀 수 없다.
+        assert_eq!(value(&aggregate_value(&fixture, token, "ownCount", json!({})).await), json!(2));
+        assert_eq!(value(&aggregate_value(&fixture, token, "ownSum", json!({})).await), json!(30));
+        for (kind, expected) in [("a", 1), ("secretkind", 0), ("otherkind", 0)] {
+            let filtered = post(
+                &fixture.address,
+                "/read",
+                token,
+                fp,
+                json!({"query":{"aggregate":"Doc.ownCount","input":{},"filter":[{"field":"kind","op":"eq","value":kind}]}}),
+            )
+            .await;
+            assert_eq!(value(&filtered), json!(expected), "callerFilter read는 읽을 수 있는 행 안에서만 센다({kind}): {filtered}");
+        }
+        // callerFilter none은 호출자 filter 자체를 거부한다.
+        let rejected_filter = post(
+            &fixture.address,
+            "/read",
+            token,
+            fp,
+            json!({"query":{"aggregate":"Doc.allCount","input":{},"filter":[{"field":"kind","op":"eq","value":"secretkind"}]}}),
+        )
+        .await;
+        assert_eq!(rejected_filter["code"], "WIRE.FILTER_NOT_ALLOWED", "{rejected_filter}");
+
+        // 5. 같은 행 집합을 다른 호출자(99)가 보면 값이 다르다: count는 호출자와 무관하게 4, ownCount와 sum은 호출자의 행(3번 하나)만.
+        let peer = &fixture.peer_token;
+        assert_eq!(value(&aggregate_value(&fixture, peer, "allCount", json!({})).await), json!(4));
+        assert_eq!(value(&aggregate_value(&fixture, peer, "allSum", json!({})).await), json!(500), "99가 읽는 행은 3번(500)뿐");
+        assert_eq!(value(&aggregate_value(&fixture, peer, "ownCount", json!({})).await), json!(1));
+    })
+    .catch_unwind()
+    .await;
+    fixture.cleanup().await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+/// A1 정의 단계 매트릭스. 같은 정의의 변형이 check에서 거부/경고/통과 어느 쪽인지(DB 불필요). 위 HTTP 매트릭스가 값을 보여 주는 정의들과 짝이다.
+#[tokio::test]
+async fn service_check_public_count_definition_matrix() {
+    let codes = |v: &Value, key: &str| {
+        v[key].as_array().map(|a| a.iter().map(|x| x["code"].as_str().unwrap().to_string()).collect::<Vec<_>>()).unwrap_or_default()
+    };
+    let (ok, base) = service_check_source("base.aip", SERVICE_COUNT_MATRIX_APP).await;
+    assert!(ok, "{base}");
+    let advisories: Vec<(String, String)> = base["advisories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| (a["code"].as_str().unwrap().to_string(), a["message"].as_str().unwrap().split('`').nth(1).unwrap_or("").to_string()))
+        .collect();
+    // where 없는 count(allCount, neverCount)와 input where count(probeCount, kindCount)만 경고. guard가 input을 받는 orgCount, 정책을 함의한 ownCount, sum은 경고 없음.
+    assert_eq!(
+        advisories,
+        [
+            ("DEF.ADVISORY_PUBLIC_COUNT".to_string(), "allCount".to_string()),
+            ("DEF.ADVISORY_PUBLIC_COUNT_INPUT".to_string(), "probeCount".to_string()),
+            ("DEF.ADVISORY_PUBLIC_COUNT_INPUT".to_string(), "kindCount".to_string()),
+            ("DEF.ADVISORY_PUBLIC_COUNT".to_string(), "neverCount".to_string()),
+        ],
+        "{base}"
+    );
+    // sourceAccess 없음: 거부.
+    let no_access =
+        SERVICE_COUNT_MATRIX_APP.replace("aggregate allCount: Int { source Doc; sourceAccess open(actor);", "aggregate allCount: Int { source Doc;");
+    let (ok, rejected) = service_check_source("no-access.aip", &no_access).await;
+    assert!(!ok && codes(&rejected, "diagnostics") == ["DEF.MISSING_ITEM"], "{rejected}");
+    // callerFilter read인데 where가 행 정책을 함의하지 않음: 거부(오라클). input 없는 변형도 같다.
+    let oracle = SERVICE_COUNT_MATRIX_APP.replace(
+        "where owner = actor; callerFilter read; rowOutput none; release count",
+        "where kind = \"a\"; callerFilter read; rowOutput none; release count",
+    );
+    let (ok, rejected) = service_check_source("oracle.aip", &oracle).await;
+    assert!(!ok && codes(&rejected, "diagnostics") == ["DEF.CALLER_FILTER_POLICY_REQUIRED"], "{rejected}");
+    // 숨은 필드(secret)의 sum·where input 비교는 거부.
+    let hidden_sum =
+        SERVICE_COUNT_MATRIX_APP.replace("release sum(amount) }\n  aggregate probeCount", "release sum(secret) }\n  aggregate probeCount");
+    let (ok, rejected) = service_check_source("hidden-sum.aip", &hidden_sum).await;
+    assert!(!ok && codes(&rejected, "diagnostics") == ["DEF.POLICY_FIELD_NOT_AGGREGATABLE"], "{rejected}");
+    let hidden_where = SERVICE_COUNT_MATRIX_APP.replace(
+        "where amount >= input.n; callerFilter none; rowOutput none; release count",
+        "where secret >= input.n; callerFilter none; rowOutput none; release count",
+    );
+    let (ok, rejected) = service_check_source("hidden-where.aip", &hidden_where).await;
+    assert!(!ok && codes(&rejected, "diagnostics") == ["DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION"], "{rejected}");
+    // where가 행 정책을 AND 항으로 포함하면 probeCount의 경고가 사라진다(응답은 읽을 수 있는 행만 센다).
+    let closed = SERVICE_COUNT_MATRIX_APP.replace(
+        "where amount >= input.n; callerFilter none; rowOutput none; release count",
+        "where owner = actor and amount >= input.n; callerFilter none; rowOutput none; release count",
+    );
+    let (ok, accepted) = service_check_source("closed.aip", &closed).await;
+    assert!(ok, "{accepted}");
+    let probe_warned = accepted["advisories"].as_array().unwrap().iter().any(|a| a["message"].as_str().unwrap().contains("`probeCount`"));
+    assert!(!probe_warned, "행 정책을 함의한 where는 경고가 없다: {accepted}");
 }
 
 /// 감사 2026-11-21 §6.2: 원본 Vote에 `rows read`가 있고 where 없는 `callerFilter read` count를 두면, 수정 전에는 기본 check가 통과했고
