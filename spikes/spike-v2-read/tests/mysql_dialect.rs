@@ -45,16 +45,20 @@ fn mysql(req: &Value) -> Plan {
 }
 
 #[test]
-fn postgres_output_is_unchanged_by_the_dialect_plumbing() {
+fn postgres_output_quotes_every_column_identifier() {
     let f = facts();
     let a = plan_read(&f, &request(), &caller()).unwrap();
     let b = plan_read_in(Dialect::Postgres, &f, &request(), &caller(), IdWire::Legacy).unwrap();
     assert_eq!((&a.sql, &a.params, &a.deps), (&b.sql, &b.params, &b.deps));
-    // Pinned: numbered `$n::text::cast` bindings, unquoted snake names, json_build_object, strpos, LATERAL.
-    assert!(a.sql.starts_with("SELECT json_build_object('id', t.id, 'title', t.title, 'periodEnd', t.period_end, 'club', j"), "{}", a.sql);
-    assert!(a.sql.contains("LEFT JOIN LATERAL (SELECT json_build_object('id', r"), "{}", a.sql);
-    assert!(a.sql.contains("t.title ILIKE $") && a.sql.ends_with("LIMIT $8::text::bigint"), "{}", a.sql);
-    assert!(a.sql.contains("t.club_id IN ($") && a.sql.contains("::text::timestamptz"), "{}", a.sql);
+    // Pinned: numbered `$n::text::cast` bindings, quoted mapped columns, json_build_object, strpos, LATERAL.
+    assert!(
+        a.sql.starts_with("SELECT json_build_object('id', t.\"id\", 'title', t.\"title\", 'periodEnd', t.\"period_end\", 'club', j"),
+        "{}",
+        a.sql
+    );
+    assert!(a.sql.contains("LEFT JOIN LATERAL (SELECT json_build_object('id', r1.\"id\""), "{}", a.sql);
+    assert!(a.sql.contains("t.\"title\" ILIKE $") && a.sql.ends_with("LIMIT $8::text::bigint"), "{}", a.sql);
+    assert!(a.sql.contains("t.\"club_id\" IN ($") && a.sql.contains("::text::timestamptz"), "{}", a.sql);
 }
 
 #[test]

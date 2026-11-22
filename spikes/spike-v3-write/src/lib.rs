@@ -2554,17 +2554,21 @@ mod reserved_column_tests {
 
     #[test]
     fn write_column_quotes_postgres_reserved_field_names() {
-        let words = ["grant", "order", "group", "limit", "check", "user", "table", "column", "default", "offset", "select", "desc"];
+        let words = ["grant", "order", "group", "limit", "check", "user", "table", "column", "default", "offset", "select", "desc", "from", "where"];
         let mut fields = serde_json::Map::new();
         for word in words {
             fields.insert(word.to_string(), json!({"ty": "Text"}));
         }
         fields.insert("name".to_string(), json!({"ty": "Text"}));
+        fields.insert("owner".to_string(), json!({"ty": "Ref<Member>"}));
         let facts = json!({"resources": {"Item": {"fields": fields}}});
 
         for word in words {
             assert_eq!(column(&facts, "Item", word).as_deref(), Some(&format!("\"{word}\"")[..]), "{word}");
         }
-        assert_eq!(column(&facts, "Item", "name").as_deref(), Some("name"));
+        assert_eq!(column(&facts, "Item", "name").as_deref(), Some("\"name\""));
+        assert_eq!(column(&facts, "Item", "owner").as_deref(), Some("\"owner_id\""));
+        assert_eq!(column(&facts, "Item", "from").as_deref(), Some("\"from\""));
+        assert_eq!(column(&facts, "Item", "where").as_deref(), Some("\"where\""));
     }
 }

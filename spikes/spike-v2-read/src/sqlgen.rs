@@ -92,7 +92,7 @@ pub fn column(facts: &Value, res: &str, field: &str) -> Option<String> {
     Some(if field != "id" && ty.starts_with("Ref<") { format!("{}_id", snake(field)) } else { snake(field) })
 }
 
-/// SQL을 만드는 대상 엔진. PostgreSQL 출력은 기존 그대로 두고 MySQL은 같은 의미를 별도 구문으로 낸다.
+/// SQL을 만드는 대상 엔진. PostgreSQL 식별자는 큰따옴표로, MySQL 식별자는 백틱으로 감싼다.
 /// MariaDB는 LATERAL을 지원하지 않아 이 방언의 대상이 아니다(어댑터가 시작 때 거부한다).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Dialect {
@@ -106,18 +106,12 @@ impl Dialect {
         self == Dialect::MySql
     }
 
-    /// PostgreSQL 키워드인 필드 이름은 큰따옴표로, MySQL 식별자는 백틱으로 감싼다.
+    /// PostgreSQL 식별자는 항상 큰따옴표로, MySQL 식별자는 백틱으로 감싼다.
     pub fn ident(self, name: &str) -> String {
         match self {
-            Dialect::Postgres
-                if matches!(
-                    name,
-                    "grant" | "order" | "group" | "limit" | "check" | "user" | "table" | "column" | "default" | "offset" | "select" | "desc"
-                ) =>
-            {
+            Dialect::Postgres => {
                 format!("\"{}\"", name.replace('"', "\"\""))
             }
-            Dialect::Postgres => name.to_string(),
             Dialect::MySql => format!("`{}`", name.replace('`', "``")),
         }
     }
@@ -849,8 +843,12 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                 let mut cx = Ctx::for_ddl(facts);
                 let env = Env { this: Some((snake(name), name.clone())), ..Default::default() };
                 let cond = cx.cond(&enf["where"], &env)?;
-                let cols: Vec<String> =
-                    enf["columns"].as_array().unwrap().iter().map(|c| column(facts, name, c.as_str().unwrap()).unwrap()).collect();
+                let cols: Vec<String> = enf["columns"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| Dialect::Postgres.ident(&column(facts, name, c.as_str().unwrap()).unwrap()))
+                    .collect();
                 // 부분 인덱스 조건은 테이블 별칭을 쓸 수 없어 `recruitment.status` 꼴을 열 이름으로 바꾼다.
                 let cond = cond.replace(&format!("{}.", snake(name)), "");
                 if enf["deferred"] == true {
