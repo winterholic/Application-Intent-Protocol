@@ -51,6 +51,8 @@ jobs:
   # Independent consumer apps on this exact SHA (core_sha defaults to the caller's github.sha), not a pinned past commit.
   independent-consumers:
     uses: ./.github/workflows/independent-consumer-rc.yml
+  concurrency-contracts:
+    uses: ./.github/workflows/concurrency-contracts.yml
 
   required:
     name: required (all workflows green on this SHA)
@@ -72,6 +74,7 @@ jobs:
       - semantic-conformance
       - macos-platform-tests
       - independent-consumers
+      - concurrency-contracts
     runs-on: ubuntu-24.04
     permissions:
       contents: read

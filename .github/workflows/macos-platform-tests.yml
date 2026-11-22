@@ -56,6 +56,13 @@ jobs:
         run: cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --test v4_1 --locked --target-dir target
       - name: Operation-only service with the macOS worker sandbox
         run: cargo test -p aip-cli --test service_flow operation_only_service_preserves_principal_contract_revocation_and_deployment_fences --locked -- --nocapture
+      - name: macOS-only worker lifetime and sandbox tests of the v6 transport (B-05)
+        # These files compile only for macOS (`#![cfg(target_os = "macos")]` / `mod macos`), so Linux Verify runs zero tests from them.
+        run: |
+          cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target \
+            --test extension_lifetime --test extension_unix --test write_extension_lifetime --test write_session_outcome
+          cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test durable \
+            messages_share_atomic_job_effects_and_reject_foreign_acknowledgements
       - name: Show PostgreSQL log on failure
         if: failure()
         run: tail -n 100 "$RUNNER_TEMP/pg.log"

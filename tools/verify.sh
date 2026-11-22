@@ -141,9 +141,14 @@ node --test \
   product/tests/dev-jwt.test.mjs \
   product/tests/external-create-order.test.mjs \
   product/tests/upgrade-drill.test.mjs \
-  product/tests/google-storage-provider.test.mjs
+  product/tests/google-storage-provider.test.mjs \
+  spikes/spike-v6-transport/client/uuid.test.ts \
+  spikes/spike-v6-transport/client/extension-rejection.test.ts
 python3 -W error::ResourceWarning -m unittest product.tests.google_storage_provider_test product.tests.password_auth_test product.tests.python_sdk_test product.tests.dedicated_db_test product.tests.test_facereview_ui_browser_evidence product.tests.test_facereview_write_deployments product.tests.test_facereview_e2e_suites product.tests.test_rust_lint_gate product.tests.test_release_candidate_required
 python3 -W error::ResourceWarning -m unittest porting.flaskbb.tests.test_post_order_manifest
+# Repository tooling tests that no gate ran before (F-05): FaceReview/Infisical inventories and the storage evidence finisher.
+python3 -W error::ResourceWarning -m unittest discover -s tools -p 'test_*.py'
+python3 -W error::ResourceWarning -m unittest discover -s scripts -p 'test_*.py'
 python3 spikes/spike-v4-worker/tests/python_frame_limit.py -v
 
 # Test feature combinations can replace target/debug/aip; rebuild the product last.

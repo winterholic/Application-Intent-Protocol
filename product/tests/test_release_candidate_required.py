@@ -19,6 +19,9 @@ OTHER_SHA = "b" * 40
 # Called workflows whose jobs may skip inside a release-candidate run because the job-level `if:` cannot hold there
 # (worker-jobs-linux's crypto repair job only runs for a `crypto_repair_only` dispatch of that workflow).
 ALLOW_SKIPPED = ["worker-jobs-linux / crypto-compile-repair"]
+# Called workflows without a main push trigger of their own. independent-consumer-rc.yml belongs to Track C; until it adds a
+# `push: branches: [main]` trigger the consumers are proven by the release candidate and by dispatch only (reported to the lead).
+MAIN_PUSH_EXEMPT = {"independent-consumer-rc.yml"}
 PUBLISH_PATTERNS = [r"npm\s+publish", r"twine\s+upload", r"gh\s+release\s+(create|upload)", r"pypi-publish",
                     r"action-gh-release", r"git\s+push", r"git\s+tag\b", r"cargo\s+publish", r"id-token:\s*write"]
 
@@ -220,12 +223,19 @@ class WorkflowStructureTest(unittest.TestCase):
 
     def test_a_release_candidate_run_checks_out_the_candidate_sha_only(self):
         for file in set(called_workflows()):
-            for ref in re.findall(r"^\s+ref:\s*(.+)$", read(file), re.M):
+            text = read(file)
+            for ref in re.findall(r"^\s+ref:\s*(.+)$", text, re.M):
                 with self.subTest(file=file):
-                    self.assertEqual(ref.strip(), "${{ github.sha }}", f"{file} pins a checkout ref other than the candidate")
+                    if ref.strip() == "${{ env.TARGET_SHA }}":
+                        # Only acceptable when TARGET_SHA is the caller's SHA unless a core_sha input overrides it, and the
+                        # release candidate never passes that input.
+                        self.assertIn("TARGET_SHA: ${{ inputs.core_sha || github.sha }}", text)
+                        self.assertNotIn("core_sha", job_block(read("release-candidate.yml"), "independent-consumers"))
+                    else:
+                        self.assertEqual(ref.strip(), "${{ github.sha }}", f"{file} pins a checkout ref other than the candidate")
 
     def test_every_required_workflow_runs_on_every_main_push_without_a_path_filter(self):
-        for file in sorted(set(called_workflows())):
+        for file in sorted(set(called_workflows()) - MAIN_PUSH_EXEMPT):
             push = trigger_block(read(file), "push")
             with self.subTest(file=file):
                 self.assertNotEqual(push, "", f"{file} has no push trigger, so main commits skip it")
@@ -237,8 +247,9 @@ class WorkflowStructureTest(unittest.TestCase):
         for file in sorted(set(called_workflows()) | {"release-candidate.yml"}):
             block = top_block(read(file), "concurrency")
             with self.subTest(file=file):
-                self.assertIn("github.sha", block)
-                self.assertNotRegex(block, r"(?m)cancel-in-progress:\s*true\s*$")
+                if block:  # no concurrency block means nothing is ever cancelled
+                    self.assertIn("github.sha", block)
+                    self.assertNotRegex(block, r"(?m)cancel-in-progress:\s*true\s*$")
 
     def test_every_continue_on_error_step_is_aggregated_into_a_failing_final_step(self):
         for path in sorted(WORKFLOWS.glob("*.yml")):
@@ -252,6 +263,49 @@ class WorkflowStructureTest(unittest.TestCase):
                     final = [s for s in steps if "if: ${{ always() }}" in s and f"steps.{step_id.group(1)}.outcome" in s]
                     self.assertTrue(final, f"{path.name}: outcome of {step_id.group(1)} is never re-checked, so its failure is masked")
                     self.assertIn("sys.exit(1 if failed else 0)", final[0])
+
+
+class ContractWiringTest(unittest.TestCase):
+    """B-05, B-06, F-05: tests that exist but ran nowhere are tied to a workflow, and the split is checked for drift."""
+
+    def probe_lists(self):
+        out = subprocess.run(["bash", str(ROOT / "scripts/run-concurrency-probes.sh"), "--list"],
+                             capture_output=True, text=True, check=True).stdout
+        lists = {"stable": [], "exploratory": []}
+        for line in out.splitlines():
+            kind, name = line.split()
+            lists[kind].append(name)
+        return lists
+
+    def test_every_ignored_concurrency_probe_is_classified_stable_or_exploratory_exactly_once(self):
+        source = (ROOT / "spikes/spike-v6-transport/tests/concurrency_probe_http.rs").read_text()
+        ignored = re.findall(r"#\[ignore[^\n]*\]\nasync fn (\w+)", source)
+        lists = self.probe_lists()
+        self.assertEqual(len(ignored), 17, ignored)
+        self.assertEqual(sorted(lists["stable"] + lists["exploratory"]), sorted(ignored))
+        self.assertFalse(set(lists["stable"]) & set(lists["exploratory"]))
+        # The task's stable set: f1, i1-i5, n1, e1-e5. a1-a5 stay exploratory.
+        self.assertEqual(sorted(name.split("_")[0] for name in lists["stable"]),
+                         sorted(["f1", "n1", *(f"i{n}" for n in range(1, 6)), *(f"e{n}" for n in range(1, 6))]))
+
+    def test_stable_probes_are_required_and_exploratory_probes_are_not(self):
+        self.assertIn("concurrency-contracts", release_candidate_jobs())
+        self.assertIn("run-concurrency-probes.sh stable", read("concurrency-contracts.yml"))
+        exploration = read("concurrency-exploration.yml")
+        self.assertNotIn("concurrency-exploration.yml", called_workflows())
+        self.assertNotIn("workflow_call:", exploration)
+        self.assertIn("schedule:", exploration)
+        self.assertIn("workflow_dispatch:", exploration)
+
+    def test_macos_only_test_files_run_in_the_macos_workflow(self):
+        macos = read("macos-platform-tests.yml")
+        gated = {path.stem for pattern in ("spikes/*/tests/*.rs", "crates/*/tests/*.rs") for path in ROOT.glob(pattern)
+                 if path.read_text().lstrip().startswith("#![cfg(target_os = \"macos\")]")}
+        gated |= {"extension_lifetime", "durable"}  # `mod macos` / one `#[cfg(target_os = "macos")]` test inside a shared file
+        self.assertGreaterEqual(len(gated), 4)
+        for stem in sorted(gated):
+            with self.subTest(test_file=stem):
+                self.assertRegex(macos, rf"--test {stem}\b", f"{stem}.rs compiles only for macOS and no macOS job runs it")
 
 
 if __name__ == "__main__":

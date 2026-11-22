@@ -1,0 +1,74 @@
+name: Concurrency exploration
+
+# Costly or known-open concurrency probes (a1..a5; a1 reproduces the open opposite-order bundle deadlock, LIMITS E9). They are not
+# required for a release candidate: run them by hand with larger PROBE_ROUNDS / PROBE_N, or let the weekly schedule keep a baseline.
+# A failure here is evidence to investigate, not a gate. The stable probes are in concurrency-contracts.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: Probe to run (exact test name), or `exploratory` for a1..a5
+        required: true
+        type: string
+        default: exploratory
+      rounds:
+        description: PROBE_ROUNDS (repetitions per probe)
+        required: true
+        type: string
+        default: '5'
+      concurrent:
+        description: PROBE_N (concurrent requests per round)
+        required: true
+        type: string
+        default: '2'
+  schedule:
+    - cron: '41 4 * * 0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: concurrency-exploration-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  explore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+      PROBE_ROUNDS: ${{ inputs.rounds || '5' }}
+      PROBE_N: ${{ inputs.concurrent || '2' }}
+      PROBE_SELECTION: ${{ inputs.probe || 'exploratory' }}
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Install Rust toolchain
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Run the exploratory probes
+        run: bash scripts/run-concurrency-probes.sh "$PROBE_SELECTION"

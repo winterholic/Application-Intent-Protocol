@@ -1,0 +1,70 @@
+name: Concurrency contracts
+
+# The stable concurrency probes of plan-docs/hardening-1.0/concurrency.md (failing bundles leave nothing, idempotency keys, bounds,
+# extension races, saturated worker slots) over real HTTP and PostgreSQL 17. They are #[ignore]d only because sqlgen::set_schema is
+# process-wide, so scripts/run-concurrency-probes.sh runs each in its own process. The costly exploratory probes live in
+# concurrency-exploration.yml and are not required.
+on:
+  # NOTE: release-candidate.yml calls this workflow on release branches and v* tags.
+  workflow_call:
+  # NOTE: main pushes run unfiltered so no commit skips a required check (stabilization F-03).
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'spikes/spike-v1-fixture/**'
+      - 'spikes/spike-v2-read/**'
+      - 'spikes/spike-v3-write/**'
+      - 'spikes/spike-v4-worker/**'
+      - 'spikes/spike-v5-sdk/**'
+      - 'spikes/spike-v6-transport/**'
+      - 'crates/aip-test-support/**'
+      - 'scripts/run-concurrency-probes.sh'
+      - '.github/workflows/concurrency-contracts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: concurrency-contracts-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  stable-probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Install Rust toolchain
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Run the stable concurrency probes, one process each
+        run: bash scripts/run-concurrency-probes.sh stable
