@@ -1,0 +1,98 @@
+diff --git a/spec/definition-diagnostics.md b/spec/definition-diagnostics.md
+index e2321c38..d35f54f7 100644
+--- a/spec/definition-diagnostics.md
++++ b/spec/definition-diagnostics.md
+@@ -692,6 +692,32 @@ the groupKey does not reference the owning resource
+ - 원인: A per-row aggregate groups the source rows by the reference that points to the row it belongs to.
+ - 수정: Name a field of the source whose type is the owning resource.
+ 
++### `DEF.ACCESS_TARGET_NOT_EXPOSED`
++
++an extension or job `access` names a transition that is not exposed
++
++- 원인: A write extension or a job may call only a transition that the definition exposes with `expose apply`. A transition that is not exposed, or that does not exist, is not a grantable capability. Before this code existed the same condition was reported as DEF.UNKNOWN_SYMBOL, which also means other things.
++- 수정: Add `expose apply <transition> { target id; bulk maxRows N }` to the resource, or remove the `access` entry, or name a transition that is exposed.
++
++```aip
++actor Member
++resource Member { fields { id: Id } }
++resource Event {
++  fields { id: Id; member: Member; checked: Bool }
++  rows read when member = actor
++  transition mark { allow member = actor; from checked = false; to checked = true }
++  expose apply mark { target id; bulk maxRows 2 }
++  extension write run {
++    input { id: Event.Id }
++    output { id: Event.Id; count: Int }
++    access Event.mark
++    effect db
++    deadline 2s
++    implementation "write.run"
++  }
++}
++```
++
+ ### `DEF.EXT_INPUT_UNBOUND`
+ 
+ an access input is not received by the extension
+diff --git a/spikes/spike-v1-fixture/src/codes.rs b/spikes/spike-v1-fixture/src/codes.rs
+index 31fd3772..29ea3921 100644
+--- a/spikes/spike-v1-fixture/src/codes.rs
++++ b/spikes/spike-v1-fixture/src/codes.rs
+@@ -617,6 +617,13 @@ pub static REGISTRY: &[Info] = &[
+         "Name a field of the source whose type is the owning resource.",
+         "",
+     ),
++    i(
++        "DEF.ACCESS_TARGET_NOT_EXPOSED",
++        "an extension or job `access` names a transition that is not exposed",
++        "A write extension or a job may call only a transition that the definition exposes with `expose apply`. A transition that is not exposed, or that does not exist, is not a grantable capability. Before this code existed the same condition was reported as DEF.UNKNOWN_SYMBOL, which also means other things.",
++        "Add `expose apply <transition> { target id; bulk maxRows N }` to the resource, or remove the `access` entry, or name a transition that is exposed.",
++        "actor Member\nresource Member { fields { id: Id } }\nresource Event {\n  fields { id: Id; member: Member; checked: Bool }\n  rows read when member = actor\n  transition mark { allow member = actor; from checked = false; to checked = true }\n  expose apply mark { target id; bulk maxRows 2 }\n  extension write run {\n    input { id: Event.Id }\n    output { id: Event.Id; count: Int }\n    access Event.mark\n    effect db\n    deadline 2s\n    implementation \"write.run\"\n  }\n}\n",
++    ),
+     i(
+         "DEF.EXT_INPUT_UNBOUND",
+         "an access input is not received by the extension",
+diff --git a/spikes/spike-v1-fixture/src/sema.rs b/spikes/spike-v1-fixture/src/sema.rs
+index 17b73b05..61ad5cd8 100644
+--- a/spikes/spike-v1-fixture/src/sema.rs
++++ b/spikes/spike-v1-fixture/src/sema.rs
+@@ -2754,7 +2754,7 @@ impl<'a> Ctx<'a> {
+                         let exposed = self.res.get(domain.as_str()).is_some_and(|r| r.expose_apply.iter().any(|e| &e.transition == name));
+                         if !exposed {
+                             self.d(
+-                                "DEF.UNKNOWN_SYMBOL",
++                                "DEF.ACCESS_TARGET_NOT_EXPOSED",
+                                 format!("job 쓰기 access `{domain}.{name}`는 공개된 전이(expose apply)여야 함"),
+                                 operation.span,
+                             );
+@@ -2863,7 +2863,7 @@ impl<'a> Ctx<'a> {
+                 }
+                 let exposed = self.res.get(rn.as_str()).is_some_and(|r| r.expose_apply.iter().any(|e| &e.transition == tn));
+                 if !exposed {
+-                    self.d("DEF.UNKNOWN_SYMBOL", format!("쓰기 access `{rn}.{tn}`는 공개된 전이(expose apply)여야 함"), x.span);
++                    self.d("DEF.ACCESS_TARGET_NOT_EXPOSED", format!("쓰기 access `{rn}.{tn}`는 공개된 전이(expose apply)여야 함"), x.span);
+                     continue;
+                 }
+                 acc.insert(format!("{rn}.{tn}"), json!("transition"));
+diff --git a/spikes/spike-v1-fixture/tests/diagnostic_fields.rs b/spikes/spike-v1-fixture/tests/diagnostic_fields.rs
+index caf90211..f74720b9 100644
+--- a/spikes/spike-v1-fixture/tests/diagnostic_fields.rs
++++ b/spikes/spike-v1-fixture/tests/diagnostic_fields.rs
+@@ -156,3 +156,16 @@ fn a_published_code_is_never_removed_from_the_registry() {
+         "a code that was published is gone from src/codes.rs (retire it with `status: retired`, never delete it): {removed:?}"
+     );
+ }
++
++#[test]
++fn an_access_to_a_transition_that_is_not_exposed_has_its_own_code() {
++    let def = |expose: &str| {
++        format!(
++            "actor Member\nresource Member {{ fields {{ id: Id }} }}\nresource Event {{\n  fields {{ id: Id; member: Member; checked: Bool }}\n  rows read when member = actor\n  transition mark {{ allow member = actor; from checked = false; to checked = true }}\n  {expose}\n  extension write run {{\n    input {{ id: Event.Id }}\n    output {{ id: Event.Id; count: Int }}\n    access Event.mark\n    effect db\n    deadline 2s\n    implementation \"write.run\"\n  }}\n}}\n"
++        )
++    };
++    assert!(load_str(&def("expose apply mark { target id; bulk maxRows 2 }"), Form::A).is_ok());
++    let ds = failure(&def(""), Form::A);
++    assert!(ds.iter().any(|d| d["code"] == "DEF.ACCESS_TARGET_NOT_EXPOSED"), "{ds:?}");
++    assert!(ds.iter().all(|d| d["code"] != "DEF.UNKNOWN_SYMBOL"), "{ds:?}");
++}

@@ -136,17 +136,17 @@
 | C8 진단 JSON 키(`scope`·`help`가 항상 있다는 서술, `help`는 같은 코드 반복 시 생략) | **결정 필요** | G3, G7로 이어짐 → E-01 |
 | C9 앱 패키저 check 출력 파싱 실패 시 fail-open | **해결됨** | `58cf329e`. 회귀 `product/tests/app-package.test.mjs` |
 | C10 UTF-8 BOM 형식 간 불일치 | **해결됨** | `bf72da53`. `spikes/spike-v1-fixture/tests/bom.rs`. 실행(이번) BOM 붙은 `.aip`가 `ok:true` |
-| C11 `aip-cli` 시험 빌드가 DB 환경변수 없이는 컴파일 불가 | **미해결**(영향 기록, 제안 있음) | `crates/aip-test-support/build.rs:13`. `PGHOST`·`PGPORT` 같은 `PG*`가 있어도 중단한다(이 작업 셸에도 설정돼 있었다, 5절). 개발 루프 비용이라 E-08 |
-| G1 위치 없는 진단이 `line:0, column:0` | **미해결 결함 / 결정 필요**(0:0 유지 vs 1:1) | 실행(이번) 빈 `.aip` → `"column":0,"line":0`. `Span::default()` 사용처: `sema.rs:182,283`, `extract.rs:69,120-121`, `hlit.rs:217-218`, `limits.rs:12` |
-| G2 경고에 `line`·`column` 없음(`anchor` 문자열만) | **미해결**(가산 변경) | `spikes/spike-v11-dev-checks/src/lib.rs`(advisory 변환), 실행(이번) 경고 키는 테스트가 `anchor, code, message, severity`로 고정(`crates/aip-cli/tests/service.rs:33`) |
-| G3 정확한 키 집합 비교가 가산 변경을 막음 | **미해결**(시험 변경) | `crates/aip-cli/tests/service.rs:28,33,49,55` |
-| G4 스키마 버전 표지 없음 | **결정 필요**(1.0 전에 넣을지) | `diagnostics-contract.md` §8 |
-| G5 정의 오류가 아닌 실패 코드 62종이 영역 접두 없음 | **결정 필요** | `diagnostics-contract.md` §7 G5 |
-| G6 레지스트리에 `severity`·`status`·`since` 없음 | **미해결**(가산) | `spikes/spike-v1-fixture/src/codes.rs`, 실행(이번) 없음 확인(`retired|since|replacedBy` 0건) |
+| C11 `aip-cli` 시험 빌드가 DB 환경변수 없이는 컴파일 불가 | **해결됨**(개발 루프 한정, Track E: `AIP_TEST_NO_DB=1`, 시험 DSN이 없을 때만 가드를 건너뛰고 DB 시험은 여전히 컴파일되지 않음). | `crates/aip-test-support/build.rs:13`. `PGHOST`·`PGPORT` 같은 `PG*`가 있어도 중단한다(이 작업 셸에도 설정돼 있었다, 5절). 개발 루프 비용이라 E-08 |
+| G1 위치 없는 진단이 `line:0, column:0` | **부분 해결 / 결정 필요**(Track E: 0:0은 유지하고 `located:false`를 추가해 표현. 1:1 변경과 좌표 채우기는 `decisions/e.md` D-E3) | 실행(이번) 빈 `.aip` → `"column":0,"line":0`. `Span::default()` 사용처: `sema.rs:182,283`, `extract.rs:69,120-121`, `hlit.rs:217-218`, `limits.rs:12` |
+| G2 경고에 `line`·`column` 없음(`anchor` 문자열만) | **해결됨**(Track E: 컴파일러 경고에 `line`·`column`·`explain` 추가. `--dev-checks`의 선언 단위 경고는 위치 정보가 없어 그대로). | `spikes/spike-v11-dev-checks/src/lib.rs`(advisory 변환), 실행(이번) 경고 키는 테스트가 `anchor, code, message, severity`로 고정(`crates/aip-cli/tests/service.rs:33`) |
+| G3 정확한 키 집합 비교가 가산 변경을 막음 | **해결됨**(Track E: `service.rs`의 `contract` 최소 검사로 교체, 알 수 없는 필드 허용 시험 포함). | `crates/aip-cli/tests/service.rs:28,33,49,55` |
+| G4 스키마 버전 표지 없음 | **결정 필요**(1.0 전에 넣을지, `decisions/e.md` D-E2) | `diagnostics-contract.md` §8 |
+| G5 정의 오류가 아닌 실패 코드 62종이 영역 접두 없음 | **결정 필요**(`decisions/e.md` D-E5. Track E는 파일 읽기 실패에 `reason`만 추가) | `diagnostics-contract.md` §7 G5 |
+| G6 레지스트리에 `severity`·`status`·`since` 없음 | **부분 해결**(Track E: `severity`·`status`와 선택 `since`·`replacedBy` 추가, 게시된 코드 삭제 방지 시험. `since` 값은 이력이 없어 어느 코드에도 채우지 않음). | `spikes/spike-v1-fixture/src/codes.rs`, 실행(이번) 없음 확인(`retired|since|replacedBy` 0건) |
 | G7 `COMPATIBILITY.md` 진단 JSON 표가 선택 필드를 필수처럼 서술 | **미해결**(문서, 소유자 승인 필요) | `diagnostics-contract.md` §7 |
 | G8 `DEF.SOURCE_TOO_LARGE`가 파일 경로로는 도달 불가로 보임 | **근거 부족**(추론) | `diagnostics-contract.md` §7 |
-| G9 저장소 소비자가 `message` 부분 문자열로 분기 | **미해결 결함** | `.github/workflows/flaskbb-post-order.yml:213`(`"expose apply" in d["message"]`). 전용 코드 추가 후 코드 비교로 전환 |
-| G10 `BrokenPipe`를 종료 0으로 처리 | **결정 필요**(낮음) | `crates/aip-service/src/lib.rs:1787 Err(e) if e.kind() == BrokenPipe => ExitCode::SUCCESS` |
+| G9 저장소 소비자가 `message` 부분 문자열로 분기 | **미해결 결함**(Track E: `sema.rs` 대기 + 소유자 결정 `decisions/e.md` D-E4, 적용 가능한 패치 `decisions/e-g9-ready.patch`) | `.github/workflows/flaskbb-post-order.yml:213`(`"expose apply" in d["message"]`). 전용 코드 추가 후 코드 비교로 전환 |
+| G10 `BrokenPipe`를 종료 0으로 처리 | **결정 필요**(낮음, `decisions/e.md` D-E6) | `crates/aip-service/src/lib.rs:1787 Err(e) if e.kind() == BrokenPipe => ExitCode::SUCCESS` |
 
 ### 2.6 hardening `crypto-rekey.md`, `old-branches.md`
 
@@ -236,14 +236,14 @@
 
 | ID | 항목 | 분류 | 추정 수정 위치 | 비고 |
 |---|---|---|---|---|
-| E-01 | 진단 JSON G1~G10와 소유자 결정 6개 | 미해결 + 결정 | G1: `diag.rs`·`Span::default()` 사용처(2.5절), G2: `spike-v11-dev-checks/src/lib.rs`, G3: `crates/aip-cli/tests/service.rs:28-55`, G4·G6: `codes.rs`·출력, G9: `flaskbb-post-order.yml:213` + 전용 코드, G7: `COMPATIBILITY.md` | 가산 변경(G2, G3, G4, G6)은 결정 전에도 가능. 위치 없음 표현·`schema` 필드는 결정 필요 |
-| E-02 | R1 읽기 확장 무선언 읽기 | 결정 | `sema.rs:2869-2893`(읽기 확장 access 루프), `spikes/spike-v4-worker/src/lib.rs:896`(`"read"`), SDK·문서 | 권고 (a) opt-in. 확장 ABI 확정 금지(OI-X2) |
-| E-03 | 쓰기 확장의 선언 vs 실제 `ctx.data.*` 접근 비교, 쓰이지 않는 선언 경고 | 근거 부족 | `sema.rs:2794 extension`, `spikes/spike-v4-worker/src/write.rs` | 쓰기 확장은 `ACCESS_NOT_DECLARED`로 강제됨(`policy.md` C3). 미사용 grant 경고 여부는 확인 안 함 |
-| E-04 | 구조: 책임 분리 후보 | 미착수 | 8절 파일 표 | 전체 재작성 금지. 실제 결함 수정 부위 중 경계가 분명한 곳부터. 후보는 4절 |
+| E-01 | 진단 JSON G1~G10와 소유자 결정 6개 | **부분 해결**(G1 표현, G2, G3, G6 일부 완료, 나머지 `decisions/e.md`, 명세 `diagnostics-fields.md`) | G1: `diag.rs`·`Span::default()` 사용처(2.5절), G2: `spike-v11-dev-checks/src/lib.rs`, G3: `crates/aip-cli/tests/service.rs:28-55`, G4·G6: `codes.rs`·출력, G9: `flaskbb-post-order.yml:213` + 전용 코드, G7: `COMPATIBILITY.md` | 가산 변경(G2, G3, G4, G6)은 결정 전에도 가능. 위치 없음 표현·`schema` 필드는 결정 필요 |
+| E-02 | R1 읽기 확장 무선언 읽기 | 결정(`decisions/e.md` D-E7, 구현은 `sema.rs` 대기, 순서는 `e2-extension-access.md` 3.3) | `sema.rs:2869-2893`(읽기 확장 access 루프), `spikes/spike-v4-worker/src/lib.rs:896`(`"read"`), SDK·문서 | 권고 (a) opt-in. 확장 ABI 확정 금지(OI-X2) |
+| E-03 | 쓰기 확장의 선언 vs 실제 `ctx.data.*` 접근 비교, 쓰이지 않는 선언 경고 | **비교 완료**(`e2-extension-access.md`, `e2/scan-result.md`), 미사용 grant 경고는 결정(D-E8). | `sema.rs:2794 extension`, `spikes/spike-v4-worker/src/write.rs` | 쓰기 확장은 `ACCESS_NOT_DECLARED`로 강제됨(`policy.md` C3). 미사용 grant 경고 여부는 확인 안 함 |
+| E-04 | 구조: 책임 분리 후보 | **부분 해결**(분석과 `aip-service` 진단 출력 분리 완료, `track-e.md` 4절. 다른 Track 소유 파일은 후보로만) | 8절 파일 표 | 전체 재작성 금지. 실제 결함 수정 부위 중 경계가 분명한 곳부터. 후보는 4절 |
 | E-05 | rekey ref 열 선택자 | 결정(범위 밖 기능) | `crates/aip-execution/src/rekey.rs:343`, `encryption_rekey.rs:530` | 암호화 필드는 1.0 지원 밖. 우선순위 낮음 |
 | E-06 | `spike-*` crate 이름 | 범위 밖(1.1) | — | 사용자 메시지는 이미 정리됨 |
 | E-07 | 문법 호환 보장 장치(문법 버전 필드, 호환 골든) | 근거 부족 | `spec/definition-syntax.md` 생성 골든 외 확인 못함 | 감사 §7 Q5 |
-| E-08 | 시험 빌드의 DB 요구(C11) | 미해결(제안만) | `crates/aip-test-support/build.rs:13` | 진단·도움말 시험 루프가 PG 준비에 묶인다 |
+| E-08 | 시험 빌드의 DB 요구(C11) | **해결됨**(`AIP_TEST_NO_DB=1`) | `crates/aip-test-support/build.rs:13` | 진단·도움말 시험 루프가 PG 준비에 묶인다 |
 
 ### Track F1: CI
 

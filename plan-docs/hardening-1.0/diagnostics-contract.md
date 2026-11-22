@@ -274,6 +274,8 @@
 | G9 | 저장소 안 소비자가 `message` 부분 문자열로 구분한다 | `.github/workflows/flaskbb-post-order.yml:213`. `DEF.UNKNOWN_SYMBOL`은 최소 두 곳에서 다른 뜻으로 난다(`sema.rs:281`의 actor 대상, `sema.rs:520`의 enum 값). 이 CI가 보려는 `expose apply` 경우의 정확한 발생지는 확인하지 않았다(확인 필요) | `expose apply` 경우에 전용 코드를 추가하고 CI를 코드 비교로 옮긴다(5.1절 8번) | 소비자 변경 + 코드 추가 |
 | G10 | `BrokenPipe`를 성공(종료 0)으로 처리하므로 "종료 0이면 JSON이 전달됨"이 깨질 수 있다 | `lib.rs:1787` | 계약에서 "종료 0은 정의 수용"만 약속하고 전달 보장은 하지 않는다고 적거나 EPIPE에서 비영 종료로 바꾼다 | 문서 또는 동작 변화(낮음) |
 
+> 2026-11-22 갱신(Track E, `plan-docs/stabilization-20261122/track-e.md`): G2, G3은 구현됐고, G1은 0:0을 유지하고 선택 필드 `located`를 더하는 방식으로 표현했으며(1:1 변경은 소유자 결정), G6은 `severity`·`status`를 더했다. G4, G5, G7, G9, G10은 `stabilization-20261122/decisions/e.md`로 넘겼다. 구현된 필드는 `stabilization-20261122/diagnostics-fields.md`에 있다. 위 표는 작성 당시(2026-11-21) 상태다.
+
 범위 밖에서 발견해 고치지 않은 것(한 줄씩):
 
 - 앱 패키저는 `workers`를 읽을 때 JSON 파싱에 실패하면 조용히 `return`한다(`product/tools/app-package.mjs:34`). 5.4절의 소비자 규칙과 반대다. **고침**: 파싱 실패와 `workers` 누락은 `CHECK_OUTPUT_INVALID`로 패키징을 멈춘다([contract.md](contract.md) C9).
