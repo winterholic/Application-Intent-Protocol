@@ -692,6 +692,32 @@ the groupKey does not reference the owning resource
 - 원인: A per-row aggregate groups the source rows by the reference that points to the row it belongs to.
 - 수정: Name a field of the source whose type is the owning resource.
 
+### `DEF.ACCESS_TARGET_NOT_EXPOSED`
+
+an extension or job `access` names a transition that is not exposed
+
+- 원인: A write extension or a job may call only a transition that the definition exposes with `expose apply`. A transition that is not exposed, or that does not exist, is not a grantable capability. Before this code existed the same condition was reported as DEF.UNKNOWN_SYMBOL, which also means other things.
+- 수정: Add `expose apply <transition> { target id; bulk maxRows N }` to the resource, or remove the `access` entry, or name a transition that is exposed.
+
+```aip
+actor Member
+resource Member { fields { id: Id } }
+resource Event {
+  fields { id: Id; member: Member; checked: Bool }
+  rows read when member = actor
+  transition mark { allow member = actor; from checked = false; to checked = true }
+  expose apply mark { target id; bulk maxRows 2 }
+  extension write run {
+    input { id: Event.Id }
+    output { id: Event.Id; count: Int }
+    access Event.mark
+    effect db
+    deadline 2s
+    implementation "write.run"
+  }
+}
+```
+
 ### `DEF.EXT_INPUT_UNBOUND`
 
 an access input is not received by the extension

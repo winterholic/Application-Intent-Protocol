@@ -156,3 +156,16 @@ fn a_published_code_is_never_removed_from_the_registry() {
         "a code that was published is gone from src/codes.rs (retire it with `status: retired`, never delete it): {removed:?}"
     );
 }
+
+#[test]
+fn an_access_to_a_transition_that_is_not_exposed_has_its_own_code() {
+    let def = |expose: &str| {
+        format!(
+            "actor Member\nresource Member {{ fields {{ id: Id }} }}\nresource Event {{\n  fields {{ id: Id; member: Member; checked: Bool }}\n  rows read when member = actor\n  transition mark {{ allow member = actor; from checked = false; to checked = true }}\n  {expose}\n  extension write run {{\n    input {{ id: Event.Id }}\n    output {{ id: Event.Id; count: Int }}\n    access Event.mark\n    effect db\n    deadline 2s\n    implementation \"write.run\"\n  }}\n}}\n"
+        )
+    };
+    assert!(load_str(&def("expose apply mark { target id; bulk maxRows 2 }"), Form::A).is_ok());
+    let ds = failure(&def(""), Form::A);
+    assert!(ds.iter().any(|d| d["code"] == "DEF.ACCESS_TARGET_NOT_EXPOSED"), "{ds:?}");
+    assert!(ds.iter().all(|d| d["code"] != "DEF.UNKNOWN_SYMBOL"), "{ds:?}");
+}

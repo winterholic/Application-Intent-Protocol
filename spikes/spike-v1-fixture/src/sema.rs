@@ -2754,7 +2754,7 @@ impl<'a> Ctx<'a> {
                         let exposed = self.res.get(domain.as_str()).is_some_and(|r| r.expose_apply.iter().any(|e| &e.transition == name));
                         if !exposed {
                             self.d(
-                                "DEF.UNKNOWN_SYMBOL",
+                                "DEF.ACCESS_TARGET_NOT_EXPOSED",
                                 format!("job 쓰기 access `{domain}.{name}`는 공개된 전이(expose apply)여야 함"),
                                 operation.span,
                             );
@@ -2863,7 +2863,7 @@ impl<'a> Ctx<'a> {
                 }
                 let exposed = self.res.get(rn.as_str()).is_some_and(|r| r.expose_apply.iter().any(|e| &e.transition == tn));
                 if !exposed {
-                    self.d("DEF.UNKNOWN_SYMBOL", format!("쓰기 access `{rn}.{tn}`는 공개된 전이(expose apply)여야 함"), x.span);
+                    self.d("DEF.ACCESS_TARGET_NOT_EXPOSED", format!("쓰기 access `{rn}.{tn}`는 공개된 전이(expose apply)여야 함"), x.span);
                     continue;
                 }
                 acc.insert(format!("{rn}.{tn}"), json!("transition"));
