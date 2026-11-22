@@ -1,5 +1,5 @@
 // 여러 상품 주문(줄 최대 3개): 합계를 서버가 상품 단가에서 계산하고, 재고 차감·주문·줄 생성·합계 확정이 한 트랜잭션이다.
-// 확장 입력에는 배열이 없고 Json은 어떤 값도 받지 못해(track-c.md 결함 C-D2) 줄은 product1..3·qty1..3 고정 슬롯으로 받는다.
+// checkout 입력은 기존 업무 상한에 따라 줄을 product1..3·qty1..3 고정 슬롯으로 받는다.
 // 상품 행은 id 순서로 잠근다: 같은 상품을 반대 순서로 담은 두 주문이 서로를 기다리지 않게 한다.
 export async function checkout(input, ctx) {
   const items = [];
@@ -58,5 +58,5 @@ function slotGap(input) {
 }
 
 export async function probeJson(input, ctx) {
-  return { ok: input.payload !== undefined };
+  return { payload: input.payload };
 }

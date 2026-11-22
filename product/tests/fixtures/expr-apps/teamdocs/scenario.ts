@@ -99,25 +99,29 @@ await scenario("D5-share-view-edit-revoke-and-no-cross-org-share", async () => {
   ok(made, "공유할 문서");
   s.shared = made.created[0]!.id;
   assert.ok(!(await titles(fay)).includes("ben-shared"));
-  const share = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: FAY, level: "VIEW" } }] }, { key: "td-share-1" });
+  const share = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: FAY, grant: "VIEW" } }] }, { key: "td-share-1" });
   ok(share, "VIEW 공유");
   s.shareFay = share.created[0]!.id;
+  const createdGrant = await ben().read({ read: "DocShare", select: ["grant"], filter: [{ field: "doc", op: "eq", value: s.shared! }] });
+  assert.deepEqual(createdGrant.rows.map((row) => row.grant), ["VIEW"], "예약어 필드 grant로 VIEW 공유 생성·조회");
   assert.ok((await titles(fay)).includes("ben-shared"), "공유받은 Fay가 초안을 읽는다");
   const viewEdit = await fay().apply({ apply: "Doc.edit", target: { ids: [s.shared!] }, values: { title: "fay-edit" }, expect: { version: 0 } } as never, { key: "td-share-fay-edit-1" });
   denied(viewEdit, "WIRE.FORBIDDEN", "VIEW 공유로 수정");
-  const regrant = await ben().apply({ apply: "DocShare.regrant", target: { ids: [s.shareFay!] }, values: { level: "EDIT" } } as never, { key: "td-share-regrant" });
+  const regrant = await ben().apply({ apply: "DocShare.regrant", target: { ids: [s.shareFay!] }, values: { grant: "EDIT" } } as never, { key: "td-share-regrant" });
   ok(regrant, "EDIT로 올림");
+  const changedGrant = await ben().read({ read: "DocShare", select: ["grant"], filter: [{ field: "doc", op: "eq", value: s.shared! }] });
+  assert.deepEqual(changedGrant.rows.map((row) => row.grant), ["EDIT"], "예약어 필드 grant 수정·조회");
   const edited = await fay().apply({ apply: "Doc.edit", target: { ids: [s.shared!] }, values: { title: "ben-shared v1" }, expect: { version: 0 } } as never, { key: "td-share-fay-edit-2" });
   ok(edited, "EDIT 공유로 수정");
   const stale = await ben().apply({ apply: "Doc.edit", target: { ids: [s.shared!] }, values: { title: "stale" }, expect: { version: 0 } } as never, { key: "td-share-ben-stale" });
   denied(stale, "WIRE.CONFLICT", "낡은 version");
   assert.equal(sql(`SELECT title||'/'||version FROM ${schema}.doc WHERE id=${s.shared}`), "ben-shared v1/1");
   // 다른 조직 사용자(Dan)에게는 공유할 수 없고, 소유자가 아닌 MEMBER(Fay)가 제3자에게 공유할 수도 없다.
-  const cross = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: DAN, level: "VIEW" } }] }, { key: "td-share-cross" });
+  const cross = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: DAN, grant: "VIEW" } }] }, { key: "td-share-cross" });
   assert.equal(cross.ok, false, "조직 밖 사용자에게 공유");
-  const reshare = await fay().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: CAT, level: "EDIT" } }] }, { key: "td-share-reshare" });
+  const reshare = await fay().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: CAT, grant: "EDIT" } }] }, { key: "td-share-reshare" });
   assert.equal(reshare.ok, false, "EDIT 공유자는 재공유 못 한다");
-  const self = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: BEN, level: "EDIT" } }] }, { key: "td-share-self" });
+  const self = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: BEN, grant: "EDIT" } }] }, { key: "td-share-self" });
   assert.equal(self.ok, false, "자기 자신에게 공유");
   assert.equal(sql(`SELECT count(*) FROM ${schema}.doc_share WHERE doc_id=${s.shared}`), "1");
   const revoked = await ben().apply({ apply: "DocShare.revoke", target: { ids: [s.shareFay!] } } as never, { key: "td-share-revoke" });
@@ -133,7 +137,7 @@ await scenario("D6-field-restriction-note-and-email", async () => {
   assert.equal(await note(ben), "ben-only", "소유자는 본다");
   assert.equal(await note(cat), "ben-only", "조직 ADMIN은 본다");
   // Fay에게 다시 EDIT 공유를 줘도 메모는 가려지고, 메모 쓰기 전이(annotate)도 못 쓴다.
-  const share = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: FAY, level: "EDIT" } }] }, { key: "td-share-again" });
+  const share = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: FAY, grant: "EDIT" } }] }, { key: "td-share-again" });
   ok(share, "다시 EDIT 공유");
   assert.equal(await note(fay), null, "공유받은 편집자도 내부 메모는 null");
   const annotate = await fay().apply({ apply: "Doc.annotate", target: { ids: [s.shared!] }, values: { internalNote: "fay-writes" }, expect: { version: 1 } } as never, { key: "td-annotate-fay" });
@@ -148,23 +152,24 @@ await scenario("D6-field-restriction-note-and-email", async () => {
 });
 
 await scenario("D7-relation-read-and-aggregate-respect-visibility", async () => {
-  const doc = (await ben().read({ read: "Doc", select: ["id", "title", "editorCount", { owner: { select: ["id", "name"] } }, { shares: { select: ["id", "grantee", "level"], limit: 10 } }],
+  const doc = (await ben().read({ read: "Doc", select: ["id", "title", "editorCount", { owner: { select: ["id", "name"] } }, { shares: { select: ["id", "grantee", "grant"], limit: 10 } }],
     filter: [{ field: "id", op: "eq", value: s.shared! }] } as never)).rows[0] as any;
   assert.equal(doc.owner.name, "Ben");
   assert.equal(doc.editorCount, 1, "EDIT 공유 1건");
   assert.equal(doc.shares.length, 1);
-  const forFay = (await fay().read({ read: "Doc", select: ["id", "editorCount", { shares: { select: ["id", "grantee", "level"], limit: 10 } }],
+  assert.equal(doc.shares[0].grant, "EDIT", "관계 조회에서 예약어 필드 grant 확인");
+  const forFay = (await fay().read({ read: "Doc", select: ["id", "editorCount", { shares: { select: ["id", "grantee", "grant"], limit: 10 } }],
     filter: [{ field: "id", op: "eq", value: s.shared! }] } as never)).rows[0] as any;
   assert.equal(forFay.shares.length, 1, "Fay는 자기 공유 행만");
   assert.equal(forFay.shares[0].grantee, FAY);
   // 읽을 수 없는 문서의 집계는 문서 행 자체가 안 보여 값이 새지 않는다.
   const hiddenRows = (await fay().read({ read: "Doc", select: ["id", "editorCount"], filter: [{ field: "id", op: "eq", value: s.draft! }] } as never)).rows;
   assert.equal(hiddenRows.length, 0, "남의 초안은 집계 값과 함께 안 보인다");
-  const afterSecond = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: CAT, level: "EDIT" } }] }, { key: "td-share-cat" });
+  const afterSecond = await ben().bundle({ atomic: [{ create: "DocShare", values: { doc: s.shared!, grantee: CAT, grant: "EDIT" } }] }, { key: "td-share-cat" });
   ok(afterSecond, "두 번째 EDIT 공유");
   const count = (await ben().read({ read: "Doc", select: ["editorCount"], filter: [{ field: "id", op: "eq", value: s.shared! }] } as never)).rows[0] as any;
   assert.equal(count.editorCount, 2);
-  assert.equal(sql(`SELECT count(*) FROM ${schema}.doc_share WHERE doc_id=${s.shared} AND level='EDIT'`), "2", "집계가 DB 행 수와 같다");
+  assert.equal(sql(`SELECT count(*) FROM ${schema}.doc_share WHERE doc_id=${s.shared} AND "grant"='EDIT'`), "2", "집계가 DB의 예약어 grant 컬럼 행 수와 같다");
 });
 
 await scenario("D8-leave-and-remove-membership-revokes-access", async () => {

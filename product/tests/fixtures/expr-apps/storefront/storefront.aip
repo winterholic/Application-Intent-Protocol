@@ -1,6 +1,7 @@
 // 주문·결제 직전부터 취소까지의 상태 머신. 외부 결제 서비스는 부르지 않고 GATEWAY 역할의 test double 주체가 결제 확정 콜백을 대신한다.
 // 선언만으로 되는 것: 재고 차감(input 산술), 결제 확정(금액 일치 from), 상태 전이와 역할, 결제 원장 유일성, 결제 원장+상태 전이의 원자성.
-// 확장이 필요한 것: 여러 상품 주문의 서버 계산 합계(곱셈 없음, 확장 입력에 배열도 Json도 못 씀: 줄 3개 고정 슬롯으로 받는다)와, 취소 시 주문 줄 수량만큼 재고 반환(효과 값에 가변 수량·산술 없음).
+// 여러 상품 주문은 확장 입력의 Json round-trip(S0)을 별도로 확인하고, checkout은 줄 3개 고정 슬롯으로 받는다.
+// 확장이 필요한 것: 여러 상품 주문의 서버 계산 합계(곱셈 없음)와, 취소 시 주문 줄 수량만큼 재고 반환(효과 값에 가변 수량·산술 없음).
 enum Role { CUSTOMER, STAFF, GATEWAY }
 enum OrderState { PLACED, PAID, SHIPPED, CANCELLED }
 
@@ -54,10 +55,10 @@ resource Order {
     deadline 4s
     implementation "storefront.checkout"
   }
-  // 결함 C-D2 탐침: Json 입력 필드가 어떤 값도 받지 못하는지 시나리오 S0이 기록한다(LIMITS E8은 Json으로 받으라고 안내한다).
+  // C-D2: S0이 HTTP와 생성 TS SDK를 통해 Json 입력을 round-trip 단언한다.
   extension write probeJson {
     input { payload: Json }
-    output { ok: Bool }
+    output { payload: Json }
     access read.Product
     effect db
     deadline 2s

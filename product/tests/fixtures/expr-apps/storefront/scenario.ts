@@ -50,23 +50,19 @@ const webhook = (order: string, amount: number, ref: string, key: string, paymen
   ] } as never, { key } as never);
 const s: { o1?: string; o2?: string; o3?: string } = {};
 
-// 결함 C-D2: 확장 입력의 Json 필드는 서버가 어떤 JSON 값도 받지 않고(WIRE.BAD_VALUE `Json`), TypeScript SDK는 요청을 보내기 전에 거절한다.
-// 이 시나리오는 단언하지 않고 현재 동작을 INFO로 남긴다. 고쳐지면 아래 줄의 코드가 OK로 바뀐다.
-await scenario("S0-json-extension-input-probe", async () => {
+// C-D2: PostgreSQL 진입점에서 HTTP와 생성 TS SDK가 Json의 배열·객체·스칼라를 그대로 전달하는지 확인한다.
+await scenario("S0-json-extension-input-round-trip", async () => {
   const shapes: Array<[string, unknown]> = [["array", [1, 2]], ["object", { a: 1 }], ["string", "x"], ["number", 7], ["bool", true]];
-  const server: string[] = [];
   for (const [name, payload] of shapes) {
     const r = await rawApply("olga", { extension: "Order.probeJson", input: { payload } }, `sf-json-${name}`);
-    server.push(`${name}=${code(r)}`);
+    assert.equal(r.ok, true, `HTTP ${name}: ${JSON.stringify(r)}`);
+    assert.deepEqual(r.output.payload, payload, `HTTP ${name} 응답이 입력 Json을 보존`);
   }
-  let sdk = "sent";
-  try {
-    const r: any = await olga().writeExtension("Order.probeJson" as never, { payload: { a: 1 } } as never, { key: "sf-json-sdk" } as never);
-    sdk = `returned ${code(r)}`;
-  } catch (error) {
-    sdk = `threw before sending: ${(error as Error).message}`;
+  for (const [name, payload] of shapes) {
+    const r: any = await olga().writeExtension("Order.probeJson" as never, { payload } as never, { key: `sf-json-sdk-${name}` } as never);
+    assert.equal(r.ok, true, `TypeScript SDK ${name}: ${JSON.stringify(r)}`);
+    assert.deepEqual(r.output.payload, payload, `TypeScript SDK ${name} 응답이 입력 Json을 보존`);
   }
-  console.log(`INFO S0-json-input: server ${server.join(" ")} | typescript sdk ${sdk}`);
 });
 
 await scenario("S1-checkout-multi-line-server-total-and-exact-stock", async () => {

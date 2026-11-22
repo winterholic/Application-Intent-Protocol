@@ -1,4 +1,4 @@
-// 참고: 필드 이름 `grant`는 SQL 예약어라 `service check`는 통과하지만 `service init`이 DB_INIT으로 실패한다(track-c.md 결함 C-D1). 그래서 `level`을 쓴다.
+// C-D1: 공유 권한 등급을 SQL 예약어인 `grant` 필드로 정의해 init과 서비스 여정에서 사용한다.
 // 공유 행은 조직 소속과 함께 봐야 한다. 처음에는 공유 grantee만 보도록 썼더니 조직을 떠난 사용자가 공유 문서를 계속 읽었다(시나리오 D8의 실행 기록).
 // 여러 조직에 속한 사용자, 조직 역할(OWNER·ADMIN·MEMBER), 문서 공유(VIEW·EDIT), 필드 접근 제한, 관계 조회, 집계.
 // 한 사용자가 조직마다 다른 역할을 가진다. 그래서 `actor.org` 같은 단일 테넌트 조건이 아니라 Membership의 exists로 조직 소속을 판정한다.
@@ -41,7 +41,7 @@ resource Membership {
 predicate canRead(d: Doc, u: User) =
   d.owner = u or isAdminOf(d.org, u) or (isMember(d.org, u) and (d.state = PUBLISHED or exists DocShare where doc = d and grantee = u))
 predicate canEdit(d: Doc, u: User) =
-  d.owner = u or isAdminOf(d.org, u) or exists DocShare where doc = d and grantee = u and level = EDIT
+  d.owner = u or isAdminOf(d.org, u) or exists DocShare where doc = d and grantee = u and grant = EDIT
 access visibleShares = totalOfVisible(Doc)
 
 resource Doc {
@@ -56,10 +56,10 @@ resource Doc {
     filter id.eq, org.eq, state.eq, owner.eq
     sort id
     traverse owner { select id, name }
-    traverse shares via DocShare.doc { select id, grantee, level; limit 20 }
+    traverse shares via DocShare.doc { select id, grantee, grant; limit 20 }
     budget { rows 50; depth 2; deadline 1s; cost 1500 }
   }
-  aggregate editorCount: Int { source DocShare; sourceAccess visibleShares; groupKey doc; where level = EDIT; callerFilter none; rowOutput none; release count }
+  aggregate editorCount: Int { source DocShare; sourceAccess visibleShares; groupKey doc; where grant = EDIT; callerFilter none; rowOutput none; release count }
   expose create { allow owner = actor and isMember(org, actor) and state = DRAFT and version = 0; fields org, owner, title, body, internalNote, state, version }
   transition edit { allow canEdit(this, actor); from true; patch title, body; expect version; to version = version + 1 }
   transition annotate { allow owner = actor or isAdminOf(org, actor); from true; patch internalNote; expect version; to version = version + 1 }
@@ -72,12 +72,12 @@ resource Doc {
 }
 
 resource DocShare {
-  fields { id: Id; doc: Doc; grantee: User; level: Grant }
+  fields { id: Id; doc: Doc; grantee: User; grant: Grant }
   rows read when grantee = actor or doc.owner = actor or isAdminOf(doc.org, actor)
   unique doc, grantee
-  expose read { select id, doc, grantee, level; filter doc.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 200 } }
-  expose create { allow (doc.owner = actor or isAdminOf(doc.org, actor)) and isMember(doc.org, grantee) and grantee != actor; fields doc, grantee, level }
-  transition regrant { allow doc.owner = actor or isAdminOf(doc.org, actor); from true; patch level }
+  expose read { select id, doc, grantee, grant; filter doc.eq; sort id; budget { rows 50; depth 1; deadline 1s; cost 200 } }
+  expose create { allow (doc.owner = actor or isAdminOf(doc.org, actor)) and isMember(doc.org, grantee) and grantee != actor; fields doc, grantee, grant }
+  transition regrant { allow doc.owner = actor or isAdminOf(doc.org, actor); from true; patch grant }
   transition revoke { allow doc.owner = actor or isAdminOf(doc.org, actor); from true; delete }
   expose apply regrant { target id; bulk maxRows 1 }
   expose apply revoke { target id; bulk maxRows 10 }
