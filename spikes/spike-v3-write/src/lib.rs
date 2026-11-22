@@ -2,12 +2,19 @@
 use serde_json::{json, Map, Value};
 use spike_v2_read::id_wire::{id_array_cast, id_kind, parse_entity_id, parse_typed_id, EntityId, IdWire};
 use spike_v2_read::plan::{Caller, Reject};
-use spike_v2_read::sqlgen::{self, column, table, Ctx, Env, Handle};
+use spike_v2_read::sqlgen::{self, table, Ctx, Env, Handle};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tokio_postgres::{types::ToSql, Client, Transaction};
 
 mod sealed;
+
+/// Return a PostgreSQL-safe identifier for a mapped field. V2 read plans quote
+/// identifiers at their SQL boundary; V3 builds write SQL directly, so it must
+/// quote the mapped column before interpolating it.
+fn column(facts: &Value, res: &str, field: &str) -> Option<String> {
+    sqlgen::column(facts, res, field).map(|name| sqlgen::Dialect::Postgres.ident(&name))
+}
 
 pub use aip_execution::write_sealer::{SealCell, SealError, WriteCellSealer};
 pub use sealed::SEALED_CELLS_MAX;
@@ -2538,4 +2545,26 @@ pub fn audit_ddl_with_uuid(schema: &str) -> String {
     audit_ddl(schema)
         .replace("target_id bigint NOT NULL", "target_id text NOT NULL")
         .replace(" COMMIT", &format!(" ALTER TABLE {schema}.aip_audit ALTER COLUMN target_id TYPE text USING target_id::text; COMMIT"))
+}
+
+#[cfg(test)]
+mod reserved_column_tests {
+    use super::column;
+    use serde_json::json;
+
+    #[test]
+    fn write_column_quotes_postgres_reserved_field_names() {
+        let words = ["grant", "order", "group", "limit", "check", "user", "table", "column", "default", "offset", "select", "desc"];
+        let mut fields = serde_json::Map::new();
+        for word in words {
+            fields.insert(word.to_string(), json!({"ty": "Text"}));
+        }
+        fields.insert("name".to_string(), json!({"ty": "Text"}));
+        let facts = json!({"resources": {"Item": {"fields": fields}}});
+
+        for word in words {
+            assert_eq!(column(&facts, "Item", word).as_deref(), Some(&format!("\"{word}\"")[..]), "{word}");
+        }
+        assert_eq!(column(&facts, "Item", "name").as_deref(), Some("name"));
+    }
 }
