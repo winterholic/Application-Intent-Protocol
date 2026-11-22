@@ -7,21 +7,16 @@ on:
   # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
   workflow_call:
   workflow_dispatch:
+  # NOTE: main pushes run unfiltered. A `paths:` filter skipped this required workflow for commits it did not list (stabilization F-03).
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/macos-platform-tests.yml'
-      - 'crates/aip-cli/**'
-      - 'crates/aip-service/**'
-      - 'spikes/spike-v4-worker/**'
-      - 'spikes/spike-v6-transport/**'
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-platform-tests-${{ github.ref }}
-  cancel-in-progress: true
+  group: macos-platform-tests-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   macos-sandbox:

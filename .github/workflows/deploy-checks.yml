@@ -3,26 +3,17 @@ name: Deployment checks
 on:
   # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
   workflow_call:
+  # NOTE: main pushes run unfiltered. A `paths:` filter skipped this required workflow for commits it did not list (stabilization F-03).
   push:
     branches: [main]
-    paths:
-      - 'product/tools/proxy-check.mjs'
-      - 'spikes/spike-v6-transport/src/**'
-      - 'crates/aip-service/**'
-      - 'crates/aip-auth/**'
-      - 'conformance/idp-proxy/**'
-      - 'conformance/keycloak/**'
-      - 'scripts/smoke-idp-proxy.sh'
-      - 'scripts/smoke-keycloak.sh'
-      - '.github/workflows/deploy-checks.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-checks-${{ github.ref }}
-  cancel-in-progress: true
+  group: deploy-checks-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   tls-proxy:

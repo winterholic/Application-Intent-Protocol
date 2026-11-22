@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: app-packages-${{ github.ref }}
-  cancel-in-progress: true
+  group: app-packages-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   release-packages:

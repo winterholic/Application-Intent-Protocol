@@ -10,25 +10,16 @@ on:
         required: false
         type: boolean
         default: false
+  # NOTE: main pushes run unfiltered. A `paths:` filter skipped this required workflow for commits it did not list (stabilization F-03).
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/worker-jobs-linux.yml'
-      - 'crates/**'
-      - 'product/**'
-      - 'porting/flaskbb/**'
-      - 'porting/infisical/**'
-      - 'spikes/spike-v1-fixture/**'
-      - 'spikes/spike-v3-write/**'
-      - 'spikes/spike-v4-worker/**'
-      - 'spikes/spike-v6-transport/**'
 
 permissions:
   contents: read
 
 concurrency:
-  group: worker-jobs-linux-${{ github.ref }}
-  cancel-in-progress: true
+  group: worker-jobs-linux-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   worker-jobs:

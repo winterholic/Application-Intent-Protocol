@@ -4,45 +4,15 @@ on:
   # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
   workflow_call:
   workflow_dispatch:
+  # NOTE: main pushes run unfiltered. A `paths:` filter skipped this required workflow for commits it did not list (stabilization F-03).
   push:
     branches: [main, cycle/p1-flaskbb-g6-20261117, verify/topic-move-flaskbb-20261117, verify/flaskbb-postorder-20261106, verify/flaskbb-topic-projection-20261106, verify/flaskbb-orm-oracle-20261107, verify/post-unhide-flaskbb-20261117]
-    paths:
-      - '.github/workflows/flaskbb-post-order.yml'
-      - 'porting/flaskbb/app.aip'
-      - 'porting/flaskbb/STATUS.md'
-      - 'porting/flaskbb/seed/install.py'
-      - 'porting/flaskbb/tests/harness.mjs'
-      - 'porting/flaskbb/tests/post-order-*.test.mjs'
-      - 'porting/flaskbb/tests/post-unhide-pointer.test.mjs'
-      - 'porting/flaskbb/tests/last-post-recompute.test.mjs'
-      - 'porting/flaskbb/tests/post-order-regression.json'
-      - 'porting/flaskbb/tests/aip-read.test.mjs'
-      - 'porting/flaskbb/tests/test_ui_host.py'
-      - 'porting/flaskbb/ui/app.py'
-      - 'spikes/spike-v1-fixture/tests/latest_effect_match.rs'
-      - 'spikes/spike-v1-fixture/src/sema.rs'
-      - 'spikes/spike-v1-fixture/src/isolation.rs'
-      - 'spikes/spike-v1-fixture/src/syntax_card.rs'
-      - 'spikes/spike-v3-write/tests/latest_effect_match.rs'
-      - 'spikes/spike-v4-worker/src/write.rs'
-      - 'spikes/spike-v4-worker/tests/write_read_in_transaction.rs'
-      - 'spikes/spike-v2-read/src/lib.rs'
-      - 'porting/flaskbb/seed/*post_order*'
-      - 'porting/flaskbb/tests/test_post_order_import.py'
-      - 'porting/flaskbb/tests/test_post_oracle_gap.py'
-      - 'porting/flaskbb/tests/record_command.py'
-      - 'porting/flaskbb/tests/test_record_command.py'
-      - 'porting/flaskbb/tests/test_topic_move_fixture.py'
-      - 'porting/flaskbb/tests/topic-move-regression.json'
-      - 'porting/flaskbb/tests/topic-move.test.mjs'
-      - 'porting/flaskbb/tests/fixtures/topic-move-private-grant-repro.aip'
-      - 'porting/flaskbb/tests/fixtures/topic-move-internal-grant-repro.aip'
 
 permissions:
   contents: read
 
 concurrency:
-  group: flaskbb-post-order-${{ github.ref }}
+  group: flaskbb-post-order-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: false
 
 jobs:

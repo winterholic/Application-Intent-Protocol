@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: object-storage-${{ github.ref }}
-  cancel-in-progress: true
+  group: object-storage-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   object-storage:

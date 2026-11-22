@@ -6,29 +6,16 @@ on:
   # NOTE: the push event for d327b264 started no runs; manual dispatch lets a
   # missed main SHA still get its release gate.
   workflow_dispatch:
+  # NOTE: main pushes run unfiltered. A `paths:` filter skipped this required workflow for commits it did not list (stabilization F-03).
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/**'
-      - '.cargo/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain*'
-      - 'crates/**'
-      - 'product/**'
-      - 'prototype/**'
-      - 'porting/**'
-      - 'spikes/**'
-      - 'tools/**'
-      - 'scripts/**'
-      - 'docs/**'
 
 permissions:
   contents: read
 
 concurrency:
-  group: aip-release-gate-${{ github.ref }}
-  cancel-in-progress: true
+  group: aip-release-gate-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   release-gate:

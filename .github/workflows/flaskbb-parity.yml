@@ -4,24 +4,15 @@ on:
   # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
   workflow_call:
   workflow_dispatch:
+  # NOTE: main pushes run unfiltered. A `paths:` filter skipped this required workflow for commits it did not list (stabilization F-03).
   push:
     branches: [main, verify/flaskbb-parity-20261106]
-    paths:
-      - '.github/workflows/flaskbb-parity.yml'
-      - 'porting/flaskbb/app.aip'
-      - 'porting/flaskbb/seed/upgrade_settings.py'
-      - 'porting/flaskbb/tests/*settings*'
-      - 'porting/flaskbb/tests/cli-upgrade.test.mjs'
-      - 'spikes/spike-v3-write/src/**'
-      - 'spikes/spike-v3-write/tests/foreign_key_refusal.rs'
-      - 'spikes/spike-v6-transport/src/wire_codes.rs'
-      - 'product/python/**'
 
 permissions:
   contents: read
 
 concurrency:
-  group: flaskbb-contracts-${{ github.ref }}
+  group: flaskbb-contracts-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: false
 
 jobs:

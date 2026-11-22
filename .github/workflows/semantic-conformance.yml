@@ -3,6 +3,9 @@ name: Service semantic conformance
 on:
   # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, where path filters would otherwise skip it.
   workflow_call:
+  # NOTE: main pushes run unfiltered. A `paths:` filter skipped this required workflow for commits it did not list (stabilization F-03).
+  push:
+    branches: [main]
   workflow_dispatch:
   pull_request:
     paths:
@@ -17,8 +20,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: semantic-conformance-${{ github.ref }}
-  cancel-in-progress: true
+  group: semantic-conformance-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   service-flow:
