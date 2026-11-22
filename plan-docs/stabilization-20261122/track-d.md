@@ -1,6 +1,6 @@
 # Track D 결과: Parser → Sema → Runtime → SDK 의미 정합 (2026-11-22)
 
-- 기준: `origin/main` `4f44ca87`(기준선 문서 커밋) 위의 브랜치 `stab/d-20261122`. 모든 DB 시험은 **PostgreSQL 17.11(Homebrew, 포트 55424)** 에서 실행했다.
+- 기존 DB 기준 시험은 **PostgreSQL 17.11(Homebrew, 포트 55424)** 에서 실행했다. 이번 재개 시점의 기준 브랜치는 `origin/main` `c86d6902`이며, D 작업 브랜치는 `stab/d-20261122`다.
 - 이 문서는 1.0 출시 승인이 아니다. 태그, GitHub Release, npm, PyPI 게시는 하지 않았다.
 - 핵심 파일(`sema.rs`, `spike-v3-write/src/lib.rs`, `spike-v6-transport/src/lib.rs`)은 수정하지 않았다. 그 파일이 필요한 결함은 9절 "핵심 파일 대기 목록"에 재현 시험과 함께 적었다.
 
@@ -8,14 +8,15 @@
 
 | 커밋 | 파일 | 목적 |
 |---|---|---|
-| `2c1b2846` | `product/test-support/service-fixture.mjs`, `product/tests/semantic-path-parity.test.mjs` | D2: 같은 전이를 직접 apply, bundle, compose, 쓰기 확장 네 경로로 PG17에서 비교하는 시험과 공용 서비스 픽스처 |
-| `cff2bb8b` | `product/tests/semantic-wire-measure.test.mjs`, `product/tests/sdk-type-rejection.test.mjs`, `product/tests/fixtures/sdk-semantics/**` | D6·D1 budget 실측, TS 타입 거부 코퍼스 |
-| `bd1af31e` | `spikes/spike-v6-transport/client/transport.ts`, `product/python/aip_sdk/__init__.py`, `spikes/spike-v6-transport/client/unsettled-codes.test.ts`, `product/tests/python_sdk_contract_test.py` | SDK 결함 수정: 실행 전 거절 코드 5개와 Python 키 재사용 |
-| `ccf5a0cd` | `spikes/spike-v6-transport/client/transport.ts`, `spikes/spike-v6-transport/client/bundle-result-ids.test.ts` | SDK 결함 수정: Uuid 자원의 compose를 담은 묶음 결과를 형식 오류로 오판 |
-| `dd6afcda` | `spikes/spike-v5-sdk/sdk/generic.ts`, `product/tests/sdk-contract-semantics.test.mjs`, `product/tests/sdk-type-rejection.test.mjs` | TS 타입 개선(참조 키, 중복 select, 원시 refs create)과 TS·Python PG17 여정 시험 |
-| `df99f59a` | `product/tests/semantic-chain.test.mjs`, `spikes/spike-v5-sdk/sdk/generic.ts`, `spikes/spike-v6-transport/client/typed.ts` | D4: 정의 → 실행 기록(감사 행) → DB → SDK 응답. bundle overload 시도는 필드 조합 union으로 교체(아래 4절) |
-| `de31ff52` | `product/tests/semantic-definition-matrix.test.mjs`, `product/tests/fixtures/definition-matrix.expected.json` | D1: 정의 조각별 check 결과와 PG17 런타임 결과 표(골든), 핵심 파일 대기 todo 재현 3개 |
-| `1ee1f2b7` | `CHANGELOG.md`, `plan-docs/stabilization-20261122/**`, `product/LIMITS.md`, `product/SUPPORT.md` | D 결과, 결정, 기준선·지원 범위 기록 |
+| `018c2417` | `product/test-support/service-fixture.mjs`, `product/tests/semantic-path-parity.test.mjs` | D2: 같은 전이를 직접 apply, bundle, compose, 쓰기 확장 네 경로로 PG17에서 비교하는 시험과 공용 서비스 픽스처 |
+| `f873f91f` | `product/tests/semantic-wire-measure.test.mjs`, `product/tests/sdk-type-rejection.test.mjs`, `product/tests/fixtures/sdk-semantics/**` | D6·D1 budget 실측, TS 타입 거부 코퍼스 |
+| `2718cfaa` | `spikes/spike-v6-transport/client/transport.ts`, `product/python/aip_sdk/__init__.py`, `spikes/spike-v6-transport/client/unsettled-codes.test.ts`, `product/tests/python_sdk_contract_test.py` | SDK 결함 수정: 실행 전 거절 코드 5개와 Python 키 재사용 |
+| `32110c31` | `spikes/spike-v6-transport/client/transport.ts`, `spikes/spike-v6-transport/client/bundle-result-ids.test.ts` | SDK 결함 수정: Uuid 자원의 compose를 담은 묶음 결과를 형식 오류로 오판 |
+| `3f68ea76` | `spikes/spike-v5-sdk/sdk/generic.ts`, `product/tests/sdk-contract-semantics.test.mjs`, `product/tests/sdk-type-rejection.test.mjs` | TS 타입 개선(참조 키, 중복 select, 원시 refs create)과 TS·Python PG17 여정 시험 |
+| `533286cc` | `product/tests/semantic-chain.test.mjs`, `spikes/spike-v5-sdk/sdk/generic.ts`, `spikes/spike-v6-transport/client/typed.ts` | D4: 정의 → 실행 기록(감사 행) → DB → SDK 응답. bundle overload 시도는 필드 조합 union으로 교체(아래 4절) |
+| `f76752c2` | `product/tests/semantic-definition-matrix.test.mjs`, `product/tests/fixtures/definition-matrix.expected.json` | D1: 정의 조각별 check 결과와 PG17 런타임 결과 표(골든), 핵심 파일 대기 todo 재현 3개 |
+| `f39b390c` | `CHANGELOG.md`, `plan-docs/stabilization-20261122/**`, `product/LIMITS.md`, `product/SUPPORT.md` | D 결과, 결정, 기준선·지원 범위 기록 |
+| `a514c941` | `spikes/spike-v2-read/src/sqlgen.rs`, `spikes/spike-v2-read/src/scalar.rs`, `spikes/spike-v2-read/tests/ddl_namespace.rs`, `spikes/spike-v4-worker/src/lib.rs`, `spikes/spike-v6-transport/client/typed.ts`, 관련 단위 시험 | C-D1 예약어 필드와 C-D2 확장 Json 입력의 소비자 수정 |
 
 ## 2. D1: check 통과인데 런타임 미지원 / 실행 가능한데 정적 거부 (현재 HEAD 반례 탐색)
 
@@ -203,9 +204,9 @@ python3 -m unittest product.tests.python_sdk_contract_test
 ### 기존 변경 확인
 
 - 원격 갱신 후 `origin/main`은 `0e3f0c80`이고 D 브랜치는 이 기준에서 8커밋 앞이었다. 추적 변경은 없었다. 현재 문서의 1절 커밋 ID를 이 worktree의 실제 SHA로 맞췄다.
-- 이후 F1 커밋 `5df0e878`, `b5ae2e0a`, `9a867577`가 main에 도착했다. 그 diff는 F1 CI·기준선 파일로 한정되어 D 구현 파일과 겹치지 않았다. D의 8개 기존 커밋과 이번 독립 수정은 최신 `9a867577` 위로 rebase했고 충돌 없이 적용됐다. 현재 D 구현 커밋은 `4ae2955b`이다.
+- 이후 F1 커밋 `5df0e878`, `b5ae2e0a`, `9a867577`와 E 통합 `c86d6902`가 main에 도착했다. E 통합은 D 소유 테스트·문서 일부를 삭제했으며 E 소유 파일과도 겹쳤다. D의 기존 변경만 최신 `c86d6902` 위로 rebase했고 충돌 없이 적용됐다. D 독립 수정 커밋은 `a514c941`이다.
 - PG17 의존 D2·D4 재실행은 하지 않았다. 이전 증거의 범위는 D2의 직접 apply/bundle/compose/쓰기 확장 경로 결과와 DB 상태, D4의 멱등 재생·동시 요청·숨은 필드·원자 생성 사례다. 이번 변경은 그 시나리오의 fixture와 핵심 파일을 수정하지 않았다.
-- `Int` 안전 정수 경계와 공개 계약 결정, `sema.rs`·`spike-v3-write/src/lib.rs`·`spike-v6-transport/src/lib.rs`는 건드리지 않았다.
+- `Int` 안전 정수 경계와 공개 계약 결정, `sema.rs`·`spike-v3-write/src/lib.rs`·`spike-v6-transport/src/lib.rs`는 건드리지 않았다. workflow도 변경하지 않았다.
 
 ### 독립 수정
 
