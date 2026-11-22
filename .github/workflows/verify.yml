@@ -27,6 +27,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The fast stage of the single entry point (scripts/verify-head.sh), run in CI exactly as a developer runs it locally.
+  # It records the SHA it proved in summary.txt/result.json. The heavy stage is the `core` job below plus the other required workflows.
+  head-fast:
+    if: ${{ !inputs.member_ui_diagnostic && !inputs.admin_metrics_diagnostic }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Install Rust components
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt
+      - name: Reproduce the fast verification of this SHA
+        run: bash scripts/verify-head.sh --stage fast --out "$RUNNER_TEMP/verify-head"
+      - name: Preserve the verification record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verify-head-fast-${{ github.sha }}
+          path: ${{ runner.temp }}/verify-head
+          if-no-files-found: warn
+          retention-days: 7
   core:
     runs-on: ubuntu-latest
     timeout-minutes: 45

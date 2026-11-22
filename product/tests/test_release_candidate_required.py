@@ -4,6 +4,7 @@ Two halves: scripts/release-candidate-required.py is run against recorded `needs
 are read as text (no YAML parser: the hosted runners do not promise one) to pin the structure that keeps the gate honest.
 """
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -306,6 +307,97 @@ class ContractWiringTest(unittest.TestCase):
         for stem in sorted(gated):
             with self.subTest(test_file=stem):
                 self.assertRegex(macos, rf"--test {stem}\b", f"{stem}.rs compiles only for macOS and no macOS job runs it")
+
+
+class EntryPointTest(unittest.TestCase):
+    """scripts/verify-head.sh records the SHA it ran on and never reports a pass for work it did not do (F-02)."""
+    SCRIPT = ROOT / "scripts/verify-head.sh"
+
+    def git(self, root, *args):
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=True).stdout.strip()
+
+    def scratch_repo(self, directory, dirty=False):
+        root = Path(directory) / "repo"
+        (root / "scripts").mkdir(parents=True)
+        for name in ("scripts/verify-head.sh", "scripts/release-candidate-required.py"):
+            (root / name).write_text((ROOT / name).read_text())
+        self.git(root, "init", "-q")
+        self.git(root, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+        self.git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "scratch")
+        if dirty:
+            (root / "uncommitted").write_text("x")
+        return root
+
+    def run_script(self, root, *args, env=None):
+        full = {**os.environ, **(env or {})}
+        full.pop("GITHUB_SHA", None) if not env or "GITHUB_SHA" not in env else None
+        return subprocess.run(["bash", str(root / "scripts/verify-head.sh"), *args], capture_output=True, text=True, env=full)
+
+    def test_dry_run_names_the_sha_plans_every_step_and_executes_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, out = self.scratch_repo(directory), Path(directory) / "out"
+            result = self.run_script(root, "--dry-run", "--out", str(out))
+            sha = self.git(root, "rev-parse", "HEAD")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"sha={sha}", result.stdout)
+            self.assertIn("VERDICT: NOT RUN", result.stdout)
+            self.assertNotIn("PROVEN", result.stdout)
+            self.assertEqual(sorted(path.name for path in (out / "logs").iterdir()), [], "a dry run must not run any step")
+            record = json.loads((out / "result.json").read_text())
+            self.assertEqual((record["sha"], record["dry_run"], record["proven"]), (sha, True, False))
+            self.assertTrue(all(step["status"] == "NOT RUN" for step in record["steps"]))
+
+    def test_a_passing_run_records_the_sha_and_is_proven_only_when_clean(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, out = self.scratch_repo(directory), Path(directory) / "out"
+            result = self.run_script(root, "--stage", "fast", "--only", "scripts-syntax", "--out", str(out))
+            sha = self.git(root, "rev-parse", "HEAD")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"VERDICT: PROVEN for {sha}", result.stdout)
+            record = json.loads((out / "result.json").read_text())
+            self.assertEqual((record["sha"], record["dirty"], record["proven"]), (sha, False, True))
+        with tempfile.TemporaryDirectory() as directory:
+            root, out = self.scratch_repo(directory, dirty=True), Path(directory) / "out"
+            result = self.run_script(root, "--stage", "fast", "--only", "scripts-syntax", "--out", str(out))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("PASSED ON A DIRTY TREE", result.stdout)
+            self.assertFalse(json.loads((out / "result.json").read_text())["proven"])
+
+    def test_a_failing_step_fails_the_run_and_is_not_proven(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, out = self.scratch_repo(directory), Path(directory) / "out"
+            # The scratch repo has no product/tests, so the workflow-structure step cannot pass.
+            result = self.run_script(root, "--stage", "fast", "--only", "workflow-structure", "--out", str(out))
+            self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertIn("FAIL  [fast] workflow-structure", result.stdout)
+            self.assertIn("NOT PROVEN", result.stdout)
+            self.assertFalse(json.loads((out / "result.json").read_text())["proven"])
+
+    def test_heavy_refuses_a_dirty_tree_and_a_checkout_that_is_not_the_workflow_sha(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.scratch_repo(directory, dirty=True)
+            result = self.run_script(root, "--stage", "heavy", "--out", str(Path(directory) / "out"))
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("would not prove HEAD", result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.scratch_repo(directory)
+            result = self.run_script(root, "--dry-run", "--out", str(Path(directory) / "out"), env={"GITHUB_SHA": "c" * 40})
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("is not the SHA this workflow runs for", result.stderr)
+
+    def test_the_plan_only_names_files_that_exist_and_never_publishes(self):
+        plan = subprocess.run(["bash", str(self.SCRIPT), "--list", "--with-release-gate"], capture_output=True, text=True, check=True).stdout
+        self.assertIn("release-gate", plan)
+        for path in set(re.findall(r"(?:scripts|tools|product|spikes|crates)/[\w./-]+\.(?:sh|mjs|py|toml)", plan)):
+            self.assertTrue((ROOT / path).exists(), f"the plan names {path}, which does not exist")
+        for pattern in PUBLISH_PATTERNS[:-1]:
+            self.assertIsNone(re.search(pattern, self.SCRIPT.read_text()), pattern)
+
+    def test_verify_sh_runs_the_tests_that_no_gate_ran_before(self):
+        text = (ROOT / "tools/verify.sh").read_text()
+        for needle in ("spikes/spike-v6-transport/client/uuid.test.ts", "spikes/spike-v6-transport/client/extension-rejection.test.ts",
+                       "discover -s tools -p 'test_*.py'", "discover -s scripts -p 'test_*.py'", "product.tests.test_release_candidate_required"):
+            self.assertIn(needle, text)
 
 
 if __name__ == "__main__":
