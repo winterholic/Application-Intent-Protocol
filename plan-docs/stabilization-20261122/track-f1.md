@@ -220,4 +220,4 @@ VERDICT: PASSED ON A DIRTY TREE for 0e3f0c80bc3b24a3b35b31e0655048fc13c30365
 
 현재 main SHA의 GitHub Actions 조회(2026-11-22 04:28 UTC): `gh run list -R winterholic/Application-Intent-Protocol --commit 0e3f0c80bc3b24a3b35b31e0655048fc13c30365 --limit 100` 결과 16건 — success 6, failure 1(`Object storage`), in progress 1(`SDK semantic end-to-end`), queued 8. 이것은 변경 전 현재 SHA의 상태이며 새 최종 SHA의 CI 증거가 아니다.
 
-최종 커밋 `5df0e87853303e4255999f1983711b8b0e58b6d3`의 clean-tree fast 7단계는 `PROVEN`을 기록했고, `git push origin HEAD:main`으로 main에 반영했다(`0e3f0c80..5df0e878`). 최종 SHA의 전체 workflow는 카드 지시대로 리드 후속으로 남겼으며 여기서는 조회하거나 대기하지 않았다.
+구현 커밋 `5df0e87853303e4255999f1983711b8b0e58b6d3`의 clean-tree fast 7단계는 `PROVEN`을 기록했고, `git push origin HEAD:main`으로 main에 반영했다(`0e3f0c80..5df0e878`). 이어 이 문서 후속도 main에 반영했다. 최종 SHA의 전체 workflow는 카드 지시대로 리드 후속으로 남겼으며 여기서는 조회하거나 대기하지 않았다.
