@@ -1,8 +1,23 @@
 name: Independent 1.0 consumers
+
+# Runs the two independent consumer apps (taskshare, stockdesk) against the Core under test, not a pinned past commit.
+# The target SHA is `inputs.core_sha` or, when empty, `github.sha` (the calling SHA when release-candidate.yml calls this workflow).
+# run.py fails when the checkout HEAD differs from that SHA and records source SHA, built engine and SDK artifacts in the result JSON.
+# The upgrade drill keeps its own pinned baseline (aip-release-gate.yml --baseline); it is reported separately, never mixed in here.
 on:
-  push:
-    branches: [verify/1.0-independent-consumer-20261121]
+  # NOTE: release-candidate.yml calls this workflow on release branches and v* tags, so `required` waits on it for the exact tagged SHA.
+  workflow_call:
+    inputs:
+      core_sha:
+        description: Core commit to verify (40-hex). Defaults to the calling workflow's github.sha.
+        type: string
+        default: ''
   workflow_dispatch:
+    inputs:
+      core_sha:
+        description: Core commit to verify (40-hex). Defaults to the selected ref's github.sha.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -11,14 +26,16 @@ jobs:
   consumers:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      TARGET_SHA: ${{ inputs.core_sha || github.sha }}
     steps:
+      - name: Require a full commit SHA
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "target SHA is not a 40-hex commit: $TARGET_SHA" >&2; exit 1; }
+          echo "independent consumers target: $TARGET_SHA"
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          persist-credentials: false
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: 4e1325644b267f2b3177a327258c0882ee5711c2
-          path: core
+          ref: ${{ env.TARGET_SHA }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
@@ -47,19 +64,27 @@ jobs:
             echo "$sandbox_bin" >> "$GITHUB_PATH"
           fi
       - name: Build the exact Core candidate
-        working-directory: core
         run: |
           cargo build --release --locked -p aip-cli
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+      - name: Provenance unit tests (SHA, engine and SDK mismatch fixtures)
+        run: python3 verification/1.0-consumers/test_provenance.py
       - name: Install, run, migrate, and roll back both independent apps
-        working-directory: core
         run: |
           set -o pipefail
-          python3 ../verification/1.0-consumers/run.py 2>&1 | tee "$RUNNER_TEMP/independent-consumers.log"
+          python3 verification/1.0-consumers/run.py --core-sha "$TARGET_SHA" --result "$RUNNER_TEMP/independent-consumers.json" 2>&1 | tee "$RUNNER_TEMP/independent-consumers.log"
+      - name: Show the recorded provenance
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/independent-consumers.json" ]]; then
+            jq '{status, error, target, engine, sdk, upgradeBaseline, apps: (.apps | map_values(.status))}' "$RUNNER_TEMP/independent-consumers.json"
+          fi
       - name: Preserve console results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: independent-consumers-4e132564
-          path: ${{ runner.temp }}/independent-consumers.log
+          name: independent-consumers-${{ env.TARGET_SHA }}
+          path: |
+            ${{ runner.temp }}/independent-consumers.log
+            ${{ runner.temp }}/independent-consumers.json
           if-no-files-found: ignore

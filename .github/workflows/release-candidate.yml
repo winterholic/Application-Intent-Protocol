@@ -47,6 +47,9 @@ jobs:
     uses: ./.github/workflows/semantic-conformance.yml
   macos-platform-tests:
     uses: ./.github/workflows/macos-platform-tests.yml
+  # Independent consumer apps on this exact SHA (core_sha defaults to the caller's github.sha), not a pinned past commit.
+  independent-consumers:
+    uses: ./.github/workflows/independent-consumer-rc.yml
 
   required:
     name: required (all workflows green on this SHA)
@@ -67,6 +70,7 @@ jobs:
       - sdk-semantic-e2e
       - semantic-conformance
       - macos-platform-tests
+      - independent-consumers
     runs-on: ubuntu-24.04
     steps:
       # A skipped or cancelled workflow is not a pass: only `success` counts.
