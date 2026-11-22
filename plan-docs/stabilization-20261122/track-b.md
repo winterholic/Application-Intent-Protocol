@@ -156,7 +156,7 @@ test-support가 `PGHOST`를 감지해 처음 실행을 거부했다. 환경 변�
 
 ## 4. Asia/Seoul 실패 대조
 
-대조 대상은 cron 시험이 아니라 `spikes/spike-v3-write/tests/latest_effect_values.rs`와 `latest_nullable_projection.rs`다. 두 테스트는 `timestamptz::text`의 `+00` 문자열을 비교하고 있어 서울 DB 세션에서는 값의 instant가 같아도 출력 표기 때문에 실패한다. 비교값을 UTC instant 기준 문자열로 정규화했다. v3 제품 코드는 수정하지 않았다. `.github/workflows/stabilization-b-pg17-timezone.yml`은 PostgreSQL 17에서 DB 기본 TimeZone을 각각 `UTC`와 `Asia/Seoul`로 설정하고 `SHOW TimeZone` 세션 확인 뒤 두 테스트를 모두 실행한다.
+대조 대상은 cron 시험이 아니라 `spikes/spike-v3-write/tests/latest_effect_values.rs`와 `latest_nullable_projection.rs`다. 두 테스트는 `timestamptz::text`의 `+00` 문자열을 비교하고 있어 서울 DB 세션에서는 값의 instant가 같아도 출력 표기 때문에 실패한다. 비교값을 UTC instant 기준 문자열로 정규화했다. v3 제품 코드는 수정하지 않았다. 기존 `Verify`의 `track_b_pg17` 수동 입력은 PostgreSQL 17에서 DB 기본 TimeZone을 각각 `UTC`와 `Asia/Seoul`로 설정하고 `SHOW TimeZone` 세션 확인 뒤 두 테스트를 모두 실행한다.
 
 ## 5. B1 기준·CI 대조와 인계
 
@@ -169,4 +169,4 @@ bundle 측정은 `cf429b31966c6ae9e481ca1d20e7f53ae4e81fe8` 기록을 재사용�
   `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --features test-db --test concurrency_probe_http -- --ignored --exact f1_failing_bundles_leave_nothing_behind_under_concurrency`
 
 - v3는 기준 구현·측정 근거를 인계할 준비가 됐고 PG17 CI 실행이 남았다. v6 변경은 소스 검사·cargo check·4개 테스트 파일 컴파일·fmt까지 끝났으며 여섯 DB 불변식의 PG17 CI 실행이 남았다.
-- 기존 `Verify` workflow와 `tools/verify.sh`는 수정하지 않았다. 전용 TimeZone workflow만 추가했다. v2 read 변경은 쓰기 확장 read-conflict 분류를 위한 기존 B 책임 변경이다.
+- 기존 `tools/verify.sh`의 엔진 루프는 유지하고 `Verify` workflow에 Track B 전용 수동 입력만 추가했다. v2 read 변경은 쓰기 확장 read-conflict 분류를 위한 기존 B 책임 변경이다.
