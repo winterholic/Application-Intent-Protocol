@@ -484,7 +484,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn expect(&self, e: &Expr, sc: &Scope, want: Option<&TT>) -> Result<(Value, TT), Diag> {
-        if let (Expr::Str(value), Some(expected)) = (e, want) {
+        if let (Expr::Str(value, _), Some(expected)) = (e, want) {
             match &expected.ty {
                 Ty::Email if valid_email(value) => return Ok((json!({ "lit": value, "ty": "Email" }), TT::new(Ty::Email))),
                 Ty::Date if valid_date(value) => return Ok((json!({ "lit": value, "ty": "Date" }), TT::new(Ty::Date))),
@@ -501,7 +501,7 @@ impl<'a> Ctx<'a> {
                 _ => {}
             }
         }
-        if let (Expr::Int(_), Some(TT { ty: Ty::Decimal(_, scale), .. })) = (e, want) {
+        if let (Expr::Int(..), Some(TT { ty: Ty::Decimal(_, scale), .. })) = (e, want) {
             let sample = if *scale == 0 { "0".to_string() } else { format!("0.{}", "0".repeat(usize::from(*scale))) };
             return Err(Diag::new(
                 "DEF.BAD_VALUE",
@@ -567,7 +567,7 @@ impl<'a> Ctx<'a> {
             let hint = if effect { "update 효과의 왼쪽 항은 갱신하는 필드 자신의 맨 이름이어야 함. " } else { "" };
             return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("{hint}{shape}"), sp));
         }
-        if let (Expr::Int(n), Ty::Int, false) = (r, &ft.ty, effect) {
+        if let (Expr::Int(n, _), Ty::Int, false) = (r, &ft.ty, effect) {
             if *n == 0 {
                 return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp));
             }
@@ -584,15 +584,15 @@ impl<'a> Ctx<'a> {
         }
         self.reject_encrypted_path(target, f, sp)?;
         let (term, tt) = match r {
-            Expr::Int(0) => return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp)),
-            Expr::Int(n) if *n < 0 => {
+            Expr::Int(0, _) => return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp)),
+            Expr::Int(n, _) if *n < 0 => {
                 return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("항은 양수만 받는다(방향은 `+`·`-`로 정한다). {shape}"), sp))
             }
-            Expr::Int(n) => (json!({ "lit": n }), TT::new(Ty::Int)),
-            Expr::Str(value) if !decimal_is_positive(value) && matches!(ft.ty, Ty::Decimal(..)) => {
+            Expr::Int(n, _) => (json!({ "lit": n }), TT::new(Ty::Int)),
+            Expr::Str(value, _) if !decimal_is_positive(value) && matches!(ft.ty, Ty::Decimal(..)) => {
                 return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("항은 양수만 받는다(방향은 `+`·`-`로 정한다). {shape}"), sp));
             }
-            Expr::Str(value) => match &ft.ty {
+            Expr::Str(value, _) => match &ft.ty {
                 Ty::Decimal(precision, scale) if valid_decimal(value, *precision, *scale) => {
                     (json!({ "lit": value }), TT::new(Ty::Decimal(*precision, *scale)))
                 }
@@ -666,7 +666,7 @@ impl<'a> Ctx<'a> {
                 *sp,
             )),
             Expr::Cmp(op, l, r) => {
-                let (lv, lt, rv, rt) = if matches!(l.as_ref(), Expr::Str(_)) {
+                let (lv, lt, rv, rt) = if matches!(l.as_ref(), Expr::Str(..)) {
                     let (rv, rt) = self.ex(r, sc)?;
                     let (lv, lt) = self.expect(l, sc, Some(&rt))?;
                     (lv, lt, rv, rt)
@@ -731,11 +731,11 @@ impl<'a> Ctx<'a> {
                 Ok((json!({ "in": lv, "items": iv }), b))
             }
             Expr::Path(segs, sp) => self.path(segs, *sp, sc),
-            Expr::Null => Ok((json!({ "lit": null }), TT { ty: Ty::Null, nullable: true })),
-            Expr::Now => Ok((json!({ "now": true }), TT::new(Ty::Time))),
-            Expr::Int(n) => Ok((json!({ "lit": n }), TT::new(Ty::Int))),
-            Expr::Bool(v) => Ok((json!({ "lit": v }), TT::new(Ty::Bool))),
-            Expr::Str(s) => Ok((json!({ "lit": s }), TT::new(Ty::Text))),
+            Expr::Null(_) => Ok((json!({ "lit": null }), TT { ty: Ty::Null, nullable: true })),
+            Expr::Now(_) => Ok((json!({ "now": true }), TT::new(Ty::Time))),
+            Expr::Int(n, _) => Ok((json!({ "lit": n }), TT::new(Ty::Int))),
+            Expr::Bool(v, _) => Ok((json!({ "lit": v }), TT::new(Ty::Bool))),
+            Expr::Str(s, _) => Ok((json!({ "lit": s }), TT::new(Ty::Text))),
             Expr::Call(n, args, sp) => {
                 let p = match self.preds.get(n.as_str()) {
                     Some(p) => *p,
@@ -1646,7 +1646,7 @@ impl<'a> Ctx<'a> {
                     continue;
                 }
                 let range = r.fields.iter().find(|x| &x.name == f).and_then(|x| x.ty.range);
-                if let (Expr::Int(n), Some((lo, hi))) = (val, range) {
+                if let (Expr::Int(n, _), Some((lo, hi))) = (val, range) {
                     if *n < lo || *n > hi {
                         self.d("DEF.BAD_RANGE", format!("transition `{}`: `{f}` = {n}은 범위 {lo}..{hi} 밖", t.name), t.span);
                         continue;
@@ -3286,6 +3286,6 @@ fn span_of(e: &Expr) -> Span {
         Expr::Or(v) | Expr::And(v) => v.first().map(span_of).unwrap_or_default(),
         Expr::Not(x) => span_of(x),
         Expr::Cmp(_, l, _) | Expr::In(l, _) => span_of(l),
-        _ => Span::default(),
+        Expr::Null(s) | Expr::Now(s) | Expr::Int(_, s) | Expr::Bool(_, s) | Expr::Str(_, s) => *s,
     }
 }

@@ -1095,27 +1095,27 @@ impl Parser {
             Tok::Int(n) => {
                 self.next();
                 self.note_expression_node()?;
-                Ok(Expr::Int(n))
+                Ok(Expr::Int(n, sp))
             }
             Tok::Str(s) => {
                 self.next();
                 self.note_expression_node()?;
-                Ok(Expr::Str(s))
+                Ok(Expr::Str(s, sp))
             }
             Tok::Ident(s) if s == "null" => {
                 self.next();
                 self.note_expression_node()?;
-                Ok(Expr::Null)
+                Ok(Expr::Null(sp))
             }
             Tok::Ident(s) if s == "true" || s == "false" => {
                 self.next();
                 self.note_expression_node()?;
-                Ok(Expr::Bool(s == "true"))
+                Ok(Expr::Bool(s == "true", sp))
             }
             Tok::Ident(s) if s == "now" => {
                 self.next();
                 self.note_expression_node()?;
-                Ok(Expr::Now)
+                Ok(Expr::Now(sp))
             }
             Tok::Ident(s) if s == "exists" => {
                 self.next();
@@ -1182,7 +1182,7 @@ fn ast_depth(root: &Expr) -> usize {
                 pending.push((left, child_depth));
                 pending.extend(items.iter().map(|item| (item, child_depth)));
             }
-            Expr::Path(_, _) | Expr::Null | Expr::Now | Expr::Int(_) | Expr::Bool(_) | Expr::Str(_) => {}
+            Expr::Path(_, _) | Expr::Null(_) | Expr::Now(_) | Expr::Int(..) | Expr::Bool(..) | Expr::Str(..) => {}
         }
     }
     max_depth
