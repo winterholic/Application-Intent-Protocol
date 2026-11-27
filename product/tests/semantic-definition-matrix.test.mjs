@@ -171,7 +171,7 @@ test("a shared primary key can be sorted by id like any other identity", { todo:
   assert.equal(checkOutcome(definition), "pass", "DEF.OP_TYPE_MISMATCH `id`는 정렬 불가 타입: the column is a bigint and orders like any id, and the read without a sort list serves it");
 });
 
-test("a transition term from a field whose range allows zero or negative values is refused at check time", { todo: "core-file-wait: sema.rs arithmetic term check (track-d.md 핵심 파일 대기 목록 C2)" }, () => {
+test("a transition term from a field whose range allows zero or negative values is refused at check time", () => {
   const definition = PRE + `resource T { fields { id: Id; n: Int(0..99); m: Int(-5..9) } rows read when true expose read { select id, n; sort id; budget { rows 5; depth 1; deadline 1s; cost 100 } } transition inc { allow true; from true; to n = n + this.m } expose apply inc { target id; bulk maxRows 1 } }`;
   assert.notEqual(checkOutcome(definition), "pass", "input terms need a positive range (DEF.BAD_RANGE); a this.field term whose range includes <= 0 is refused only at runtime (WIRE.BAD_VALUE)");
 });

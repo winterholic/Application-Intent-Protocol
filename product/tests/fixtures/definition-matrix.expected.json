@@ -91,8 +91,8 @@
   },
   "arith-this-field-zero-able": {
     "title": "n = n + this.m where m may be 0 or negative",
-    "check": "pass",
-    "runtime": "WIRE.BAD_VALUE | ok rows=[{\"n\":5}]"
+    "check": "fail DEF.BAD_RANGE",
+    "runtime": "-"
   },
   "input-int-range-includes-zero": {
     "title": "transition input Int(0..5)",

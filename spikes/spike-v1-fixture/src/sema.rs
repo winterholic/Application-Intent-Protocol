@@ -619,6 +619,18 @@ impl<'a> Ctx<'a> {
                             sp,
                         ));
                     }
+                    // 전이 `to`의 `this.g` 항은 런타임이 `g <= 0`이면 WIRE.BAD_VALUE로 거부한다. 선언 범위가 0 이하를 허용하면 `input` 항처럼 정의에서 막는다.
+                    // 범위 없는 `Int`는 이전 정의를 깨지 않으려고 받는다.
+                    let declared = self.res.get(this_res).and_then(|t| t.fields.iter().find(|x| x.name == own)).and_then(|x| x.ty.range);
+                    if let (false, Some((lo, hi))) = (effect, declared) {
+                        if lo < 1 {
+                            return Err(Diag::new(
+                                "DEF.BAD_RANGE",
+                                format!("증감 항 `{own}`의 범위 {lo}..{hi}가 0 이하를 허용함. 항은 양수만 받는다(`{own}: Int(1..{hi})`처럼 하한 1 이상). {shape}"),
+                                sp,
+                            ));
+                        }
+                    }
                     (json!({ "path": v["path"] }), tt)
                 } else {
                     return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", shape, sp));

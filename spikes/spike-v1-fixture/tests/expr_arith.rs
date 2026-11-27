@@ -227,6 +227,14 @@ fn b_f4_null_is_excluded_at_definition_time() {
 }
 
 #[test]
+fn a_transition_term_from_a_ranged_int_field_needs_a_positive_range() {
+    // `reserved: Int` (no range) stays accepted; a declared range whose lower bound is below 1 can hold a value the runtime refuses.
+    expect_code(&DEF.replace("reserved: Int;", "reserved: Int(0..9);"), "DEF.BAD_RANGE");
+    expect_code(&DEF.replace("reserved: Int;", "reserved: Int(-5..9);"), "DEF.BAD_RANGE");
+    facts(&DEF.replace("reserved: Int;", "reserved: Int(1..9);"));
+}
+
+#[test]
 fn b_f5_decimal_scale_and_int_field_rules() {
     // Decimal(12,4) 항을 Decimal(12,2) 필드에.
     expect_code(&DEF.replace("to balance = balance + input.points", "to balance = balance + this.fine"), "DEF.TYPE_MISMATCH");
