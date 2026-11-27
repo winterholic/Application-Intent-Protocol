@@ -268,6 +268,11 @@ pub struct AuthenticatorImpl {
     pool: std::sync::OnceLock<Arc<spike_v6_transport::pool::ConnectionPool>>,
 }
 
+/// A COMMIT that the database answered with an error did not persist the provisioned actor, exactly like one that timed out.
+fn commit_succeeded<E>(outcome: Result<Result<(), E>, tokio::time::error::Elapsed>) -> bool {
+    matches!(outcome, Ok(Ok(())))
+}
+
 fn now_secs() -> Result<i64, AuthError> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| AuthError::Unavailable)?.as_secs() as i64)
 }
@@ -895,7 +900,7 @@ impl AuthenticatorImpl {
             }
         };
 
-        if tokio::time::timeout(DB_TIMEOUT, db.batch_execute("COMMIT")).await.is_err() {
+        if !commit_succeeded(tokio::time::timeout(DB_TIMEOUT, db.batch_execute("COMMIT")).await) {
             let _ = db.batch_execute("ROLLBACK").await;
             lookup.finish().await;
             return Err(AuthError::Unavailable);
@@ -1029,6 +1034,15 @@ impl spike_v6_transport::auth::Authenticator for AuthenticatorImpl {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn a_commit_the_database_rejected_is_not_a_success() {
+        use super::commit_succeeded;
+        let timed_out = tokio::time::timeout(std::time::Duration::from_millis(1), std::future::pending::<Result<(), ()>>()).await;
+        assert!(!commit_succeeded(timed_out));
+        assert!(!commit_succeeded(Ok::<Result<(), &str>, tokio::time::error::Elapsed>(Err("deferred constraint violated"))));
+        assert!(commit_succeeded(Ok::<Result<(), &str>, tokio::time::error::Elapsed>(Ok(()))));
+    }
+
     use super::*;
     use std::io::{Read, Write};
 
