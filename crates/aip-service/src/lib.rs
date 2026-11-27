@@ -2636,6 +2636,14 @@ mod managed_config_tests {
         let validation = server_start_error(&causes[0])["message"].as_str().unwrap().to_owned();
         assert!(validation.contains("stats.mjs"), "{validation}");
     }
+
+    #[test]
+    fn a_missing_isolation_launcher_is_not_reported_as_a_missing_language_runtime() {
+        // `Isolation::validate_available` fails with `NotFound` when bwrap or sandbox-exec is absent.
+        let cause = std::io::Error::new(std::io::ErrorKind::NotFound, "required worker isolation executable `bwrap` was not found in PATH");
+        let message = server_start_error(&cause)["message"].as_str().unwrap().to_owned();
+        assert!(message.contains("bwrap") && message.contains("sandbox-exec"), "{message}");
+    }
 }
 
 #[cfg(test)]
